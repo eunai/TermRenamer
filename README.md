@@ -13,6 +13,10 @@ confirm before anything is renamed.
 configuration may change between commits. Use copies of your media or backups
 until you are comfortable with the results.
 
+## Attribution
+
+When you use **TheTVDB** for TV metadata, data comes from their API. Per [TheTVDB’s licensing terms](https://thetvdb.com/api-information#attribution): [Metadata provided by TheTVDB. Please consider adding missing information or subscribing.](https://thetvdb.com/)
+
 ## Features
 
 - **Plan, preview, then apply** - no renames until you explicitly confirm.
