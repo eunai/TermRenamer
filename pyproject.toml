@@ -1,0 +1,74 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "termrenamer"
+version = "0.10.0"
+description = "TUI app to rename TV and movie files using online metadata (plan→preview→confirm→apply)"
+readme = "README.md"
+requires-python = ">=3.13"
+license = { text = "GPL-3.0-only" }
+authors = [{ name = "eunai" }]
+dependencies = [
+    "httpx>=0.28.0",
+    "python-dotenv>=1.0.0",
+    "textual>=1.0.0",
+    "textual-fspicker==1.0.0",
+    "tomli_w>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "tomli_w>=1.0.0",
+    "mypy>=1.15.0",
+    "pytest-asyncio>=0.25.0",
+    "pytest-cov>=6.0.0",
+    "pytest>=8.0.0",
+    "ruff>=0.9.0",
+]
+
+[project.scripts]
+termrenamer = "termrenamer.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "asyncio: async tests (pytest-asyncio)",
+]
+addopts = [
+    "--cov=termrenamer",
+    "--cov-report=term-missing",
+    "--cov-fail-under=85",
+]
+
+[tool.coverage.run]
+source = ["src/termrenamer"]
+branch = false
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+src = ["src", "tests"]
+extend-exclude = ["dev_textual"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+mypy_path = "src"
+packages = ["termrenamer"]

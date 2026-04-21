@@ -1,0 +1,40 @@
+# Inherited from private .gitignore
+.env
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+debug-*.log
+.venv/
+venv/
+ENV/
+
+# Public-only additional exclusions: private AI tooling, internal docs,
+# and dev scratch must never appear here.
+.cursor/
+.claude/
+AGENTS.md
+docs/internal/
+dev_textual/
+.DS_Store

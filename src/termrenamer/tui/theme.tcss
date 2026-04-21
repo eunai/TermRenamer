@@ -1,0 +1,147 @@
+/* FR-009 layout: single-column queue panel + bottom tabbed output.
+ *
+ * Mirrors ``dev_textual/tui_mock/theme.tcss`` (see dev-textual-guide §2 / §5).
+ * ``#plan_panel`` is the only primary column; ``ModeProviderBar`` docks above
+ * the ``Footer``; ``#bottom-tabs`` hosts the Activity / Logs panes. Film/TV
+ * destination roots are edited in ``SettingsScreen`` (Ctrl+,), not on-panel.
+ */
+
+#main {
+    height: 1fr;
+}
+
+#mode-bar {
+    width: 100%;
+    height: 2;
+    background: $boost;
+    padding: 0 1;
+}
+
+#mode-bar .mpb-spacer {
+    width: 1fr;
+    min-width: 1;
+    height: 1;
+}
+
+#mode-bar #open-settings {
+    margin: 0;
+    border: none;
+}
+
+#plan_panel {
+    width: 1fr;
+    min-width: 40;
+    height: 1fr;
+    border: round $accent 30%;
+    padding: 0 1;
+    background: $surface;
+    border-title-align: left;
+    border-title-color: $accent;
+}
+
+/* Posting/Harlequin-style focus ring on the active panel */
+#plan_panel:focus-within {
+    border: round $accent;
+}
+
+#source-tree {
+    height: 1fr;
+}
+
+#dest-tree {
+    height: 1fr;
+}
+
+/* Harlequin-style tree guides accent on focus, subtle cursor fill */
+#source-tree:focus .tree--guides,
+#dest-tree:focus .tree--guides {
+    color: $accent;
+}
+
+#source-tree .tree--cursor,
+#dest-tree .tree--cursor {
+    background: $primary 20%;
+}
+
+/* Posting-style flat buttons inside the plan panel + action bar: no border;
+ * faded when disabled. The ``:focus`` overrides pin ``border: none`` so the
+ * button box does not grow when focus lands on it (prevents layout jitter
+ * — Textual's default focus style only tweaks text-style / background, but
+ * we stay explicit for future-proofing). */
+#plan_panel Button,
+#action-bar Button {
+    border: none;
+}
+
+#plan_panel Button:focus,
+#action-bar Button:focus {
+    border: none;
+}
+
+#plan_panel Button:disabled,
+#action-bar Button:disabled {
+    opacity: 40%;
+}
+
+#action-bar {
+    height: auto;
+    margin: 0;
+    padding: 0 1;
+}
+
+#action-bar Button {
+    margin: 0 1 0 0;
+}
+
+#action-bar .spacer {
+    width: 1fr;
+    height: 1;
+    margin: 0;
+}
+
+#bottom-tabs {
+    height: 14;
+    min-height: 8;
+    border: round $accent 30%;
+    background: $surface;
+    border-title-align: left;
+    border-title-color: $accent;
+}
+
+#bottom-tabs:focus-within {
+    border: round $accent;
+}
+
+#activity-pane {
+    height: 1fr;
+}
+
+#activity-pane .empty-state {
+    color: $text-muted;
+    padding: 1 1;
+}
+
+#activity-pane .success-kind {
+    color: $success;
+}
+
+/* Reserved for future failure/skip rows in the Activity feed */
+#activity-pane .failed-kind {
+    color: $error;
+}
+
+#activity-pane .skipped-kind {
+    color: $warning;
+}
+
+#activity-pane RichLog {
+    height: 1fr;
+    border: none;
+    background: $surface;
+}
+
+#log_panel {
+    height: 1fr;
+    border: none;
+    background: $surface;
+}

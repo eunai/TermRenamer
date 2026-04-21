@@ -1,0 +1,11 @@
+{
+  "status": "success",
+  "data": [
+    {
+      "objectID": "series",
+      "id": "12345",
+      "name": "Example Show",
+      "aliases": []
+    }
+  ]
+}
