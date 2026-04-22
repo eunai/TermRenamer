@@ -35,6 +35,23 @@ def test_dest_folder_env_vars_optional(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert settings.tv_dest_folder == tmp_path / "tv"
 
 
+def test_enable_layout_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TERMRENAMER_TMDB_API_KEY", "k")
+    monkeypatch.setenv("TERMRENAMER_ENABLE_FOLDER_RENAME", "true")
+    monkeypatch.setenv("TERMRENAMER_ENABLE_SEASON_FOLDERS", "0")
+    settings = load_settings(require_tmdb_key=True)
+    assert settings.enable_folder_rename is True
+    assert settings.enable_season_folders is False
+
+
+def test_invalid_layout_bool_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TERMRENAMER_TMDB_API_KEY", "k")
+    monkeypatch.setenv("TERMRENAMER_ENABLE_FOLDER_RENAME", "maybe")
+    with pytest.raises(ValidationError) as excinfo:
+        load_settings(require_tmdb_key=True)
+    assert "TERMRENAMER_ENABLE_FOLDER_RENAME" in str(excinfo.value)
+
+
 def test_gitignore_contains_env(tmp_path: Path) -> None:
     del tmp_path  # repo root check
     root = Path(__file__).resolve().parents[2]

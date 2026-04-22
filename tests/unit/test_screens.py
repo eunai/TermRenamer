@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from textual.widgets import Button, Input
+from textual.widgets import Button, Checkbox, Input, TabPane
 
 from termrenamer.api.tmdb import StaticFilmMetadataProvider, StaticTvMetadataProvider
 from termrenamer.app_bootstrap import Settings
@@ -39,6 +39,8 @@ def _settings(tmp_path: Path) -> Settings:
         log_file_path=None,
         film_dest_folder=tmp_path / "films",
         tv_dest_folder=tmp_path / "tv",
+        enable_folder_rename=False,
+        enable_season_folders=False,
     )
 
 
@@ -274,6 +276,49 @@ async def test_settings_screen_empty_save_clears_override(tmp_path: Path) -> Non
         assert app._settings_overrides.get("film") is None
         assert app._settings is not None
         assert app._settings.film_dest_folder is None
+
+
+@pytest.mark.asyncio
+async def test_settings_layout_season_disabled_when_folder_rename_off() -> None:
+    app = TermRenamerApp(wiring=_wiring())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(SettingsScreen())
+        await pilot.pause()
+        sf = app.screen.query_one("#enable-season-folders", Checkbox)
+        fr = app.screen.query_one("#enable-folder-rename", Checkbox)
+        assert not fr.value
+        assert sf.disabled
+
+
+@pytest.mark.asyncio
+async def test_settings_layout_persist_layout_updates_overrides(
+    tmp_path: Path,
+) -> None:
+    app = TermRenamerApp(wiring=_wiring(), settings=_settings(tmp_path))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = SettingsScreen()
+        app.push_screen(screen)
+        await pilot.pause()
+        screen._persist_layout(True, True)  # noqa: SLF001
+        await pilot.pause()
+        assert app._settings_overrides.get("folder_rename") is True
+        assert app._settings_overrides.get("season_folders") is True
+        assert app._settings is not None
+        assert app._settings.enable_folder_rename is True
+        assert app._settings.enable_season_folders is True
+
+
+@pytest.mark.asyncio
+async def test_settings_screen_has_layout_and_extra_placeholder_tabs() -> None:
+    app = TermRenamerApp(wiring=_wiring())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(SettingsScreen())
+        await pilot.pause()
+        assert app.screen.query_one("#tab-settings-layout", TabPane) is not None
+        assert app.screen.query_one("#tab-settings-extra", TabPane) is not None
 
 
 @pytest.mark.asyncio

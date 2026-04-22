@@ -1,7 +1,8 @@
 """Human-readable Activity feed (metadata matches) for the TUI Activity tab.
 
-TODO: If planning moves to ``@work`` threads, schedule UI updates with
-``app.call_from_thread`` from bus subscribers.
+``core.planning`` may emit on the process-wide bus from a background worker
+thread; the subscriber defers RichLog updates to the Textual (main) thread
+via :meth:`textual.app.App.call_from_thread`.
 
 TODO: Per-line ellipsis + hover/focus full title needs a custom line widget;
 ``RichLog`` does not expose per-line tooltips.
@@ -12,6 +13,7 @@ filter bar that consults :class:`~termrenamer.observability.events.ActivityEvent
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
@@ -114,6 +116,19 @@ class ActivityPane(Vertical):
             self._unsubscribe = None
 
     def _on_activity_event(self, event: ActivityEvent) -> None:
+        if threading.current_thread() is threading.main_thread():
+            self._append_activity_line_from_event(event)
+        else:
+            app = self.app
+            if app is None:
+                return
+            try:
+                app.call_from_thread(self._append_activity_line_from_event, event)
+            except RuntimeError:
+                # App not running or same-thread misuse; drop the line.
+                return
+
+    def _append_activity_line_from_event(self, event: ActivityEvent) -> None:
         line = format_activity_markup(event)
         log = self.query_one("#activity-log", _ActivityRichLog)
         empty = self.query_one("#activity-empty", Static)

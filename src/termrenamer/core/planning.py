@@ -55,18 +55,31 @@ def build_rename_plan(
     provider: TvMetadataProvider | FilmMetadataProvider,
     film_dest_root: Path | None = None,
     tv_dest_root: Path | None = None,
+    enable_folder_rename: bool = True,
+    enable_season_folders: bool = True,
 ) -> RenamePlan:
     """Scan ``root``, parse filenames, resolve metadata, and build a rename plan."""
     if mode is ScanMode.TV:
         if not isinstance(provider, TvMetadataProvider):
             msg = "TV mode requires a TvMetadataProvider"
             raise TypeError(msg)
-        return _build_tv_plan(root=root, provider=provider, dest_root=tv_dest_root)
+        return _build_tv_plan(
+            root=root,
+            provider=provider,
+            dest_root=tv_dest_root,
+            enable_folder_rename=enable_folder_rename,
+            enable_season_folders=enable_season_folders,
+        )
     if mode is ScanMode.FILM:
         if not isinstance(provider, FilmMetadataProvider):
             msg = "Film mode requires a FilmMetadataProvider"
             raise TypeError(msg)
-        return _build_film_plan(root=root, provider=provider, dest_root=film_dest_root)
+        return _build_film_plan(
+            root=root,
+            provider=provider,
+            dest_root=film_dest_root,
+            enable_folder_rename=enable_folder_rename,
+        )
     msg = f"Unsupported scan mode: {mode!r}"
     raise ValueError(msg)
 
@@ -76,6 +89,8 @@ def _build_tv_plan(
     root: Path,
     provider: TvMetadataProvider,
     dest_root: Path | None = None,
+    enable_folder_rename: bool = True,
+    enable_season_folders: bool = True,
 ) -> RenamePlan:
     files = scan(root=root)
     videos, sidecars = partition_by_kind(files)
@@ -132,6 +147,8 @@ def _build_tv_plan(
             metadata=metadata,
             original_path=video.path,
             dest_root=dest_root,
+            enable_folder_rename=enable_folder_rename,
+            enable_season_folders=enable_season_folders,
         )
         final_dest = allocate_destination(desired, source=video.path, occupied=occupied)
         dest_by_video[video.path] = final_dest
@@ -180,6 +197,7 @@ def _build_film_plan(
     root: Path,
     provider: FilmMetadataProvider,
     dest_root: Path | None = None,
+    enable_folder_rename: bool = True,
 ) -> RenamePlan:
     files = scan(root=root)
     videos, sidecars = partition_by_kind(files)
@@ -223,6 +241,7 @@ def _build_film_plan(
             metadata=metadata,
             original_path=video.path,
             dest_root=dest_root,
+            enable_folder_rename=enable_folder_rename,
         )
         final_dest = allocate_destination(desired, source=video.path, occupied=occupied)
         dest_by_video[video.path] = final_dest

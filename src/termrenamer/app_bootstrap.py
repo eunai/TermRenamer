@@ -33,6 +33,8 @@ class Settings:
     log_file_path: Path | None
     film_dest_folder: Path | None
     tv_dest_folder: Path | None
+    enable_folder_rename: bool
+    enable_season_folders: bool
 
     @property
     def has_tmdb_credentials(self) -> bool:
@@ -151,6 +153,9 @@ def load_settings(*, env_file: Path | None = None, require_tmdb_key: bool = True
             tv_dest_raw = None
     tv_dest_folder = Path(tv_dest_raw).expanduser() if tv_dest_raw else None
 
+    enable_folder_rename = _read_bool("TERMRENAMER_ENABLE_FOLDER_RENAME", default=False)
+    enable_season_folders = _read_bool("TERMRENAMER_ENABLE_SEASON_FOLDERS", default=False)
+
     if require_tmdb_key and not tmdb_key:
         raise ValidationError(
             "TMDB API key is required: set TERMRENAMER_TMDB_API_KEY in the environment "
@@ -170,6 +175,8 @@ def load_settings(*, env_file: Path | None = None, require_tmdb_key: bool = True
         log_file_path=log_path,
         film_dest_folder=film_dest_folder,
         tv_dest_folder=tv_dest_folder,
+        enable_folder_rename=enable_folder_rename,
+        enable_season_folders=enable_season_folders,
     )
 
 

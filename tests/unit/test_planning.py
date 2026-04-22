@@ -107,6 +107,32 @@ def test_merge_rename_plans_combines_two_roots(tmp_path: Path) -> None:
     assert len(merged.entries) == 2
 
 
+def test_plan_ignores_tv_dest_when_folder_rename_off(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "Show.Name.S01E01.mkv").write_bytes(b"x")
+    provider = StaticTvMetadataProvider(
+        _mapping={
+            ("show name", 1, 1): EpisodeMetadata(
+                show_title="Show Name",
+                episode_title="Pilot",
+            ),
+        },
+    )
+    dest = tmp_path / "separate_out"
+    dest.mkdir()
+    plan = build_rename_plan(
+        root=tmp_path,
+        mode=ScanMode.TV,
+        provider=provider,
+        tv_dest_root=dest,
+        enable_folder_rename=False,
+        enable_season_folders=False,
+    )
+    assert len(plan.entries) == 1
+    assert plan.entries[0].destination.parent == tmp_path
+
+
 def test_merge_rename_plans_suffixes_when_destinations_collide(tmp_path: Path) -> None:
     """Two identical relative layouts can map to the same library leaf name."""
     a = tmp_path / "a"

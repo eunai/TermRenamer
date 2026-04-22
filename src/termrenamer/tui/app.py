@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from textual import work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
@@ -19,6 +21,7 @@ from textual.widgets import (
     TabPane,
     Tree,
 )
+from textual.worker import Worker, WorkerState
 from textual_fspicker import FileOpen, SelectDirectory
 
 from termrenamer.app_bootstrap import Settings
@@ -44,8 +47,16 @@ from termrenamer.tui.widgets.mode_provider_bar import (
     ProviderChanged,
     ScanModeChanged,
 )
-from termrenamer.util.errors import ApplyError, ProviderError, ValidationError
+from termrenamer.util.errors import ProviderError, ValidationError
 from termrenamer.wiring import PlanningWiring
+
+
+@dataclass(frozen=True, slots=True)
+class _BuildPlanWorkResult:
+    """Outcome of :meth:`TermRenamerApp._run_build_plan_thread` (worker thread)."""
+
+    log_messages: tuple[str, ...]
+    plan: RenamePlan | None
 
 
 class _RichLogHandler(logging.Handler):
@@ -163,8 +174,10 @@ class TermRenamerApp(App[None]):
         # Overrides shadow bootstrap ``Settings`` for the current process; the
         # screen also snapshots saves onto ``self._settings`` via
         # ``dataclasses.replace`` when a ``Settings`` instance exists.
-        self._settings_overrides: dict[str, Path | None] = {}
+        # Keys: "tv" / "film" → optional Path; "folder_rename" / "season_folders" → bool.
+        self._settings_overrides: dict[str, Path | bool | None] = {}
         self.theme = "gruvbox"
+        self._rename_working: bool = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -352,7 +365,7 @@ class TermRenamerApp(App[None]):
         """Destination roots: session overrides from :class:`SettingsScreen`, then ``Settings``."""
         kind: Literal["film", "tv"] = "film" if mode is ScanMode.FILM else "tv"
         override = self._settings_overrides.get(kind)
-        if override is not None:
+        if override is not None and isinstance(override, Path):
             return override.expanduser().resolve()
         if self._settings is not None:
             settings_value = (
@@ -364,8 +377,32 @@ class TermRenamerApp(App[None]):
                 return settings_value.resolve()
         return None
 
+    def _resolve_layout_flags(self) -> tuple[bool, bool]:
+        """Folder/season layout toggles (season off unless folder rename is on)."""
+        o_fr = self._settings_overrides.get("folder_rename")
+        o_sf = self._settings_overrides.get("season_folders")
+        if isinstance(o_fr, bool):
+            folder_rename = o_fr
+        elif self._settings is not None:
+            folder_rename = self._settings.enable_folder_rename
+        else:
+            folder_rename = False
+        if isinstance(o_sf, bool):
+            season_folders = o_sf
+        elif self._settings is not None:
+            season_folders = self._settings.enable_season_folders
+        else:
+            season_folders = False
+        if not folder_rename:
+            return (False, False)
+        return (folder_rename, season_folders)
+
     def action_build_plan(self) -> None:
         """Build a rename plan from ``_queue``, mode, and provider (preview only).
+
+        Planning runs in a **thread worker** so provider HTTP and filesystem
+        stat work do not block the Textual event loop (see
+        :meth:`_run_build_plan_thread`).
 
         Each queued **directory** becomes one :func:`build_rename_plan` call; a
         queued **file** is planned from its parent directory then narrowed with
@@ -373,28 +410,39 @@ class TermRenamerApp(App[None]):
         :func:`merge_rename_plans` so destinations remain collision-safe
         (dev-textual-guide §4 Option A).
         """
+        if self._rename_working:
+            return
         if not self._queue:
             self._log_line(
                 "[yellow]Queue is empty — press + folder / + file (or Ctrl+F) first.[/yellow]",
             )
             return
+        self._begin_rename_work()
+        self._log_line("[dim]Building plan…[/dim]")
+        self._run_build_plan_thread()
+
+    @work(exclusive=True, thread=True, group="rename", exit_on_error=False, name="tr_build_plan")
+    def _run_build_plan_thread(self) -> _BuildPlanWorkResult:
+        """Synchronous plan build; runs off the UI thread."""
+        log_lines: list[str] = []
+        queue = list(self._queue)
         mode = self.scan_mode
-        tv_dest = self._resolve_dest_folder(ScanMode.TV)
-        film_dest = self._resolve_dest_folder(ScanMode.FILM)
+        provider_id = self.provider_id
+        folder_rename, season_folders = self._resolve_layout_flags()
+        tv_dest = self._resolve_dest_folder(ScanMode.TV) if folder_rename else None
+        film_dest = self._resolve_dest_folder(ScanMode.FILM) if folder_rename else None
         try:
             if mode is ScanMode.TV:
-                tv = self._wiring.resolve_tv(provider_id=self.provider_id)
+                tv = self._wiring.resolve_tv(provider_id=provider_id)
             else:
-                film = self._wiring.resolve_film(provider_id=self.provider_id)
+                film = self._wiring.resolve_film(provider_id=provider_id)
         except (ValidationError, ProviderError) as exc:
-            self._log_line(f"[red]{exc}[/red]")
-            return
+            return _BuildPlanWorkResult((f"[red]{exc}[/red]",), None)
         except Exception as exc:
-            self._log_line(f"[red]Plan failed: {exc}[/red]")
-            return
+            return _BuildPlanWorkResult((f"[red]Plan failed: {exc}[/red]",), None)
 
         subplans: list[RenamePlan] = []
-        for item in self._queue:
+        for item in queue:
             root = item if item.is_dir() else item.parent
             try:
                 if mode is ScanMode.TV:
@@ -403,6 +451,8 @@ class TermRenamerApp(App[None]):
                         mode=ScanMode.TV,
                         provider=tv,
                         tv_dest_root=tv_dest,
+                        enable_folder_rename=folder_rename,
+                        enable_season_folders=season_folders,
                     )
                 else:
                     sub = build_rename_plan(
@@ -410,18 +460,17 @@ class TermRenamerApp(App[None]):
                         mode=ScanMode.FILM,
                         provider=film,
                         film_dest_root=film_dest,
+                        enable_folder_rename=folder_rename,
                     )
             except (ValidationError, ProviderError) as exc:
-                self._log_line(f"[red]{exc}[/red]")
-                return
+                return _BuildPlanWorkResult((f"[red]{exc}[/red]",), None)
             except Exception as exc:
-                self._log_line(f"[red]Plan failed: {exc}[/red]")
-                return
+                return _BuildPlanWorkResult((f"[red]Plan failed: {exc}[/red]",), None)
 
             if not item.is_dir():
                 sub = filter_plan_to_queued_path(sub, item)
                 if not sub.entries:
-                    self._log_line(
+                    log_lines.append(
                         f"[yellow]No matching entries for queued file {item}[/yellow]",
                     )
                     continue
@@ -429,42 +478,87 @@ class TermRenamerApp(App[None]):
             subplans.append(sub)
 
         if not subplans:
-            self._log_line(
+            log_lines.append(
                 "[yellow]No plan could be built from the current queue.[/yellow]",
             )
-            return
+            return _BuildPlanWorkResult(tuple(log_lines), None)
 
         plan = merge_rename_plans(subplans)
-
-        self.current_plan = plan
-        self._populate_plan_trees(plan)
-        self._set_confirm_buttons(enabled=True)
-        self._log_line(
+        log_lines.append(
             f"[green]Plan built:[/green] {len(plan.entries)} operation(s). "
             "Review the preview above, then press Confirm apply or Cancel.",
         )
+        return _BuildPlanWorkResult(tuple(log_lines), plan)
+
+    @work(exclusive=True, thread=True, group="rename", exit_on_error=False, name="tr_apply_plan")
+    def _run_apply_plan_thread(self, plan: RenamePlan) -> list[ApplyResult]:
+        """Apply a frozen plan off the UI thread (still requires ``confirmed=True`` in core)."""
+        fr, _ = self._resolve_layout_flags()
+        return apply_plan(plan, confirmed=True, merge_stragglers=fr)
+
+    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        """Thread/worker completion: apply results to UI on the main thread."""
+        w = event.worker
+        if event.state is WorkerState.SUCCESS:
+            if w.name == "tr_build_plan":
+                result = w.result
+                if not isinstance(result, _BuildPlanWorkResult):
+                    self._end_rename_work()
+                    return
+                for msg in result.log_messages:
+                    self._log_line(msg)
+                if result.plan is not None:
+                    self.current_plan = result.plan
+                    self._populate_plan_trees(result.plan)
+                self._end_rename_work()
+            elif w.name == "tr_apply_plan":
+                results = w.result
+                if isinstance(results, list):
+                    self._report_apply_results(results)
+                self.current_plan = None
+                self._set_confirm_buttons(enabled=False)
+                self._refresh_source_tree()
+                self._end_rename_work()
+        elif event.state is WorkerState.ERROR and w.name in ("tr_build_plan", "tr_apply_plan"):
+            self._end_rename_work()
+            err = w.error
+            if err is not None:
+                label = "Plan" if w.name == "tr_build_plan" else "Apply"
+                self._log_line(f"[red]{label} failed: {err}[/red]")
+        elif event.state is WorkerState.CANCELLED and w.name in ("tr_build_plan", "tr_apply_plan"):
+            self._end_rename_work()
+
+    def _begin_rename_work(self) -> None:
+        self._rename_working = True
+        for bid in (
+            "add-files",
+            "add-folders",
+            "build-plan",
+            "confirm-apply",
+            "cancel-plan",
+            "clear-queue",
+        ):
+            self.query_one(f"#{bid}", Button).disabled = True
+
+    def _end_rename_work(self) -> None:
+        self._rename_working = False
+        self.query_one("#add-files", Button).disabled = False
+        self.query_one("#add-folders", Button).disabled = False
+        self.query_one("#build-plan", Button).disabled = False
+        self.query_one("#clear-queue", Button).disabled = False
+        self._set_confirm_buttons(enabled=self.current_plan is not None)
 
     def _apply_current_plan(self) -> None:
         """Apply the frozen plan after explicit user confirmation (FR-007 / P0-07)."""
+        if self._rename_working:
+            return
         plan = self.current_plan
         if plan is None:
             self._log_line("[yellow]No plan to apply. Build a plan first.[/yellow]")
             return
-
+        self._begin_rename_work()
         self._log_line("[bold]Applying rename plan…[/bold]")
-        try:
-            results = apply_plan(plan, confirmed=True)
-        except (ValidationError, ApplyError) as exc:
-            self._log_line(f"[red]Apply failed: {exc}[/red]")
-            return
-        except Exception as exc:
-            self._log_line(f"[red]Apply error: {exc}[/red]")
-            return
-
-        self._report_apply_results(results)
-        self.current_plan = None
-        self._set_confirm_buttons(enabled=False)
-        self._refresh_source_tree()
+        self._run_apply_plan_thread(plan)
 
     def _cancel_plan(self) -> None:
         """Discard the current plan without applying (no filesystem mutation)."""

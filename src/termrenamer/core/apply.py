@@ -7,6 +7,7 @@ import os
 import shutil
 from pathlib import Path
 
+from termrenamer.core.collisions import allocate_destination
 from termrenamer.core.models import (
     ApplyResult,
     ApplyStatus,
@@ -72,16 +73,61 @@ def _remove_empty_source_dirs(applied_source_parents: set[Path]) -> None:
             _LOG.warning("Skipping source directory cleanup for %s: %s", dir_path, exc)
 
 
+def _merge_stray_folder_contents(
+    merge_pairs: set[tuple[Path, Path]],
+    occupied: set[Path],
+) -> set[Path]:
+    """After planned moves, move any remaining children into destination folders.
+
+    Uses the same `` (1)`` / `` (2)`` collision policy as planning. Log-only
+    on failures. Returns old parents that may now be empty.
+    """
+    extra_empty_candidates: set[Path] = set()
+    for old_p, new_p in sorted(
+        merge_pairs,
+        key=lambda t: (str(t[0]).casefold(), str(t[1]).casefold()),
+    ):
+        if not old_p.exists() or not old_p.is_dir():
+            continue
+        try:
+            children = sorted(old_p.iterdir(), key=lambda p: p.name.casefold())
+        except OSError as exc:
+            _LOG.warning("Cannot list %s for merge: %s", old_p, exc)
+            continue
+        if not children:
+            continue
+        try:
+            new_p.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            _LOG.warning("Cannot create merge destination %s: %s", new_p, exc)
+            continue
+        for child in children:
+            desired = new_p / child.name
+            final = allocate_destination(desired, source=child, occupied=occupied)
+            try:
+                _rename_or_move(child, final)
+            except OSError as exc:
+                _LOG.warning("Merge move failed %s -> %s: %s", child, final, exc)
+                continue
+        extra_empty_candidates.add(old_p)
+    return extra_empty_candidates
+
+
 def apply_plan(
     plan: RenamePlan,
     *,
     confirmed: bool,
+    merge_stragglers: bool = False,
 ) -> list[ApplyResult]:
     """Execute a frozen rename plan.
 
     Args:
         plan: Immutable plan from preview.
         confirmed: Must be True or :class:`ValidationError` is raised (FR-007).
+        merge_stragglers: When True, after successful planned moves, copy/move any
+            files or folders still under a source parent into the new destination
+            parent (same collision rules). Intended when folder-rename mode moved
+            media out of a season/show folder that had extra files.
 
     Returns:
         Per-operation results in deterministic source-path order.
@@ -93,6 +139,8 @@ def apply_plan(
     ordered = sorted(plan.entries, key=lambda e: planning_order_key(e))
     results: list[ApplyResult] = []
     applied_source_parents: set[Path] = set()
+    merge_pairs: set[tuple[Path, Path]] = set()
+    occupied: set[Path] = set()
 
     for entry in ordered:
         source = entry.source
@@ -181,8 +229,15 @@ def apply_plan(
                 reason="ok",
             ),
         )
+        occupied.add(dest)
         if src_parent != dest.parent:
             applied_source_parents.add(src_parent)
+            if merge_stragglers:
+                merge_pairs.add((src_parent, dest.parent))
+
+    if merge_stragglers and merge_pairs:
+        stray_parents = _merge_stray_folder_contents(merge_pairs, occupied)
+        applied_source_parents |= stray_parents
 
     _remove_empty_source_dirs(applied_source_parents)
 

@@ -104,6 +104,41 @@ def test_remove_empty_source_dirs_skips_non_empty(tmp_path: Path) -> None:
     assert (d / "file.txt").exists()
 
 
+def test_apply_merge_stragglers_moves_extra_files_to_dest_parent(
+    tmp_path: Path,
+) -> None:
+    """With merge_stragglers, files left in the source directory move with collision rules."""
+    base = tmp_path / "in" / "The Simpsons" / "Season1"
+    base.mkdir(parents=True)
+    vid = base / "Show.Name.S01E01.mkv"
+    vid.write_bytes(b"v")
+    (base / "extra.nfo").write_text("nfo", encoding="utf-8")
+    provider = StaticTvMetadataProvider(
+        _mapping={
+            ("show name", 1, 1): EpisodeMetadata(
+                show_title="Show Name",
+                episode_title="Pilot",
+            ),
+        },
+    )
+    plan = build_rename_plan(
+        root=tmp_path / "in",
+        mode=ScanMode.TV,
+        provider=provider,
+        enable_folder_rename=True,
+        enable_season_folders=True,
+    )
+    assert len(plan.entries) == 1
+    main_dest = plan.entries[0].destination
+    results = apply_plan(plan, confirmed=True, merge_stragglers=True)
+    assert [r.status for r in results] == [ApplyStatus.SUCCESS]
+    nfo_gone = (base / "extra.nfo").exists()
+    assert not nfo_gone
+    nfo_at_dest = main_dest.parent / "extra.nfo"
+    assert nfo_at_dest.is_file()
+    assert nfo_at_dest.read_text(encoding="utf-8") == "nfo"
+
+
 def test_remove_empty_source_dirs_deepest_first(tmp_path: Path) -> None:
     from termrenamer.core.apply import _remove_empty_source_dirs
 

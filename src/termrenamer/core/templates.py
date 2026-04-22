@@ -15,27 +15,37 @@ def format_tv_destination(
     metadata: EpisodeMetadata,
     original_path: Path,
     dest_root: Path | None = None,
+    enable_folder_rename: bool = True,
+    enable_season_folders: bool = True,
 ) -> Path:
-    """Build default TV destination path under ``root`` or optional ``dest_root``.
+    """Build default TV destination path.
 
-    When ``dest_root`` is set, the show/season tree is built under that folder instead of
-    ``root`` (scan still uses ``root``). When ``None``, behavior matches pre-destination-root
-    releases (paths under ``root``).
+    When ``enable_folder_rename`` is False, only the **file** name changes; the
+    destination directory is the source file's parent (``dest_root`` is ignored).
 
-    Future (P4): when ``dest_root`` is ``None``, detect when the source file already lives in a
-    folder named for the show and avoid redundant nesting.
+    When ``enable_folder_rename`` is True, the show (and optional season) tree is
+    built under ``dest_root`` when set, otherwise under ``root`` (scan root).
+
+    When ``enable_season_folders`` is False (TV, folder rename on), the file is
+    placed flat under the canonical show folder (no ``Season NN`` segment).
     """
-    target = dest_root if dest_root is not None else root
-    show = sanitize_path_segment(metadata.show_title)
-    season_label = f"Season {parse.season:02d}"
-    season_dir = target / show / season_label
     episode = parse.episodes[0]
+    show = sanitize_path_segment(metadata.show_title)
     base = (
         f"{show} - S{parse.season:02d}E{episode:02d} - "
         f"{sanitize_path_segment(metadata.episode_title)}"
     )
     name = sanitize_filename(base + original_path.suffix.lower())
-    return season_dir / name
+
+    if not enable_folder_rename:
+        return original_path.parent / name
+
+    target = dest_root if dest_root is not None else root
+    if enable_season_folders:
+        season_label = f"Season {parse.season:02d}"
+        season_dir = target / show / season_label
+        return season_dir / name
+    return target / show / name
 
 
 def format_film_destination(
@@ -44,17 +54,20 @@ def format_film_destination(
     metadata: MovieMetadata,
     original_path: Path,
     dest_root: Path | None = None,
+    enable_folder_rename: bool = True,
 ) -> Path:
     """Build default film destination path (``Title (Year)/Title (Year).ext``).
 
-    When ``dest_root`` is set, the folder/file is created under that root instead of ``root``.
-    When ``None``, behavior matches earlier releases.
-
-    Future (P4): when ``dest_root`` is ``None``, detect when the source file already lives in a
-    folder named for the movie and avoid redundant sub-folders.
+    When ``enable_folder_rename`` is False, only the **file** name changes in the
+    source directory; ``dest_root`` is ignored.
     """
-    target = dest_root if dest_root is not None else root
     label = f"{metadata.title} ({metadata.year})"
+    single_name = sanitize_filename(label + original_path.suffix.lower())
+
+    if not enable_folder_rename:
+        return original_path.parent / single_name
+
+    target = dest_root if dest_root is not None else root
     folder = target / sanitize_path_segment(label)
     name = sanitize_filename(label + original_path.suffix.lower())
     return folder / name

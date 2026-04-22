@@ -1,14 +1,21 @@
-"""Full-screen Settings: tabbed destinations with persistence in the live app.
+"""Full-screen Settings: destination + layout tabs (live app).
 
-Mirrors ``dev_textual/tui_mock/screens/settings.py`` structurally (TV / Film /
-Placeholder tabs; Destination row with ``Input`` + ``[+ folder]`` that opens a
-``SelectDirectory`` picker; ephemeral save-toast). Destination saves update
+The live TUI exposes **four** Settings tabs (in order): TV, Film, Layout, and a
+generic Placeholder tab reserved for future options.
+
+- TV / Film: destination folder inputs + a ``[+ folder]`` picker button.
+- Layout: folder rename + season-folder toggles (season disabled unless folder
+  rename is on).
+- Placeholder: intentionally minimal.
+
+Destination and layout saves write session overrides to
 ``TermRenamerApp._settings_overrides`` and, when the app was constructed with a
 bootstrap :class:`termrenamer.app_bootstrap.Settings` object, replace that
-snapshot via ``dataclasses.replace`` so film/TV roots flow into planning without
+snapshot via :func:`dataclasses.replace` so new values flow into planning without
 mutating a frozen instance in place.
 
-Never rewrites ``.env`` on disk; never creates ``mock_settings.toml``.
+Never rewrites ``.env`` on disk; never creates or reads ``mock_settings.toml``
+(that file is mock-only under ``dev_textual/``).
 """
 
 from __future__ import annotations
@@ -21,14 +28,23 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.timer import Timer
-from textual.widgets import Button, Footer, Header, Input, Static, TabbedContent, TabPane
+from textual.widgets import (
+    Button,
+    Checkbox,
+    Footer,
+    Header,
+    Input,
+    Static,
+    TabbedContent,
+    TabPane,
+)
 from textual_fspicker import SelectDirectory
 
 from termrenamer.tui.screens.footer_bindings import footer_bindings_for_modal
 
 
 class SettingsScreen(Screen[None]):
-    """Settings screen: TV / Film / Placeholder tabs + Destination rows."""
+    """Settings screen: TV / Film / Layout tabs, plus an extra Placeholder tab."""
 
     BINDINGS = footer_bindings_for_modal(screen_kind="settings")
 
@@ -63,6 +79,12 @@ class SettingsScreen(Screen[None]):
     }
     SettingsScreen .settings-destination-row Button {
         min-width: 12;
+    }
+    SettingsScreen .settings-layout-checkboxes {
+        height: auto;
+    }
+    SettingsScreen .settings-layout-checkboxes Checkbox {
+        margin: 0 0 1 0;
     }
     SettingsScreen #settings-save-toast {
         dock: bottom;
@@ -110,7 +132,21 @@ class SettingsScreen(Screen[None]):
                             id="film-destination-pick",
                             variant="primary",
                         )
-                with TabPane("Placeholder", id="tab-settings-placeholder"):
+                with (
+                    TabPane("Layout", id="tab-settings-layout"),
+                    Vertical(classes="settings-tab-inner"),
+                ):
+                    yield Static("Rename layout", classes="settings-section-header")
+                    with Vertical(classes="settings-layout-checkboxes"):
+                        yield Checkbox(
+                            "Enable folder rename",
+                            id="enable-folder-rename",
+                        )
+                        yield Checkbox(
+                            "Enable season folders (TV)",
+                            id="enable-season-folders",
+                        )
+                with TabPane("Placeholder", id="tab-settings-extra"):
                     yield Static("Placeholder (more settings to come)")
             yield Static("", id="settings-save-toast")
         yield Footer()
@@ -121,6 +157,13 @@ class SettingsScreen(Screen[None]):
         film_initial = self._load_destination("film")
         self.query_one("#tv-destination-input", Input).value = tv_initial
         self.query_one("#film-destination-input", Input).value = film_initial
+        folder_rename = self._load_folder_rename()
+        season_folders = self._load_season_folders() if folder_rename else False
+        fr_box = self.query_one("#enable-folder-rename", Checkbox)
+        fr_box.value = folder_rename
+        sf_box = self.query_one("#enable-season-folders", Checkbox)
+        sf_box.value = season_folders
+        sf_box.disabled = not folder_rename
         toast = self.query_one("#settings-save-toast", Static)
         toast.display = False
 
@@ -138,6 +181,24 @@ class SettingsScreen(Screen[None]):
         elif iid == "film-destination-input":
             self._persist("film", event.value)
 
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        if event.checkbox.id == "enable-folder-rename":
+            if not event.value:
+                sf = self.query_one("#enable-season-folders", Checkbox)
+                sf.value = False
+                sf.disabled = True
+            else:
+                self.query_one("#enable-season-folders", Checkbox).disabled = False
+            self._persist_layout(
+                event.value,
+                self.query_one("#enable-season-folders", Checkbox).value if event.value else False,
+            )
+        elif event.checkbox.id == "enable-season-folders":
+            self._persist_layout(
+                self.query_one("#enable-folder-rename", Checkbox).value,
+                event.value,
+            )
+
     def _open_destination_picker(self, input_id: str, kind: Literal["tv", "film"]) -> None:
         def _cb(path: Path | None) -> None:
             if path is None:
@@ -153,7 +214,7 @@ class SettingsScreen(Screen[None]):
         overrides = getattr(app, "_settings_overrides", None)
         if isinstance(overrides, dict):
             override = overrides.get(kind)
-            if override is not None:
+            if override is not None and isinstance(override, Path):
                 return str(override)
         settings = getattr(app, "_settings", None)
         if settings is not None:
@@ -162,6 +223,56 @@ class SettingsScreen(Screen[None]):
             if value is not None:
                 return str(value)
         return ""
+
+    def _load_folder_rename(self) -> bool:
+        app = self.app
+        overrides = getattr(app, "_settings_overrides", None)
+        if isinstance(overrides, dict):
+            o = overrides.get("folder_rename")
+            if isinstance(o, bool):
+                return o
+        settings = getattr(app, "_settings", None)
+        if settings is not None:
+            return bool(settings.enable_folder_rename)
+        return False
+
+    def _load_season_folders(self) -> bool:
+        app = self.app
+        overrides = getattr(app, "_settings_overrides", None)
+        if isinstance(overrides, dict):
+            o = overrides.get("season_folders")
+            if isinstance(o, bool):
+                return o
+        settings = getattr(app, "_settings", None)
+        if settings is not None:
+            return bool(settings.enable_season_folders)
+        return False
+
+    def _persist_layout(self, folder_rename: bool, season_folders: bool) -> None:
+        """Session overrides + ``Settings`` snapshot for layout toggles."""
+        if not folder_rename:
+            season_folders = False
+        app = self.app
+        overrides = getattr(app, "_settings_overrides", None)
+        if not isinstance(overrides, dict):
+            overrides = {}
+            app._settings_overrides = overrides  # type: ignore[attr-defined]
+        overrides["folder_rename"] = folder_rename
+        overrides["season_folders"] = season_folders
+        settings = getattr(app, "_settings", None)
+        if settings is not None:
+            app._settings = replace(  # type: ignore[attr-defined]
+                settings,
+                enable_folder_rename=folder_rename,
+                enable_season_folders=season_folders,
+            )
+        log = getattr(app, "_log_line", None)
+        if callable(log):
+            log(
+                "[dim]Saved layout: folder rename = "
+                f"{folder_rename!r}, season folders = {season_folders!r}[/dim]",
+            )
+        self._show_save_toast("Layout settings saved")
 
     def _persist(self, kind: Literal["tv", "film"], value: str) -> None:
         """Write session overrides and snapshot ``Settings`` when the app has one."""

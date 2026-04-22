@@ -33,12 +33,13 @@ def _settings(
         log_file_path=None,
         film_dest_folder=None,
         tv_dest_folder=None,
+        enable_folder_rename=False,
+        enable_season_folders=False,
     )
 
 
 def test_build_planning_wiring_requires_tmdb() -> None:
     http = create_http_client(_settings())
-    bad = _settings(tmdb_key="")
     bad = Settings(
         tmdb_api_key=None,
         tvdb_api_key=None,
@@ -52,6 +53,8 @@ def test_build_planning_wiring_requires_tmdb() -> None:
         log_file_path=None,
         film_dest_folder=None,
         tv_dest_folder=None,
+        enable_folder_rename=False,
+        enable_season_folders=False,
     )
     with pytest.raises(ValidationError, match="TMDB API key"):
         build_planning_wiring(bad, http)

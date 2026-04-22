@@ -42,6 +42,11 @@ class SqliteMetadataCache:
             self._conn.close()
             self._conn = None
 
+    def __del__(self) -> None:
+        """Best-effort close; prefer explicit :meth:`close` in app/teardown code."""
+
+        self.close()
+
     def get_tv_episode(
         self,
         *,
