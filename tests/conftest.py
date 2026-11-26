@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,16 @@ class IsolatedDirs:
     config_home: Path
     appdata: Path
     workdir: Path
+
+    @property
+    def user_settings_file(self) -> Path:
+        """The user settings file the app reads on the running platform, in these folders.
+
+        Under ``appdata`` on Windows, under ``config_home`` everywhere else. Built from the
+        fixture's folders, not from the app's resolver, so tests stay independent of it.
+        """
+        base = self.appdata if sys.platform == "win32" else self.config_home
+        return base / "termrenamer" / ".env"
 
 
 @pytest.fixture(autouse=True)

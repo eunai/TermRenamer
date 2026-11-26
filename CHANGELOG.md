@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Contributor tooling: CI** — a GitHub Actions workflow (`.github/workflows/ci.yml`) runs `uv sync --locked`, then `uv run pytest -v --cov`, `uv run ruff check .`, `uv run ruff format --check .` and `uv run mypy src`, each as its own step, on Linux with Python 3.13, for each pull request and each push to `main`.
+- **Contributor tooling: CI** — a GitHub Actions workflow (`.github/workflows/ci.yml`) runs `uv sync --locked`, then `uv run pytest -v --cov`, `uv run ruff check .`, `uv run ruff format --check .` and `uv run mypy src`, each as its own step, on Linux and Windows with Python 3.13 (one job per system, and a failure on one does not stop the other), for each pull request and each push to `main`.
 
 ### Changed
 
