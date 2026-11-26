@@ -1,4 +1,4 @@
-"""Modal and full-screen views for the live TUI (dev-textual-guide §5 Phase 2)."""
+"""Modal and full-screen views for the live TUI."""
 
 from termrenamer.tui.screens.add_source import AddSourceQuickPick
 from termrenamer.tui.screens.footer_bindings import footer_bindings_for_modal
