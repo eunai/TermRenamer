@@ -18,9 +18,8 @@ dependencies = [
     "tomli_w>=1.0.0",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
-    "tomli_w>=1.0.0",
     "mypy>=1.15.0",
     "pytest-asyncio>=0.25.0",
     "pytest-cov>=6.0.0",

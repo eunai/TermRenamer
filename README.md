@@ -56,8 +56,10 @@ source .venv/bin/activate
 # Windows:
 # .venv\Scripts\activate
 
-pip install -e ".[dev]"
+pip install .
 ```
+
+To work on TermRenamer itself, see [Development](#development).
 
 Copy `.env.example` to `.env` and fill in values locally. Never commit `.env`
 or real API keys.
@@ -90,12 +92,17 @@ See [CHANGELOG.md](CHANGELOG.md) for release-by-release code changes.
 
 ## Development
 
+Development uses [uv](https://docs.astral.sh/uv/). `uv sync` creates `.venv`
+with the Python version in `.python-version` and installs the app in editable
+mode with the `dev` dependency group, pinned by `uv.lock`.
+
 ```bash
-pytest -v
-ruff check .
-ruff format --check .
-mypy src
-python -m termrenamer
+uv sync
+uv run pytest -v
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy src
+uv run python -m termrenamer
 ```
 
 ## License

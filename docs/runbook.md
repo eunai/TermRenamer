@@ -35,18 +35,18 @@ This document complements [`project_spec.md`](../internal/project_spec.md) with 
 
 ## Quality verification (developers)
 
-From the repository root after `pip install -e ".[dev]"`:
+From the repository root after `uv sync`:
 
 ```bash
-pytest -v
-ruff check .
-ruff format --check .
-mypy src
+uv run pytest -v
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy src
 ```
 
-`pytest -v` runs **`pytest-cov`** with a **≥ 85%** line-coverage minimum on `src/termrenamer/` (see `pyproject.toml`).
+`uv run pytest -v` runs **`pytest-cov`** with a **≥ 85%** line-coverage minimum on `src/termrenamer/` (see `pyproject.toml`).
 
-Run the TUI: `python -m termrenamer` (see spec §6).
+Run the TUI: `uv run python -m termrenamer` (see spec §6).
 
 **Current TUI (0.10+):** there is no embedded directory tree — **+ folder** / **+ file** (or **Ctrl+F**) queue sources via **textual-fspicker** modals; optional **Film** / **TV** output roots are set under **Settings** (**Ctrl+,**) or via `TERMRENAMER_*_DEST_FOLDER` at bootstrap.
 
