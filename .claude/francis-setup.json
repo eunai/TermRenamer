@@ -1,0 +1,142 @@
+{
+  "skill": "francis-setup",
+  "version": "1.5.0",
+  "source_repo": false,
+  "items": {
+    "agent-workflow": {
+      "version": "1.5.0",
+      "files": [
+        {
+          "path": "docs/agents/agent-workflow.md",
+          "sha256": "668b9963097196e3720ad605811f13ce4901291942e3d20824ae04d0c86e0921"
+        }
+      ],
+      "parts": [
+        {
+          "path": "AGENTS.md",
+          "text": "Coordinate as the main agent: delegate work with the models and review loop in docs/agents/agent-workflow.md.",
+          "sha256": "55061b229d3f503dc9d1ecb2abdcc3b6c23abec455c0d799f6bca5baf89e8f74"
+        },
+        {
+          "path": "GLOSSARY.md",
+          "text": "**Coordinator**:\nThe main agent that owns the session, delegates the work to sub-agents, runs the git steps itself, and edits no repository files beyond a trivial fix, a permission settings change the user approved, or a release script's output.\n_Avoid_: orchestrator, manager, lead",
+          "sha256": "0c4a4d863421884f2a3e0311581481ba0424f27403617a3330d679d6c4a0247e"
+        },
+        {
+          "path": "GLOSSARY.md",
+          "text": "**Verdict**:\nCodex's final message in a review, ending in `VERDICT: APPROVED` or `VERDICT: CHANGES REQUESTED`. See [Agent workflow](docs/agents/agent-workflow.md).\n_Avoid_: result, output, review log",
+          "sha256": "be30595174808b0d383f143fd1b0a891661cc1e1319fc96c213f381699c8426e"
+        },
+        {
+          "path": "GLOSSARY.md",
+          "text": "**Work size**:\nHow much process a change needs, fixed at the end of a grill: small, specced, or ticketed. See [Agent workflow](docs/agents/agent-workflow.md).\n_Avoid_: tier, scope, level",
+          "sha256": "15975bd35f2c3d84f7b042bac5454715909ca45dd2115bedeb22224f2ba6c2b9"
+        },
+        {
+          "path": "GLOSSARY.md",
+          "text": "**Check log**:\nThe file in the session's scratchpad that holds the whole output of one run of the repo's checks or tests. See [Agent workflow](docs/agents/agent-workflow.md).\n_Avoid_: run log, test log, output file",
+          "sha256": "0c211e0c5a15c0af7ff288696d229757d535618f26c313f60eff42e01ee39178"
+        },
+        {
+          "path": "GLOSSARY.md",
+          "text": "**Intermittent failure**:\nA failure that passes on a rerun with no change that explains it. See [Agent workflow](docs/agents/agent-workflow.md).\n_Avoid_: flaky test, flake, noise",
+          "sha256": "9b81b6015a9ec74c795845ef6096919c54d7d14539c81dcb26f255f26055f6f9"
+        },
+        {
+          "path": "GLOSSARY.md",
+          "text": "**Manual checklist**:\nThe steps a person runs on the repo's local build to check a change that a reader can see, each step on a real page or screen. See [Agent workflow](docs/agents/agent-workflow.md).\n_Avoid_: QA list, test plan, browser checklist",
+          "sha256": "976a1f7c5c41ab1a48f4c756fd07e04323894c1691bbb0c86c43bdc13490281d"
+        },
+        {
+          "path": "GLOSSARY.md",
+          "text": "**Run report**:\nThe message that `agent-inbox run` sends to the session that `--report-to` names when a headless run ends, such as a Codex review: the exit code, the verdict, and the last lines of the output when the run failed. See [Agent workflow](docs/agents/agent-workflow.md).\n_Avoid_: review notice, wake",
+          "sha256": "3773f6c9024c25d979234328dd98a9157f66d0cd6df2cad3d5203426557f3672"
+        },
+        {
+          "path": "GLOSSARY.md",
+          "text": "**Wait task**:\nThe coordinator's background task that runs `agent-inbox wait` and exits when an unread message arrives, such as a run report. See [Agent workflow](docs/agents/agent-workflow.md).\n_Avoid_: inbox watcher, review timer",
+          "sha256": "ff12b8ff14ccf4f348fd89117f3b1bf49467a2198fe7577ccea28f3bf9a35d6a"
+        }
+      ],
+      "adjustments": {
+        "link_git_workflow": true,
+        "link_versioning": true,
+        "worker_cap": 4
+      }
+    },
+    "git-workflow": {
+      "version": "1.5.0",
+      "files": [
+        {
+          "path": "docs/agents/git-workflow.md",
+          "sha256": "0961ef48e56575426f23323be955c4aa4216bbedf924fbc83689e5cec2a88087"
+        }
+      ],
+      "parts": [
+        {
+          "path": "AGENTS.md",
+          "text": "Read docs/agents/git-workflow.md before branching, committing, opening a pull request or merging.",
+          "sha256": "391f8af99469ea3d3697c187ca0f9c0edc7e5196ba7706ccf785e838e53aa84b"
+        },
+        {
+          "path": ".githooks/commit-msg",
+          "text": "# francis-setup item 3 begin: reject a subject that is not a Conventional Commit.\nLC_ALL=C awk '\nfunction refuse(subject) {\n  printf \"commit-msg: the subject is not a Conventional Commit:\\n  %s\\n\", subject > \"/dev/stderr\"\n  printf \"Write it as <type>[(<scope>)][!]: <description>; <type> is one of feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.\\n\" > \"/dev/stderr\"\n  exit 1\n}\n/^#/ { next }\n{\n  found = 1\n  subject = $0\n  sub(/\\r$/, \"\", subject)\n  s = subject\n  # fixup!, squash!, amend! and git revert wrap a subject that must pass itself.\n  while (1) {\n    if (s ~ /^(fixup|squash|amend)! /) s = substr(s, index(s, \" \") + 1)\n    else if (s ~ /^(Revert|Reapply) \".*\"$/) { s = substr(s, index(s, \"\\\"\") + 1); s = substr(s, 1, length(s) - 1) }\n    else break\n  }\n  if (s !~ /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\\([^ \\t()]+\\))?!?: .*[^ \\t]/) refuse(subject)\n  exit 0\n}\n# A message of comment lines only has an empty subject.\nEND { if (!found) refuse(\"\") }' \"$1\" || exit 1\n# francis-setup item 3 end",
+          "sha256": "85ab89325f17ba6c747ce3be4bc05ca90e58720a32848df828ee679526fb28b4"
+        }
+      ],
+      "github_settings": true
+    },
+    "iterm2-panes": {
+      "version": "1.5.0",
+      "files": [
+        {
+          "path": "docs/agents/iterm2.md",
+          "sha256": "1633a1cd7646d74c2655149cdd9445b85528180938980eab8eec6ab9b53ac5fe"
+        },
+        {
+          "path": ".claude/worker-settings.json",
+          "sha256": "de4e552baf59c7ea7516803c337be6086720a8cc41f6864a58feeaf2e0fa6e1b"
+        }
+      ],
+      "parts": [
+        {
+          "path": "GLOSSARY.md",
+          "text": "**Worker**:\nThe Opus agent that changes code, configuration, tooling or tests and runs its own Codex review loop, in a worker pane or in-process. See [Agent workflow](docs/agents/agent-workflow.md).\n_Avoid_: implementer, coder, executor",
+          "sha256": "7645f04e3ee26d49c43af6d0fe2391892323f4faf2897ca1c8c6a0457b31ab03"
+        },
+        {
+          "path": "GLOSSARY.md",
+          "text": "**Worker pane**:\nThe iTerm2 pane where a worker runs as a Claude session, in the grid of up to two columns and two rows right of the main pane, each Codex review as a background task. See [iTerm2 panes](docs/agents/iterm2.md).\n_Avoid_: implementer pane, panel, tab, window",
+          "sha256": "f006972bf189803a81c15b8627993304fa6644dc5ffcd40a69874fef699d8785"
+        },
+        {
+          "path": "GLOSSARY.md",
+          "text": "**Command pane**:\nThe iTerm2 pane where the coordinator runs a command other than a worker's Claude session, such as Codex, in the same grid and under the same cap as the worker panes. See [iTerm2 panes](docs/agents/iterm2.md).\n_Avoid_: cmd pane, shell pane, raw pane",
+          "sha256": "013f7b6bbdbc718e980174bbe1577008a702f7b599a8370f75c01bac3dfe3500"
+        }
+      ],
+      "adjustments": {
+        "profiles": {
+          "worker": "SAKURA"
+        },
+        "worker_cap": 4,
+        "launch_mode": "auto",
+        "check_commands": [
+          "pytest",
+          "ruff check",
+          "ruff format --check",
+          "mypy src"
+        ]
+      }
+    },
+    "versioning": {
+      "version": "1.5.0",
+      "files": [
+        {
+          "path": "docs/agents/versioning.md",
+          "sha256": "69d611c7edf5feb6694b0fad90e53600da519a51dd15163002d120016178dba1"
+        }
+      ]
+    }
+  }
+}

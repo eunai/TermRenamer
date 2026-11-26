@@ -16,8 +16,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Default rename layout** — bootstrap defaults are **filename-only** (both layout toggles off), which differs from earlier releases that always built show/season (TV) or title (film) folder trees. Enable **folder rename** in Settings or via env to restore library-style folder output.
 - **TUI — responsive planning and apply** — **Build plan** and **Confirm apply** run network and filesystem work in Textual **thread workers** (exclusive group) so the UI event loop is not blocked during metadata lookups or renames. While a worker is running, **+ file**, **+ folder**, **Plan**, **Apply**, **Clear**, and **Cancel** are disabled; **FR-007** (preview then explicit **Confirm apply**) is unchanged. See `termrenamer.tui.app.TermRenamerApp` and project spec (module registry `tui/`).
 
-- **Changelog (public only)** — Prior `[Unreleased]` notes that referenced private documentation trees or tooling were removed from this file per the project’s public changelog contract. Detailed maintainer-facing notes for earlier iterations are kept outside the public changelog (per repository policy).
-
 ### Fixed
 
 - **Activity tab** — Activity feed lines triggered while planning runs on a worker thread are applied on the main UI thread (thread-safe for Textual `RichLog`).

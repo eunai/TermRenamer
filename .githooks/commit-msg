@@ -1,0 +1,26 @@
+#!/bin/sh
+# francis-setup item 3 begin: reject a subject that is not a Conventional Commit.
+LC_ALL=C awk '
+function refuse(subject) {
+  printf "commit-msg: the subject is not a Conventional Commit:\n  %s\n", subject > "/dev/stderr"
+  printf "Write it as <type>[(<scope>)][!]: <description>; <type> is one of feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.\n" > "/dev/stderr"
+  exit 1
+}
+/^#/ { next }
+{
+  found = 1
+  subject = $0
+  sub(/\r$/, "", subject)
+  s = subject
+  # fixup!, squash!, amend! and git revert wrap a subject that must pass itself.
+  while (1) {
+    if (s ~ /^(fixup|squash|amend)! /) s = substr(s, index(s, " ") + 1)
+    else if (s ~ /^(Revert|Reapply) ".*"$/) { s = substr(s, index(s, "\"") + 1); s = substr(s, 1, length(s) - 1) }
+    else break
+  }
+  if (s !~ /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^ \t()]+\))?!?: .*[^ \t]/) refuse(subject)
+  exit 0
+}
+# A message of comment lines only has an empty subject.
+END { if (!found) refuse("") }' "$1" || exit 1
+# francis-setup item 3 end

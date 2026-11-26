@@ -30,11 +30,12 @@ debug-*.log
 venv/
 ENV/
 
-# Public-only additional exclusions: private AI tooling, internal docs,
-# and dev scratch must never appear here.
+# Local AI tooling state, internal docs and dev scratch stay out of the repo;
+# the shared agent setup (AGENTS.md, worker settings, setup record) is tracked.
 .cursor/
-.claude/
-AGENTS.md
+.claude/*
+!.claude/worker-settings.json
+!.claude/francis-setup.json
 docs/internal/
 dev_textual/
 .DS_Store
