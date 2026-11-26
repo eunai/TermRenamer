@@ -15,7 +15,6 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "textual>=1.0.0",
     "textual-fspicker==1.0.0",
-    "tomli_w>=1.0.0",
 ]
 
 [dependency-groups]
@@ -32,6 +31,9 @@ termrenamer = "termrenamer.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+termrenamer = ["py.typed", "tui/theme.tcss"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
