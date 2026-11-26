@@ -33,8 +33,11 @@ _VERSION_BADGE = re.compile(
 )
 
 
+_HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+
+
 def readme_badge_version(text: str) -> str:
-    match = _VERSION_BADGE.search(text)
+    match = _VERSION_BADGE.search(_HTML_COMMENT.sub("", text))
     assert match is not None, "README.md has no Version badge"
     return match.group(1)
 
@@ -58,6 +61,17 @@ def test_readme_badge_version_reads_the_version_badge() -> None:
 
 def test_readme_badge_version_fails_without_a_version_badge() -> None:
     text = "# App\n\n[![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)\n"
+
+    with pytest.raises(AssertionError, match="no Version badge"):
+        readme_badge_version(text)
+
+
+def test_readme_badge_version_ignores_a_commented_out_badge() -> None:
+    text = (
+        "# App\n\n<!--\n"
+        "[![Version](https://img.shields.io/badge/version-0.4.2-blue)](./pyproject.toml)\n"
+        "-->\n"
+    )
 
     with pytest.raises(AssertionError, match="no Version badge"):
         readme_badge_version(text)
