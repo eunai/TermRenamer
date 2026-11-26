@@ -14,8 +14,7 @@ bootstrap :class:`termrenamer.app_bootstrap.Settings` object, replace that
 snapshot via :func:`dataclasses.replace` so new values flow into planning without
 mutating a frozen instance in place.
 
-Never rewrites ``.env`` on disk; never creates or reads ``mock_settings.toml``
-(that file is mock-only).
+Never rewrites ``.env`` on disk; never creates or reads ``mock_settings.toml``.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""OMDb adapter tests — canned JSON, no live network (spec §8)."""
+"""OMDb adapter tests — canned JSON, no live network."""
 
 from __future__ import annotations
 

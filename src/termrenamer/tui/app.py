@@ -120,10 +120,10 @@ class TermRenamerApp(App[None]):
     palette (Ctrl+P) is disabled so the ``p`` binding remains a plain provider
     toggle.
 
-    Sources are ingested via ``textual-fspicker`` (Phase 2): the ``+ folder`` /
+    Sources are ingested via ``textual-fspicker``: the ``+ folder`` /
     ``+ file`` buttons (or ``Ctrl+F`` → :class:`AddSourceQuickPick`) push a
     ``SelectDirectory`` / ``FileOpen`` modal and append the picked path onto
-    ``self._queue``. Planning iterates the full queue (Phase 3): per-directory
+    ``self._queue``. Planning iterates the full queue: per-directory
     :func:`~termrenamer.core.planning.build_rename_plan` calls are merged with
     :func:`~termrenamer.core.planning.merge_rename_plans` after resolving
     cross-root destination collisions; a queued **file** is planned from its
@@ -166,8 +166,7 @@ class TermRenamerApp(App[None]):
         self._wiring = wiring
         self._settings = settings
         # Queue of user-added sources (folders or individual files). Populated
-        # by the fspicker callbacks (Phase 2); fan-out planning uses the whole
-        # queue (Phase 3).
+        # by the fspicker callbacks; fan-out planning uses the whole queue.
         self._queue: list[Path] = []
         # Session-scoped Settings overrides written by :class:`SettingsScreen`.
         # Overrides shadow bootstrap ``Settings`` for the current process; the

@@ -1,4 +1,4 @@
-"""Parse TV release-style filenames for season/episode hints."""
+"""Parse the filenames of the user's backups for TV episode and film title hints."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ _SXXEYY = re.compile(
 
 _YEAR_TOKEN = re.compile(r"(?<![0-9])(?:19|20)\d{2}(?![0-9])")
 
-# Trailing release tags often not part of the title (heuristic).
+# Trailing quality and format tags, often not part of the title (heuristic).
 _FILM_JUNK = frozenset(
     {
         "1080p",
