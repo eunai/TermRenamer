@@ -36,9 +36,8 @@ When you use **TheTVDB** for TV metadata, data comes from their API. Per [TheTVD
 
 ## AI-assisted development
 
-This project is developed with AI coding assistants. The detailed agent
-tooling and rules are maintained in a private working repository and are not
-included in this public release.
+This project is developed with AI coding assistants. The rules they follow
+live in [`AGENTS.md`](AGENTS.md) and [`docs/agents/`](docs/agents/).
 
 ## Requirements
 

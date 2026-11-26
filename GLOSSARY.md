@@ -2,6 +2,40 @@
 
 ## Language
 
+**Plan**:
+The immutable batch of planned renames, covering each video and its sidecars, that preview shows and apply executes unchanged.
+
+**Preview**:
+The view of a plan, as source and destination folder trees, that the user reviews before confirming apply.
+
+**Apply**:
+Executing a confirmed plan on the filesystem; nothing is renamed before the user confirms.
+
+**Mode**:
+The user's choice of TV or Film, which decides how filenames are parsed, which providers apply and how destinations are laid out.
+
+**Provider**:
+An online metadata source (TMDB, TheTVDB or OMDb) that a plan looks titles up in; TV and Film accept different providers.
+
+**Sidecar**:
+A subtitle or info file (such as `.srt` or `.nfo`) that moves with the video sharing its folder and filename stem; one with no such video is left alone.
+
+**Folder rename**:
+The setting that lets a plan move media into canonical show or film folders; when off, only the filename changes in its current folder.
+
+**Season folder**:
+The `Season NN` folder inside a show's folder; TV folder rename places episodes in it unless season folders are switched off.
+
+**Destination root**:
+The folder under which folder rename builds the show or film tree, set separately for TV and Film; when unset, the tree is built in the scanned folder.
+_Avoid_: destination folder, output root
+
+**Straggler**:
+A file or folder left behind in a source folder after a plan's moves, which apply can merge into the destination folder.
+_Avoid_: stray file
+
+## Agent workflow
+
 **Coordinator**:
 The main agent that owns the session, delegates the work to sub-agents, runs the git steps itself, and edits no repository files beyond a trivial fix, a permission settings change the user approved, or a release script's output.
 _Avoid_: orchestrator, manager, lead
