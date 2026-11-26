@@ -34,11 +34,29 @@ _VERSION_BADGE = re.compile(
 
 
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+_FENCE = re.compile(r"^ {0,3}(```|~~~)")
+
+
+def _top_badge_block(text: str) -> str:
+    """The README lines before the first ``## `` heading, outside comments and fences."""
+    kept: list[str] = []
+    in_fence = False
+    for line in _HTML_COMMENT.sub("", text).splitlines():
+        if _FENCE.match(line):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if line.startswith("## "):
+            break
+        kept.append(line)
+    return "\n".join(kept)
 
 
 def readme_badge_version(text: str) -> str:
-    match = _VERSION_BADGE.search(_HTML_COMMENT.sub("", text))
-    assert match is not None, "README.md has no Version badge"
+    """The version in the Version badge of the README's top badge block."""
+    match = _VERSION_BADGE.search(_top_badge_block(text))
+    assert match is not None, "README.md has no Version badge in its top badge block"
     return match.group(1)
 
 
@@ -71,6 +89,27 @@ def test_readme_badge_version_ignores_a_commented_out_badge() -> None:
         "# App\n\n<!--\n"
         "[![Version](https://img.shields.io/badge/version-0.4.2-blue)](./pyproject.toml)\n"
         "-->\n"
+    )
+
+    with pytest.raises(AssertionError, match="no Version badge"):
+        readme_badge_version(text)
+
+
+def test_readme_badge_version_ignores_a_badge_below_the_first_section() -> None:
+    text = (
+        "# App\n\n## Install\n\n"
+        "[![Version](https://img.shields.io/badge/version-0.4.2-blue)](./pyproject.toml)\n"
+    )
+
+    with pytest.raises(AssertionError, match="no Version badge"):
+        readme_badge_version(text)
+
+
+def test_readme_badge_version_ignores_a_badge_in_a_fenced_block() -> None:
+    text = (
+        "# App\n\n```markdown\n"
+        "[![Version](https://img.shields.io/badge/version-0.4.2-blue)](./pyproject.toml)\n"
+        "```\n\n## Install\n"
     )
 
     with pytest.raises(AssertionError, match="no Version badge"):
