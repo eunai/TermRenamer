@@ -4,8 +4,7 @@ Dolphie-style ``Switch`` toggles replace the previous ``Select`` dropdowns:
 TV vs Film is a single two-position ``Switch`` (left/off = TV, right/on = Film);
 provider selection remains mutually-exclusive ``Switch``es, and providers that do
 not apply to the current mode are **hidden** (``display = False`` on the switch
-and its peer ``Label``) so invalid combinations cannot be chosen (FR-002 /
-FR-003). An inline ``settings`` button posts :class:`OpenSettingsRequested` so
+and its peer ``Label``) so invalid combinations cannot be chosen. An inline ``settings`` button posts :class:`OpenSettingsRequested` so
 the host app can surface the modal without a dedicated binding.
 """
 
@@ -64,7 +63,7 @@ def _provider_id_from_switch_id(switch_id: str) -> str:
 
 
 class ModeProviderBar(Horizontal):
-    """Mode and provider toggle switches (FR-002 / FR-003).
+    """Mode and provider toggle switches.
 
     Internally the widget guards against re-entrant watcher calls while it
     flips peer switches so that a single user click produces **exactly one**
