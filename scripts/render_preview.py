@@ -15,6 +15,7 @@ runs give the same file.
 from __future__ import annotations
 
 import asyncio
+import logging
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -109,8 +110,15 @@ async def _screenshot(source: Path) -> str:
 
 def render_preview(out: Path = DEFAULT_OUT) -> Path:
     """Write the preview screenshot SVG to ``out`` and return ``out``."""
-    with tempfile.TemporaryDirectory() as tmp:
-        svg = asyncio.run(_screenshot(_make_backups(Path(tmp))))
+    # The app swaps the root logger's stream handlers for its Logs tab on mount;
+    # put the caller's handlers back afterwards.
+    root_logger = logging.getLogger()
+    handlers = list(root_logger.handlers)
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            svg = asyncio.run(_screenshot(_make_backups(Path(tmp))))
+    finally:
+        root_logger.handlers[:] = handlers
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(svg, encoding="utf-8")
     return out
