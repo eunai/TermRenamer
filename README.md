@@ -171,6 +171,9 @@ Key bindings:
   ([#5](https://github.com/eunai/TermRenamer/issues/5)).
 - There is no setting to skip an entry instead of adding a suffix on a
   collision ([#6](https://github.com/eunai/TermRenamer/issues/6)).
+- On macOS and Linux, apply can replace a broken symbolic link that appears at
+  a destination after the preview
+  ([#9](https://github.com/eunai/TermRenamer/issues/9)).
 
 ## Troubleshooting
 
