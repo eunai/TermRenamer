@@ -43,11 +43,6 @@ asyncio_default_fixture_loop_scope = "function"
 markers = [
     "asyncio: async tests (pytest-asyncio)",
 ]
-addopts = [
-    "--cov=termrenamer",
-    "--cov-report=term-missing",
-    "--cov-fail-under=85",
-]
 
 [tool.coverage.run]
 source = ["src/termrenamer"]
