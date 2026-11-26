@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Contributor tooling: uv** — development now uses [uv](https://docs.astral.sh/uv/): `uv sync` installs the app and the `dev` dependency group (moved from the `[dev]` extra, so `pip install -e ".[dev]"` no longer installs dev tools), pinned by the committed `uv.lock` and `.python-version` (3.13). Run checks with `uv run pytest -v`, `uv run ruff check .`, `uv run ruff format --check .` and `uv run mypy src`. Installing the app with `pip install .` still works without uv.
 - **Default rename layout** — bootstrap defaults are **filename-only** (both layout toggles off), which differs from earlier releases that always built show/season (TV) or title (film) folder trees. Enable **folder rename** in Settings or via env to restore library-style folder output.
 - **TUI — responsive planning and apply** — **Build plan** and **Confirm apply** run network and filesystem work in Textual **thread workers** (exclusive group) so the UI event loop is not blocked during metadata lookups or renames. While a worker is running, **+ file**, **+ folder**, **Plan**, **Apply**, **Clear**, and **Cancel** are disabled; **FR-007** (preview then explicit **Confirm apply**) is unchanged. See `termrenamer.tui.app.TermRenamerApp` and project spec (module registry `tui/`).
 
