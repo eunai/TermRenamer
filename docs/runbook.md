@@ -1,17 +1,22 @@
 # Operator runbook — TermRenamer
 
-This document complements the [README](../README.md) with practical troubleshooting. **Never commit API keys**; use `.env` or your shell environment (see [`.env.example`](../.env.example)).
+This document complements the [README](../README.md) with practical troubleshooting. **Never commit API keys**; use the user settings file, a `.env` or your shell environment (see [`.env.example`](../.env.example)).
+
+Settings come from three sources, highest first: `TERMRENAMER_*` environment variables, a `.env` in the folder you start the app from (that folder only, no parent folders), then the **user settings file**: `%APPDATA%\termrenamer\.env` on Windows, `$XDG_CONFIG_HOME/termrenamer/.env` or `~/.config/termrenamer/.env` on macOS and Linux. A start-up error about a missing key prints the user settings file's full path.
 
 ## Common failures
 
 | Symptom | Likely cause | What to check |
 |--------|----------------|----------------|
-| `ValidationError` about TMDB API key on startup | `TERMRENAMER_TMDB_API_KEY` unset | Copy `.env.example` → `.env`, set the key, restart the app |
-| Must set TMDB key even when only using TheTVDB | `python -m termrenamer` loads settings with TMDB required by default | Set `TERMRENAMER_TMDB_API_KEY` in `.env` anyway (a known limitation, not a blocker) |
-| `ValidationError` about OMDb API key | `TERMRENAMER_OMDB_API_KEY` unset when OMDb selected as film provider | Set `TERMRENAMER_OMDB_API_KEY` in `.env` or use TMDB for film mode instead |
+| `TMDB API key is required` on startup (exit status 2) | `TERMRENAMER_TMDB_API_KEY` unset in every source | Copy `.env.example` to the user settings file path the message prints, set the key, restart the app; for a clone, a `.env` at the repository root works when you start from that root |
+| A key in a clone's `.env` is not found | The app reads a `.env` only from the exact folder it starts in, and no longer searches parent folders or its own source folder | Start from the folder that holds the `.env`, or move the keys to the user settings file |
+| `Cannot read settings file` on startup (exit status 2) | The user settings file or a `.env` is unreadable or not UTF-8 | Fix the file's permissions, or save it as UTF-8 |
+| Must set TMDB key even when only using TheTVDB | `python -m termrenamer` loads settings with TMDB required by default | Set `TERMRENAMER_TMDB_API_KEY` in the user settings file or `.env` anyway (a known limitation, not a blocker) |
+| `OMDb requires an API key` | `TERMRENAMER_OMDB_API_KEY` unset when OMDb selected as film provider | Set `TERMRENAMER_OMDB_API_KEY` in the user settings file the message names (or `.env`), or use TMDB for film mode instead |
+| `TheTVDB requires an API key` | `TERMRENAMER_TVDB_API_KEY` unset when TheTVDB selected as TV provider | Set `TERMRENAMER_TVDB_API_KEY` (and `TERMRENAMER_TVDB_SUBSCRIBER_PIN` if your account needs it) in the user settings file the message names (or `.env`) |
 | `ValidationError` for invalid numeric/boolean env | Bad value for `TERMRENAMER_HTTP_TIMEOUT_SECONDS`, `TERMRENAMER_HTTP_BACKOFF_BASE_SECONDS`, `TERMRENAMER_HTTP_MAX_ATTEMPTS`, or `TERMRENAMER_HTTP_JITTER` | Use numbers for timeouts/backoff/max attempts; for jitter use `true`/`false`/`1`/`0`/`yes`/`no`/`on`/`off` (see `load_settings()` in `app_bootstrap.py`) |
 | `TERMRENAMER_HTTP_MAX_ATTEMPTS must be >= 1` | Max attempts set to 0 or negative | Set to at least `1` |
-| HTTP **401** from TMDB | Invalid or revoked API key | Regenerate key in TMDB dashboard; verify no extra quotes/spaces in `.env` |
+| HTTP **401** from TMDB | Invalid or revoked API key | Regenerate key in TMDB dashboard; verify no extra quotes/spaces in the user settings file or `.env` |
 | HTTP **401** from TheTVDB | Bad API key or expired session | Set `TERMRENAMER_TVDB_API_KEY` (and `TERMRENAMER_TVDB_SUBSCRIBER_PIN` if your account requires it); the adapter re-logins at most once |
 | HTTP **404** from TheTVDB during planning | Search results can expose a non-numeric `id` (for example `series-412429`); episode routes require the numeric **tvdb_id** | Use a build where `api/tvdb_v4` resolves `tvdb_id` (and sends `page` on episode list); negotiated-contract keys without a PIN are fine if your dashboard does not require one |
 | HTTP **429** / slow planning | Rate limiting | Reduce batch size; wait; avoid sharing one key across many machines. Transport honors `Retry-After` when present and uses bounded backoff with optional jitter (see `util/http.py`) |

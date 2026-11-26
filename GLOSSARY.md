@@ -34,6 +34,10 @@ _Avoid_: destination folder, output root
 A file or folder left behind in a source folder after a plan's moves, which apply can merge into the destination folder.
 _Avoid_: stray file
 
+**User settings file**:
+The per-user dotenv file the app reads its settings from, overridden by a `.env` in the current folder and by environment variables.
+_Avoid_: config file, global .env
+
 ## Agent workflow
 
 **Coordinator**:
