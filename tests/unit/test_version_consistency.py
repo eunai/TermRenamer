@@ -31,14 +31,15 @@ def test_newest_changelog_version_skips_unreleased() -> None:
 
 
 def test_version_copies_match_newest_changelog_heading() -> None:
-    changelog = newest_changelog_version((REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8"))
+    changelog_text = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    changelog_version = newest_changelog_version(changelog_text)
     with (REPO_ROOT / "pyproject.toml").open("rb") as fh:
-        pyproject = tomllib.load(fh)["project"]["version"]
+        pyproject_version = tomllib.load(fh)["project"]["version"]
 
     assert {
-        "pyproject.toml": pyproject,
+        "pyproject.toml": pyproject_version,
         "termrenamer.__version__": termrenamer.__version__,
     } == {
-        "pyproject.toml": changelog,
-        "termrenamer.__version__": changelog,
+        "pyproject.toml": changelog_version,
+        "termrenamer.__version__": changelog_version,
     }
