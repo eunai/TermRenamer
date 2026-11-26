@@ -54,8 +54,9 @@ backups, until you trust the results.
 ## Install
 
 You need [uv](https://docs.astral.sh/uv/) and a
-[TMDB API key](https://www.themoviedb.org/settings/api). uv fetches Python
-3.13 if you do not have it.
+[TMDB API key](https://www.themoviedb.org/settings/api). TermRenamer needs
+Python 3.13 or newer. uv picks a matching Python and, by default, downloads one
+when your machine has none.
 
 ```bash
 uv tool install git+https://github.com/eunai/TermRenamer
@@ -77,14 +78,15 @@ uv tool uninstall termrenamer
 Settings live in the **user settings file**: a file named `.env` in a
 `termrenamer` folder under your per-user configuration folder.
 
-| Platform        | Path                                                               |
-| --------------- | ------------------------------------------------------------------ |
-| Windows         | `%APPDATA%\termrenamer\.env`                                       |
-| macOS and Linux | `~/.config/termrenamer/.env` (or under `XDG_CONFIG_HOME` when set) |
+| Platform        | Path                                                                                                        |
+| --------------- | ----------------------------------------------------------------------------------------------------------- |
+| Windows         | `%APPDATA%\termrenamer\.env` (under `AppData\Roaming` in your home folder when `APPDATA` is unset or empty) |
+| macOS and Linux | `~/.config/termrenamer/.env` (or under `XDG_CONFIG_HOME` when it holds an absolute path)                    |
 
 A `.env` in the folder you start the app from overrides the user settings
-file. `TERMRENAMER_*` environment variables override both. The app only reads
-these files and never writes them.
+file. `TERMRENAMER_*` environment variables override both. A blank value
+(`NAME=`) counts as not set, so a value from a lower source still applies. The
+app only reads these files and never writes them.
 
 A minimal file:
 
@@ -94,16 +96,16 @@ TERMRENAMER_TMDB_API_KEY=...
 
 The main settings:
 
-| Setting                             | Default | Purpose                                                              |
-| ----------------------------------- | ------- | -------------------------------------------------------------------- |
-| `TERMRENAMER_TMDB_API_KEY`          | none    | TMDB key. Required to start the app.                                 |
-| `TERMRENAMER_TVDB_API_KEY`          | none    | TheTVDB v4 key. Needed to pick TheTVDB as the TV provider.           |
-| `TERMRENAMER_OMDB_API_KEY`          | none    | OMDb key. Needed to pick OMDb as the film provider.                  |
-| `TERMRENAMER_ENABLE_FOLDER_RENAME`  | `false` | Move files into show or film folders, not just rename the filename.  |
-| `TERMRENAMER_ENABLE_SEASON_FOLDERS` | `false` | Place TV episodes in `Season NN` folders. Needs folder rename.       |
-| `TERMRENAMER_FILM_DEST_FOLDER`      | unset   | Root folder for film output. Used only when folder rename is on.     |
-| `TERMRENAMER_TV_DEST_FOLDER`        | unset   | Root folder for TV output. Used only when folder rename is on.       |
-| `TERMRENAMER_CACHE_DB_PATH`         | unset   | Path of a SQLite metadata cache. The cache is off until you set it.  |
+| Setting                             | Default | Purpose                                                             |
+| ----------------------------------- | ------- | ------------------------------------------------------------------- |
+| `TERMRENAMER_TMDB_API_KEY`          | none    | TMDB key. Required to start the app.                                |
+| `TERMRENAMER_TVDB_API_KEY`          | none    | TheTVDB v4 key. Needed to build a plan with TheTVDB.                |
+| `TERMRENAMER_OMDB_API_KEY`          | none    | OMDb key. Needed to build a plan with OMDb.                         |
+| `TERMRENAMER_ENABLE_FOLDER_RENAME`  | `false` | Move files into show or film folders, not just rename the filename. |
+| `TERMRENAMER_ENABLE_SEASON_FOLDERS` | `false` | Place TV episodes in `Season NN` folders. Needs folder rename.      |
+| `TERMRENAMER_FILM_DEST_FOLDER`      | unset   | Root folder for film output. Used only when folder rename is on.    |
+| `TERMRENAMER_TV_DEST_FOLDER`        | unset   | Root folder for TV output. Used only when folder rename is on.      |
+| `TERMRENAMER_CACHE_DB_PATH`         | unset   | Path of a SQLite metadata cache. The cache is off until you set it. |
 
 [`.env.example`](.env.example) lists every setting, including HTTP timeout and
 retry tuning. Changes you make on the **Settings** screen last for the current
@@ -123,17 +125,18 @@ output.
 
 Key bindings:
 
-| Key          | Action                                  |
-| ------------ | --------------------------------------- |
-| `m`          | Toggle TV / Film mode                   |
-| `p`          | Cycle the provider for the current mode |
-| `b`          | Build plan                              |
-| `a`          | Switch the Activity / Logs tab          |
-| `Ctrl+F`     | Add a source (folder or file)           |
-| `Ctrl+,`     | Open Settings                           |
-| `F1`         | Open Help                               |
-| `Ctrl+Q`     | Quit                                    |
-| `q` or `Esc` | Close a screen (Help, Settings, picker) |
+| Key          | Action                                    |
+| ------------ | ----------------------------------------- |
+| `m`          | Toggle TV / Film mode                     |
+| `p`          | Cycle the provider for the current mode   |
+| `b`          | Build plan                                |
+| `a`          | Switch the Activity / Logs tab            |
+| `Ctrl+F`     | Add a source (folder or file)             |
+| `Ctrl+,`     | Open Settings                             |
+| `F1`         | Open Help                                 |
+| `Ctrl+Q`     | Quit                                      |
+| `q` or `Esc` | Close Help, Settings or the Ctrl+F picker |
+| `Esc`        | Close a file or folder dialog             |
 
 ## Features
 
@@ -144,14 +147,15 @@ Key bindings:
   **Ctrl+F**.
 - **Preview.** Source and destination folder trees, plus an Activity tab with
   readable match events.
-- **No overwrites.** When a destination name is taken, the plan adds a numbered
-  suffix such as ` (1)`. If a destination appears after the preview, apply
-  skips that entry.
+- **Collisions.** When a destination name is taken, the plan adds a numbered
+  suffix such as ` (1)`. If a file or folder appears at a destination after the
+  preview, apply skips that entry.
 - **Folder layouts.** With folder rename on, files move into show or film
   folders, with optional `Season NN` folders for TV. Destination roots apply
   only when folder rename is on.
-- **Sidecars.** `.srt`, `.nfo`, `.sub` and `.idx` files move with the video
-  that shares their folder and name.
+- **Sidecars.** `.srt`, `.nfo`, `.sub` and `.idx` files move with the video in
+  the same folder whose filename matches theirs apart from the extension,
+  ignoring case.
 - **Metadata cache.** Setting `TERMRENAMER_CACHE_DB_PATH` switches on a SQLite
   cache for TMDB and TheTVDB lookups. It is safe to delete.
 - **Resilient requests.** Bounded retries, backoff, and `Retry-After`
