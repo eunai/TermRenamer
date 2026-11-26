@@ -123,7 +123,7 @@ async def test_a_key_switches_to_activity_tab() -> None:
 
 
 def test_bindings_order_includes_a() -> None:
-    """``a`` is preserved in the Phase 1 binding set (now a toggle, not force-Activity).
+    """``a`` stays in the app's binding set (a toggle, not force-Activity).
 
     Full order is exercised by ``test_tui_app.test_bindings_match_mock_order``.
     """

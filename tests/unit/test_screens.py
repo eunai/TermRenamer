@@ -1,4 +1,4 @@
-"""Phase 2 modal/full-screen views: AddSourceQuickPick, HelpScreen, SettingsScreen.
+"""Modal and full-screen views: AddSourceQuickPick, HelpScreen, SettingsScreen.
 
 Pilot-driven where practical; otherwise we inspect DEFAULT_CSS / BINDINGS and
 dispatch actions directly. No filesystem writes, no live fspicker launches.
@@ -137,7 +137,7 @@ async def test_help_screen_opens_on_f1_and_dismisses_on_q() -> None:
 
 
 def test_help_body_mentions_key_shortcuts() -> None:
-    """The help body string contains every Phase 1 keyboard shortcut."""
+    """The help body string names the main keyboard shortcuts."""
     from termrenamer.tui.screens.help import HELP_BODY
 
     text = HELP_BODY.lower()

@@ -123,7 +123,7 @@ def apply_plan(
 
     Args:
         plan: Immutable plan from preview.
-        confirmed: Must be True or :class:`ValidationError` is raised (FR-007).
+        confirmed: Must be True or :class:`ValidationError` is raised.
         merge_stragglers: When True, after successful planned moves, copy/move any
             files or folders still under a source parent into the new destination
             parent (same collision rules). Intended when folder-rename mode moved

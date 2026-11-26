@@ -1,4 +1,4 @@
-"""OMDb API adapter — optional film metadata fallback (P2-01)."""
+"""OMDb API adapter: a film metadata provider the user selects in Film mode."""
 
 from __future__ import annotations
 

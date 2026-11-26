@@ -1,4 +1,4 @@
-"""Error UX tests — errors show actionable context; secrets never leak (FR-008, PH-3)."""
+"""Error UX tests — errors show actionable context; secrets never leak."""
 
 from __future__ import annotations
 

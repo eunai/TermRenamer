@@ -1,6 +1,6 @@
-"""Phase 2 queue ingestion: fspicker callbacks, ``_refresh_source_tree``, clear.
+"""Queue ingestion: fspicker callbacks, ``_refresh_source_tree``, clear.
 
-These tests exercise the public queue surface added in Phase 2 without
+These tests exercise the public queue surface without
 pushing the actual ``SelectDirectory`` / ``FileOpen`` modals — we call the
 callbacks directly so the tests remain deterministic and independent of the
 ``textual-fspicker`` version.
@@ -194,7 +194,7 @@ async def test_build_plan_for_queued_file_excludes_sibling_videos(tmp_path: Path
 
 @pytest.mark.asyncio
 async def test_build_plan_merges_two_queued_folders(tmp_path: Path) -> None:
-    """Phase 3: two queued directories produce one merged plan with two operations."""
+    """Two queued directories produce one merged plan with two operations."""
     a = tmp_path / "lib_a"
     b = tmp_path / "lib_b"
     a.mkdir()

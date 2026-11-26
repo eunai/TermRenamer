@@ -48,7 +48,7 @@ class ScannedFile:
 
 @dataclass(frozen=True, slots=True)
 class ParseResult:
-    """Structured parse of a TV release filename."""
+    """Structured parse of a TV episode backup's filename."""
 
     show_hint: str
     season: int
@@ -61,7 +61,7 @@ class ParseResult:
 
 @dataclass(frozen=True, slots=True)
 class FilmParseResult:
-    """Structured parse of a film release filename."""
+    """Structured parse of a film backup's filename."""
 
     title_hint: str
     year_hint: int | None
