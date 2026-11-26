@@ -4,8 +4,9 @@ Dolphie-style ``Switch`` toggles replace the previous ``Select`` dropdowns:
 TV vs Film is a single two-position ``Switch`` (left/off = TV, right/on = Film);
 provider selection remains mutually-exclusive ``Switch``es, and providers that do
 not apply to the current mode are **hidden** (``display = False`` on the switch
-and its peer ``Label``) so invalid combinations cannot be chosen. An inline ``settings`` button posts :class:`OpenSettingsRequested` so
-the host app can surface the modal without a dedicated binding.
+and its peer ``Label``) so invalid combinations cannot be chosen. An inline
+``settings`` button posts :class:`OpenSettingsRequested` so the host app can
+surface the modal without a dedicated binding.
 """
 
 from __future__ import annotations
