@@ -1,4 +1,4 @@
-"""Textual application: split layout with tabbed log panel (PH-1 / FR-009 / P0-07)."""
+"""Textual application: split layout with tabbed log panel."""
 
 from __future__ import annotations
 
@@ -546,7 +546,7 @@ class TermRenamerApp(App[None]):
         self._set_confirm_buttons(enabled=self.current_plan is not None)
 
     def _apply_current_plan(self) -> None:
-        """Apply the frozen plan after explicit user confirmation (FR-007 / P0-07)."""
+        """Apply the frozen plan after explicit user confirmation."""
         if self._rename_working:
             return
         plan = self.current_plan

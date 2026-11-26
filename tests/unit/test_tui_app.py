@@ -45,7 +45,7 @@ async def test_build_plan_warns_with_empty_queue() -> None:
 
 
 async def _queue_folder(app: TermRenamerApp, pilot: object, path: Path) -> None:
-    """Phase 2 test helper: append ``path`` onto the queue post-mount.
+    """Test helper: append ``path`` onto the queue post-mount.
 
     The app's fspicker callbacks (:meth:`TermRenamerApp._on_folder_picked`) mutate
     ``#source-tree`` synchronously, so mount must complete first. Callers should
@@ -74,7 +74,7 @@ async def test_build_plan_populates_table(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_layout_regions_exist() -> None:
-    """Phase 1 single-column layout: no ``#nav_panel`` / ``#content_row``."""
+    """Single-column layout: no ``#nav_panel`` / ``#content_row``."""
     tv = StaticTvMetadataProvider(_mapping={})
     film = StaticFilmMetadataProvider(_mapping={})
     wiring = PlanningWiring(tv_tmdb=tv, tv_tvdb=None, film=film, film_omdb=None)
@@ -86,8 +86,8 @@ async def test_layout_regions_exist() -> None:
         assert app.query_one("#tab-activity") is not None
         assert app.query_one("#tab-logs") is not None
         assert app.query_one("#log_panel") is not None
-        assert not app.query("#nav_panel"), "#nav_panel must be removed in Phase 1"
-        assert not app.query("#content_row"), "#content_row must be removed in Phase 1"
+        assert not app.query("#nav_panel"), "#nav_panel must not be in the single-column layout"
+        assert not app.query("#content_row"), "#content_row must not be in the single-column layout"
 
 
 @pytest.mark.asyncio
@@ -150,7 +150,7 @@ def test_command_palette_disabled() -> None:
 
 
 def test_queue_is_empty_on_init() -> None:
-    """The ``_queue`` scaffolding exists from Phase 1 (populated in Phase 2)."""
+    """``_queue`` exists and starts empty before any source is added."""
     app = TermRenamerApp(wiring=_static_wiring())
     assert app._queue == []
 
@@ -297,7 +297,7 @@ def test_footer_shows_toggle_provider_binding() -> None:
 
 
 def test_bindings_match_mock_order() -> None:
-    """Phase 1 binding swap: ``q`` → ``ctrl+q``; add ``ctrl+f``/``f1``/``ctrl+comma``."""
+    """Quit is ``ctrl+q`` (not ``q``); ``ctrl+f``, ``f1`` and ``ctrl+comma`` are bound."""
     assert [b[0] for b in TermRenamerApp.BINDINGS] == [
         "m",
         "p",
