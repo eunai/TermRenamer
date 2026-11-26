@@ -43,13 +43,13 @@ Settings come from three sources, highest first: `TERMRENAMER_*` environment var
 From the repository root after `uv sync`:
 
 ```bash
-uv run pytest -v
+uv run pytest -v --cov
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy src
 ```
 
-`uv run pytest -v` runs **`pytest-cov`** with a **≥ 85%** line-coverage minimum on `src/termrenamer/` (see `pyproject.toml`).
+`--cov` turns on **`pytest-cov`**: it measures line coverage of `src/termrenamer/`, prints the missing lines, and fails the run below **85%** (`[tool.coverage]` in `pyproject.toml`). Without `--cov`, pytest runs the tests only and prints no coverage report, so `uv run pytest tests/unit/<file>.py` checks one file. CI (`.github/workflows/ci.yml`) runs these four checks on each pull request and each push to `main`.
 
 Run the TUI: `uv run python -m termrenamer`.
 

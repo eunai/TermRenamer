@@ -194,7 +194,7 @@ To set up from a clone, with [uv](https://docs.astral.sh/uv/):
 
 ```bash
 uv sync
-uv run pytest -v
+uv run pytest -v --cov
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy src
@@ -202,6 +202,10 @@ uv run termrenamer
 ```
 
 Start the app from the repository root, so it reads the clone's `.env`.
+
+`--cov` measures coverage of `src/termrenamer` and fails the run below 85%.
+Without it, `uv run pytest` runs the tests only, so you can run one test file
+on its own. CI runs the same checks on each pull request and each push to `main`.
 
 The project is developed with AI coding assistants. The rules they follow live
 in [`AGENTS.md`](AGENTS.md) and [`docs/agents/`](docs/agents/).

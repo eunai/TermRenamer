@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Contributor tooling: CI** — a GitHub Actions workflow (`.github/workflows/ci.yml`) runs `uv sync --locked`, then `uv run pytest -v --cov`, `uv run ruff check .`, `uv run ruff format --check .` and `uv run mypy src`, each as its own step, on Linux with Python 3.13, for each pull request and each push to `main`.
+
+### Changed
+
+- **Contributor tooling: coverage check** — the full test check is now `uv run pytest -v --cov` (was `uv run pytest -v`). Coverage is no longer in pytest's default options, so `uv run pytest` with a single test file runs those tests only and exits 0 when they pass, where it used to fail on the 85% coverage threshold. `--cov` measures `src/termrenamer` and still fails below 85%, from `[tool.coverage]` in `pyproject.toml`.
+
 ## [0.1.0] - 2026-11-26
 
 ### Added
