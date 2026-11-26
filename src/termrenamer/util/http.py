@@ -1,4 +1,4 @@
-"""Shared synchronous HTTP client with bounded retries (docs/project_spec.md §12.4)."""
+"""Shared synchronous HTTP client with bounded retries."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ _LOG = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class HttpClientConfig:
-    """Transport knobs aligned with spec §12.4–§12.5."""
+    """Transport knobs: timeout, retry attempts and backoff."""
 
     timeout_seconds: float = 30.0
     max_attempts: int = 4

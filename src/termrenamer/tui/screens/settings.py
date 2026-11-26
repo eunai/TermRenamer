@@ -15,7 +15,7 @@ snapshot via :func:`dataclasses.replace` so new values flow into planning withou
 mutating a frozen instance in place.
 
 Never rewrites ``.env`` on disk; never creates or reads ``mock_settings.toml``
-(that file is mock-only under ``dev_textual/``).
+(that file is mock-only).
 """
 
 from __future__ import annotations

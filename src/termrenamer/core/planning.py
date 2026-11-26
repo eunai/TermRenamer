@@ -328,7 +328,7 @@ def merge_rename_plans(subplans: Sequence[RenamePlan]) -> RenamePlan:
     Each sub-plan is built against its own :func:`allocate_destination`
     occupied set. Merging re-applies allocating so two sources that map to the
     same library filename receive `` (1)`` / `` (2)`` suffixes without silent
-    overwrite (spec §12.3).
+    overwrite.
     """
     if not subplans:
         msg = "merge_rename_plans requires at least one sub-plan"

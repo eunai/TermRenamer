@@ -1,7 +1,6 @@
 """Ctrl+F quick-pick: choose folder vs file before opening the fspicker modal.
 
-Mirrors ``dev_textual/tui_mock/screens/add_source.py``. Returned values match
-the mock's contract so the host app's callback stays identical:
+Returned values form the contract the host app's callback relies on:
 
 * ``"folder"`` → open the directory picker.
 * ``"file"`` → open the file picker.

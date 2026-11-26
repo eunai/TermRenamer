@@ -1,8 +1,7 @@
 """Full-screen Help: keyboard shortcuts reference.
 
-Mirrors ``dev_textual/tui_mock/screens/help.py``. The body is rendered from
-a module-level constant so it can be snapshotted by tests without having to
-spin up the Textual runtime.
+The body is rendered from a module-level constant so it can be snapshotted
+by tests without having to spin up the Textual runtime.
 """
 
 from __future__ import annotations

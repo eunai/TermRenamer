@@ -1,4 +1,4 @@
-"""Typed errors aligned with docs/project_spec.md §5.5."""
+"""Typed errors for TermRenamer failures."""
 
 
 class TermRenamerError(Exception):
