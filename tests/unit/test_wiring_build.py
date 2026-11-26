@@ -92,7 +92,6 @@ def test_build_planning_wiring_no_omdb() -> None:
 
 def test_bootstrap_wiring_returns_tuple(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TERMRENAMER_TMDB_API_KEY", "k")
-    monkeypatch.delenv("TERMRENAMER_TVDB_API_KEY", raising=False)
     monkeypatch.setenv("TERMRENAMER_CACHE_DB_PATH", str(tmp_path / "c.db"))
     from termrenamer.wiring import bootstrap_wiring
 

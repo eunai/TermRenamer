@@ -10,13 +10,9 @@ from termrenamer.app_bootstrap import load_settings
 from termrenamer.util.errors import ValidationError
 
 
-def test_missing_tmdb_key_raises(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Use an empty dotenv file so `load_settings` does not pull keys from the repo `.env`."""
-    monkeypatch.delenv("TERMRENAMER_TMDB_API_KEY", raising=False)
-    empty_env = tmp_path / ".env"
-    empty_env.write_text("", encoding="utf-8")
+def test_missing_tmdb_key_raises() -> None:
     with pytest.raises(ValidationError) as excinfo:
-        load_settings(env_file=empty_env, require_tmdb_key=True)
+        load_settings(require_tmdb_key=True)
     assert "TERMRENAMER_TMDB_API_KEY" in str(excinfo.value)
 
 

@@ -12,7 +12,13 @@ from termrenamer.api.caching import CachedFilmMetadataProvider, CachedTvMetadata
 from termrenamer.api.omdb import OmdbProvider
 from termrenamer.api.tmdb import TmdbProvider
 from termrenamer.api.tvdb_v4 import TvdbV4Provider
-from termrenamer.app_bootstrap import Settings, bootstrap, create_http_client, create_metadata_cache
+from termrenamer.app_bootstrap import (
+    Settings,
+    bootstrap,
+    create_http_client,
+    create_metadata_cache,
+    where_to_set,
+)
 from termrenamer.util.errors import ValidationError
 from termrenamer.util.http import HttpClient
 
@@ -33,8 +39,9 @@ class PlanningWiring:
         if provider_id == "tvdb":
             if self.tv_tvdb is None:
                 msg = (
-                    "TheTVDB requires TERMRENAMER_TVDB_API_KEY (and PIN if your account needs it) "
-                    "in the environment or .env — see .env.example."
+                    "TheTVDB requires an API key: "
+                    f"{where_to_set('TERMRENAMER_TVDB_API_KEY')}. "
+                    "Set TERMRENAMER_TVDB_SUBSCRIBER_PIN the same way if your account needs it."
                 )
                 raise ValidationError(msg)
             return self.tv_tvdb
@@ -47,10 +54,7 @@ class PlanningWiring:
             return self.film
         if provider_id == "omdb":
             if self.film_omdb is None:
-                msg = (
-                    "OMDb requires TERMRENAMER_OMDB_API_KEY in the environment or .env "
-                    "— see .env.example."
-                )
+                msg = f"OMDb requires an API key: {where_to_set('TERMRENAMER_OMDB_API_KEY')}."
                 raise ValidationError(msg)
             return self.film_omdb
         msg = f"Unknown film provider id: {provider_id!r}"

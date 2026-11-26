@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 
 from termrenamer.persistence.cache import SqliteMetadataCache
 from termrenamer.util.errors import ValidationError
@@ -49,8 +51,8 @@ class Settings:
         return bool(self.omdb_api_key and self.omdb_api_key.strip())
 
 
-def _read_float(name: str, default: float) -> float:
-    raw = os.environ.get(name)
+def _read_float(env: Mapping[str, str], name: str, default: float) -> float:
+    raw = env.get(name)
     if raw is None or raw.strip() == "":
         return default
     try:
@@ -60,8 +62,8 @@ def _read_float(name: str, default: float) -> float:
         raise ValidationError(msg) from exc
 
 
-def _read_int(name: str, default: int) -> int:
-    raw = os.environ.get(name)
+def _read_int(env: Mapping[str, str], name: str, default: int) -> int:
+    raw = env.get(name)
     if raw is None or raw.strip() == "":
         return default
     try:
@@ -71,8 +73,8 @@ def _read_int(name: str, default: int) -> int:
         raise ValidationError(msg) from exc
 
 
-def _read_bool(name: str, default: bool) -> bool:
-    raw = os.environ.get(name)
+def _read_bool(env: Mapping[str, str], name: str, default: bool) -> bool:
+    raw = env.get(name)
     if raw is None or raw.strip() == "":
         return default
     lowered = raw.strip().lower()
@@ -84,83 +86,129 @@ def _read_bool(name: str, default: bool) -> bool:
     raise ValidationError(msg)
 
 
+def user_settings_path() -> Path:
+    """Return the path of the user settings file for this platform and environment.
+
+    Windows: ``%APPDATA%\\termrenamer\\.env``, or ``AppData\\Roaming`` in the home folder
+    when ``APPDATA`` is unset or empty. Every other platform, macOS included:
+    ``$XDG_CONFIG_HOME/termrenamer/.env``, or ``~/.config`` when ``XDG_CONFIG_HOME`` is
+    unset, empty or relative (the XDG Base Directory rule). The app never writes this file.
+    """
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA", "")
+        base = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
+    else:
+        xdg = Path(os.environ.get("XDG_CONFIG_HOME", ""))
+        base = xdg if xdg.is_absolute() else Path.home() / ".config"
+    return base / "termrenamer" / ".env"
+
+
+def _read_settings_file(path: Path) -> dict[str, str]:
+    """Return the values a dotenv file sets; a missing file sets none."""
+    try:
+        values = dotenv_values(path, encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        msg = f"Cannot read settings file {path}: {exc}"
+        raise ValidationError(msg) from exc
+    return {k: v for k, v in values.items() if v is not None}
+
+
+def _layer(*sources: Mapping[str, str]) -> dict[str, str]:
+    """Merge sources given lowest first; a blank value never hides a lower source's value."""
+    merged: dict[str, str] = {}
+    for source in sources:
+        for name, value in source.items():
+            if value.strip() != "" or name not in merged:
+                merged[name] = value
+    return merged
+
+
+def where_to_set(variable: str) -> str:
+    """Name every place ``variable`` can be set, for a missing-setting message."""
+    return (
+        f"set {variable} in the environment, in a .env file in the current folder, "
+        f"or in the user settings file at {user_settings_path()} (see .env.example)"
+    )
+
+
 def load_settings(*, env_file: Path | None = None, require_tmdb_key: bool = True) -> Settings:
-    """Load settings from environment; optional `.env` for local dev.
+    """Load settings from the environment and the settings files.
+
+    Sources, highest first: environment variables, a ``.env`` in the current working
+    folder (that folder only, no upward search), then the user settings file
+    (:func:`user_settings_path`). A higher source's value wins; a blank value counts as
+    not set, so it never hides a lower source's value. Files are only read.
 
     Args:
-        env_file: If provided, load this file via dotenv first.
+        env_file: If provided, the only file read; environment variables still win.
         require_tmdb_key: When True, TMDB API key must be set (TV vertical slice).
 
     Raises:
         ValidationError: Missing required configuration or invalid values.
     """
-    if env_file is not None:
-        load_dotenv(env_file)
-    else:
-        load_dotenv()
+    files = [env_file] if env_file is not None else [user_settings_path(), Path.cwd() / ".env"]
+    env = _layer(*(_read_settings_file(path) for path in files), os.environ)
 
-    tmdb_key = os.environ.get("TERMRENAMER_TMDB_API_KEY")
+    tmdb_key = env.get("TERMRENAMER_TMDB_API_KEY")
     if tmdb_key is not None:
         tmdb_key = tmdb_key.strip()
         if tmdb_key == "":
             tmdb_key = None
 
-    tvdb_key = os.environ.get("TERMRENAMER_TVDB_API_KEY")
+    tvdb_key = env.get("TERMRENAMER_TVDB_API_KEY")
     if tvdb_key is not None:
         tvdb_key = tvdb_key.strip()
         if tvdb_key == "":
             tvdb_key = None
 
-    tvdb_pin = os.environ.get("TERMRENAMER_TVDB_SUBSCRIBER_PIN")
+    tvdb_pin = env.get("TERMRENAMER_TVDB_SUBSCRIBER_PIN")
     if tvdb_pin is not None:
         tvdb_pin = tvdb_pin.strip()
         if tvdb_pin == "":
             tvdb_pin = None
 
-    omdb_key = os.environ.get("TERMRENAMER_OMDB_API_KEY")
+    omdb_key = env.get("TERMRENAMER_OMDB_API_KEY")
     if omdb_key is not None:
         omdb_key = omdb_key.strip()
         if omdb_key == "":
             omdb_key = None
 
-    timeout = _read_float("TERMRENAMER_HTTP_TIMEOUT_SECONDS", 30.0)
-    http_max_attempts = _read_int("TERMRENAMER_HTTP_MAX_ATTEMPTS", 4)
+    timeout = _read_float(env, "TERMRENAMER_HTTP_TIMEOUT_SECONDS", 30.0)
+    http_max_attempts = _read_int(env, "TERMRENAMER_HTTP_MAX_ATTEMPTS", 4)
     if http_max_attempts < 1:
         raise ValidationError("TERMRENAMER_HTTP_MAX_ATTEMPTS must be >= 1")
-    http_backoff_base = _read_float("TERMRENAMER_HTTP_BACKOFF_BASE_SECONDS", 0.5)
-    http_jitter = _read_bool("TERMRENAMER_HTTP_JITTER", True)
-    cache_raw = os.environ.get("TERMRENAMER_CACHE_DB_PATH")
+    http_backoff_base = _read_float(env, "TERMRENAMER_HTTP_BACKOFF_BASE_SECONDS", 0.5)
+    http_jitter = _read_bool(env, "TERMRENAMER_HTTP_JITTER", True)
+    cache_raw = env.get("TERMRENAMER_CACHE_DB_PATH")
     if cache_raw is not None:
         cache_raw = cache_raw.strip()
         if cache_raw == "":
             cache_raw = None
     cache_path = Path(cache_raw).expanduser() if cache_raw else None
 
-    log_path_raw = os.environ.get("TERMRENAMER_LOG_FILE")
+    log_path_raw = env.get("TERMRENAMER_LOG_FILE")
     log_path = Path(log_path_raw).expanduser() if log_path_raw else None
 
-    film_dest_raw = os.environ.get("TERMRENAMER_FILM_DEST_FOLDER")
+    film_dest_raw = env.get("TERMRENAMER_FILM_DEST_FOLDER")
     if film_dest_raw is not None:
         film_dest_raw = film_dest_raw.strip()
         if film_dest_raw == "":
             film_dest_raw = None
     film_dest_folder = Path(film_dest_raw).expanduser() if film_dest_raw else None
 
-    tv_dest_raw = os.environ.get("TERMRENAMER_TV_DEST_FOLDER")
+    tv_dest_raw = env.get("TERMRENAMER_TV_DEST_FOLDER")
     if tv_dest_raw is not None:
         tv_dest_raw = tv_dest_raw.strip()
         if tv_dest_raw == "":
             tv_dest_raw = None
     tv_dest_folder = Path(tv_dest_raw).expanduser() if tv_dest_raw else None
 
-    enable_folder_rename = _read_bool("TERMRENAMER_ENABLE_FOLDER_RENAME", default=False)
-    enable_season_folders = _read_bool("TERMRENAMER_ENABLE_SEASON_FOLDERS", default=False)
+    enable_folder_rename = _read_bool(env, "TERMRENAMER_ENABLE_FOLDER_RENAME", default=False)
+    enable_season_folders = _read_bool(env, "TERMRENAMER_ENABLE_SEASON_FOLDERS", default=False)
 
     if require_tmdb_key and not tmdb_key:
-        raise ValidationError(
-            "TMDB API key is required: set TERMRENAMER_TMDB_API_KEY in the environment "
-            "or .env (see .env.example).",
-        )
+        msg = f"TMDB API key is required: {where_to_set('TERMRENAMER_TMDB_API_KEY')}."
+        raise ValidationError(msg)
 
     return Settings(
         tmdb_api_key=tmdb_key,
