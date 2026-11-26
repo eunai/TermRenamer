@@ -2,7 +2,7 @@
 
 This document complements the [README](../README.md) with practical troubleshooting. **Never commit API keys**; use the user settings file, a `.env` or your shell environment (see [`.env.example`](../.env.example)).
 
-Settings come from three sources, highest first: `TERMRENAMER_*` environment variables, a `.env` in the folder you start the app from (that folder only, no parent folders), then the **user settings file**: `%APPDATA%\termrenamer\.env` on Windows, `$XDG_CONFIG_HOME/termrenamer/.env` or `~/.config/termrenamer/.env` on macOS and Linux. A start-up error about a missing key prints the user settings file's full path.
+Settings come from three sources, highest first: `TERMRENAMER_*` environment variables, a `.env` in the folder you start the app from (that folder only, no parent folders), then the **user settings file**: `%APPDATA%\termrenamer\.env` on Windows (`AppData\Roaming` in your home folder when `APPDATA` is unset or empty), `$XDG_CONFIG_HOME/termrenamer/.env` on macOS and Linux (`~/.config/termrenamer/.env` when `XDG_CONFIG_HOME` is unset, empty or relative). A start-up error about a missing key prints the user settings file's full path.
 
 ## Common failures
 
