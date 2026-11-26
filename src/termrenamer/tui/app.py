@@ -114,8 +114,7 @@ def _populate_plan_tree(
 class TermRenamerApp(App[None]):
     """TUI: single ``#plan_panel`` column with a queue-driven action bar.
 
-    The layout mirrors the mock sandbox (``dev_textual/tui_mock/``): one primary
-    panel hosts the plan-hint → Source/Destination trees → six-button
+    One primary panel hosts the plan-hint → Source/Destination trees → six-button
     ``#action-bar``; a bottom ``TabbedContent`` holds the Activity / Logs panes;
     ``ModeProviderBar`` docks above the ``Footer``. Textual's built-in command
     palette (Ctrl+P) is disabled so the ``p`` binding remains a plain provider
@@ -138,7 +137,7 @@ class TermRenamerApp(App[None]):
     TITLE = "TermRenamer"
     CSS_PATH = "theme.tcss"
     # Disable Textual's built-in command palette (Ctrl+P); plain ``p`` remains
-    # Toggle Provider per the mock / dev-textual-guide §2.
+    # Toggle Provider.
     ENABLE_COMMAND_PALETTE = False
     BINDINGS = [
         ("m", "toggle_mode", "Toggle Mode"),
@@ -407,8 +406,7 @@ class TermRenamerApp(App[None]):
         Each queued **directory** becomes one :func:`build_rename_plan` call; a
         queued **file** is planned from its parent directory then narrowed with
         :func:`filter_plan_to_queued_path`. Sub-plans merge with
-        :func:`merge_rename_plans` so destinations remain collision-safe
-        (dev-textual-guide §4 Option A).
+        :func:`merge_rename_plans` so destinations remain collision-safe.
         """
         if self._rename_working:
             return

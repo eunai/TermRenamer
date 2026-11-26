@@ -1,4 +1,4 @@
-"""SQLite schema for metadata cache (implementation detail; spec §7)."""
+"""SQLite schema for metadata cache (implementation detail)."""
 
 from __future__ import annotations
 

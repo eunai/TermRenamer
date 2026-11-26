@@ -1,6 +1,5 @@
 /* FR-009 layout: single-column queue panel + bottom tabbed output.
  *
- * Mirrors ``dev_textual/tui_mock/theme.tcss`` (see dev-textual-guide §2 / §5).
  * ``#plan_panel`` is the only primary column; ``ModeProviderBar`` docks above
  * the ``Footer``; ``#bottom-tabs`` hosts the Activity / Logs panes. Film/TV
  * destination roots are edited in ``SettingsScreen`` (Ctrl+,), not on-panel.

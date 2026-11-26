@@ -14,8 +14,6 @@ Both screens share the same contract:
   keystrokes never leak into the hidden app beneath.
 * ``ctrl+q`` is re-proxied to :meth:`App.action_quit` so the global quit
   still works from inside the modal.
-
-Mirrors ``dev_textual/tui_mock/screens/footer_bindings.py``.
 """
 
 from __future__ import annotations

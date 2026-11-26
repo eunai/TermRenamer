@@ -1,4 +1,4 @@
-"""SQLite-backed metadata lookup cache (optional acceleration; spec §12.6)."""
+"""SQLite-backed metadata lookup cache (optional acceleration)."""
 
 from __future__ import annotations
 

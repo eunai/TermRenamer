@@ -103,7 +103,7 @@ class TvdbV4Provider:
         headers = {"Authorization": f"Bearer {self._token}"}
         response = self._http.request(method, url, params=params, headers=headers)
         if response.status_code == 401:
-            # At most one refresh attempt per §5.5: re-login and retry once.
+            # At most one refresh attempt: re-login and retry once.
             _LOG.debug("TheTVDB returned 401; refreshing token once")
             self._token = None
             self._login()
