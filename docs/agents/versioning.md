@@ -69,4 +69,5 @@ A release is a version in the changelog, a Git tag, and a GitHub Release, all th
 2. Set every copy of the version to match.
 3. Commit, tag the commit with the version behind a `v` prefix and no emoji (for example `v0.1.0`), and create a GitHub Release:
    - Title: `vX.Y.Z - <creative title> <one emoji>`, for example `v0.1.0 - First Light 🌅`. The creative title is a short, memorable name for the release, followed by exactly one emoji that fits it. The changelog heading carries no title or emoji.
+   - Pre-release flag: a `0.y.z` release is published as a normal GitHub Release. The flag is for a release candidate or beta of a version, a SemVer pre-release identifier such as `1.0.0-rc.1`.
    - Body: open with one plain sentence that says what the release delivers, for example "A command that imports bank statements and the rules that sort them into accounts." Then write for users: what the project does, what it needs, and its known limits, with a link to the changelog.

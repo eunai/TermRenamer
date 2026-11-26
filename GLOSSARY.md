@@ -2,6 +2,10 @@
 
 ## Language
 
+**Source**:
+A file or folder the person queues for renaming, which is a backup of their own media. Example filenames in documents, comments and screenshots are plain backup-style names; test data may keep messy names where a test exercises the parser's clean-up.
+_Avoid_: release, rip, torrent, scene, download (as names for these files)
+
 **Plan**:
 The immutable batch of planned renames, covering each video and its sidecars, that preview shows and apply executes unchanged.
 

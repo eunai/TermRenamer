@@ -133,7 +133,7 @@ Auto mode approves routine actions without a prompt, because nothing should stop
 
 **Brief.** Send the brief a sub-agent gets ([Sub-agent briefs](agent-workflow.md#sub-agent-briefs)) with `SendMessage` and `notify_when_idle: true`, plus the main pane's id. The worker runs its own Codex review loop, each review as a background task ([Codex review](agent-workflow.md#codex-review)), and reports back with `SendMessage` to the `from` address of the brief message it received, so a renamed coordinator session still gets the report.
 
-**Close.** When the report arrives, check it against the brief and check that Codex approved. Then close the pane with `pane close <pane-id>`. A pane that stopped on a problem (review cap reached, failed check, needs the user) stays open, and the report names it.
+**Close.** When the report arrives, check it against the brief and check that the review approved. Then close the pane with `pane close <pane-id>`. A pane that stopped on a problem (review cap reached, failed check, needs the user) stays open, and the report names it.
 
 ## Command pane
 

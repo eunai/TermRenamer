@@ -40,7 +40,7 @@ Every piece of work that begins with `/grill-with-docs` gets a work size at the 
 | specced  | A real contract or several modules, but one sequential piece.                                                           | `/to-spec`, then `/implement`.                                               |
 | ticketed | Independent slices with blocking edges.                                                                                 | `/to-spec`, the [spec audit](#spec-audit), `/to-tickets`, `/implement-spec`. |
 
-In the round that confirms the work size, the coordinator also asks two things: whether it merges the pull request when the checks pass and Codex approved, and, when the repo cuts releases, whether it then cuts the release. The user's answer is the approval for that merge and that release, so the work goes on to the end with no second question. Work that starts with no grill gets the same question in the round that sets its size.
+In the round that confirms the work size, the coordinator also asks two things: whether it merges the pull request when the checks pass and the review approved, and, when the repo cuts releases, whether it then cuts the release. The user's answer is the approval for that merge and that release, so the work goes on to the end with no second question. Work that starts with no grill gets the same question in the round that sets its size.
 
 ## Hand-offs
 
@@ -83,6 +83,11 @@ Each brief, with the part of the worker-brief skeleton below that carries it:
 
 An earlier ticket's **hand-off** is a comment on that ticket. The coordinator writes it from the worker's report (`gh issue comment <n>`): the commit that carries the work, the facts the commit lacks, such as owner decisions and non-blocking findings, and the worker's manual checklist when the report has one, whatever the manual check is. A brief, and the coordinator's final manual check, read it with `gh issue view <n> --comments`. In a repo with no issue tracker, the hand-off is a pointer to the commit. When the repo has agent-inbox and the coordinator's context was summarized, `agent-inbox log --json` holds each worker report as a mirrored message: write the hand-off from it.
 
+Two rules for a brief's criteria and scope:
+
+- An acceptance criterion for a check that parses text states the exact input the check accepts (for example "the badge line in the block above the first `## ` heading"), so a review cannot widen it one edge case per round.
+- A brief for a clean-up across files gives the search pattern that finds every instance (for example a `grep -E` expression) and what to keep, in place of a hand-made list of places.
+
 A worker pane gets the same brief, plus the main pane's id, sent as "Worker pane" in `docs/agents/iterm2.md` says. It reports back with `SendMessage`, addressed as that section says.
 
 A sub-agent or worker that needs the user reports to the coordinator, which asks.
@@ -114,8 +119,8 @@ Build everything ticket #<n> asks for, on branch `<ticket-branch>`, in this chec
 3. The ticket's acceptance criteria win over this brief and the hand-offs. A conflict comes back to me before you start work on that part.
 4. Every check or test run follows "Check runs".
 5. Commit your own work on this branch as Conventional Commits with a `Refs: #<n>` footer. The user asked for commits by invoking `<command>`. Do not push. Do not touch any other branch.
-6. Run your own Codex review loop as "Codex review" says: effort <level>, diff command `git diff <integration-branch>...HEAD`, at most 3 reviews. Settled decisions to list in the prompt: <pointers: decision records, issue comments>.
-7. When two verdicts in a row raise the same class of finding, stop and report.
+6. Run your own Codex review loop as "Codex review" says: effort <level>, diff command `git diff <integration-branch>...HEAD`, at most 3 reviews. A Codex usage limit moves the loop to the `code-review` skill, as "Run a review" says. Settled decisions to list in the prompt: <pointers: decision records, issue comments>.
+7. When two verdicts in a row raise the same class of finding, stop. End your stop report with the options you see and this sentence: "The policy on this class is the user's to give." I then ask the user before I answer.
 8. After `VERDICT: APPROVED`, merge the tip of `<integration-branch>` into this branch with the merge command in `docs/agents/git-workflow.md` ("Merging a pull request"). Then put your own CHANGELOG entries first under each heading, or, when the repo keeps changelog fragments (`changelog.d/`), keep them in your own fragment instead; check that the entries already there still match the code, and run the checks again. Then report. The report names the head commit those checks ran on: the pull request merge is pinned to it, and Codex has not reviewed it, because this merge commit comes after the approval.
 
 ## Hard limits
@@ -126,7 +131,7 @@ Build everything ticket #<n> asks for, on branch `<ticket-branch>`, in this chec
 You run in <mode> mode. If a command is blocked and you need a permission rule, send me the exact rule and the exact file, and go on with work that does not need it. Do not edit a permission file yourself.
 
 ## Report (short)
-What you built against each acceptance criterion, the commits, the final Codex verdict and its `<out-file>` path, non-blocking findings, the failed-run lines "Check runs" asks for, and what the next tickets must know (point to the commit). When the ticket changes what a reader sees, add a manual checklist: each step names a real page or screen of the repo's local build, run as AGENTS.md says, and a case that only a test fixture reaches is marked "fixture only". If you stop on a problem, say so and what you need.
+What you built against each acceptance criterion, the commits, the final verdict, which reviewer ran each review, the `<out-file>` path of each Codex review, non-blocking findings, the failed-run lines "Check runs" asks for, and what the next tickets must know (point to the commit). When the ticket changes what a reader sees, add a manual checklist: each step names a real page or screen of the repo's local build, run as AGENTS.md says, and a case that only a test fixture reaches is marked "fixture only". If you stop on a problem, say so and what you need.
 ```
 
 "Parallel work" keeps two workers out of the same files; fill it in every brief. `<command>` is the command the user invoked, such as `/implement-spec`; with no such command, the line names the user's request for commits, or step 5 keeps commits with the user.
@@ -218,7 +223,7 @@ Audits have no cap: a spec is cheap to change, and a ticketed defect is not. Tic
 
 ## Codex review
 
-Codex reviews each finished piece of work, and it is the only reviewer that runs the `code-review` skill. When a loaded skill such as `/implement` asks for a code review, the worker's Codex review loop is that review; the coordinator and the workers leave `/code-review` to Codex. The worker commits, runs the repo's check as "Check runs" says, and runs the review itself, the same way in a worker pane and in-process: as a Claude Code background task running codex-review, which runs the headless `codex exec`. Every review uses the prompt below and ends on the `VERDICT:` line.
+Codex reviews each finished piece of work. When a loaded skill such as `/implement` asks for a code review, the worker's Codex review loop is that review; the coordinator and the workers leave `/code-review` to Codex, except when a Codex run fails on a usage limit (below). The worker commits, runs the repo's check as "Check runs" says, and runs the review itself, the same way in a worker pane and in-process: as a Claude Code background task running codex-review, which runs the headless `codex exec`. Every review uses the prompt below and ends on the `VERDICT:` line.
 
 ### The prompt
 
@@ -277,13 +282,15 @@ After each review, the worker runs `git status --porcelain`. Codex reviews and e
 
 A review gets 30 minutes. Start a second background task, `sleep 1800`, as the timer. When the timer ends first, stop the review task with `TaskStop`, read `<out-file>`, and report. When the review ends first, stop the timer.
 
-If Codex fails (a non-zero exit, an empty `<verdict-file>`, or an auth error), the worker reads `<out-file>` for the cause, then stops and reports, except for the three runs below: a content-filter stop, a signal kill and a service error. No other reviewer is substituted. With `--report-to`, the run report gives the coordinator the last lines of Codex's output too; the worker still reads `<out-file>`.
+If Codex fails (a non-zero exit, an empty `<verdict-file>`, or an auth error), the worker reads `<out-file>` for the cause, then stops and reports, except for the four runs below: a content-filter stop, a signal kill, a service error and a usage limit. Only a usage limit gets a substitute reviewer; every other failure, an auth error, an empty `<verdict-file>` or a non-zero exit for another cause, gets none. With `--report-to`, the run report gives the coordinator the last lines of Codex's output too; the worker still reads `<out-file>`.
 
 A run that OpenAI's content filter stopped gives no verdict and does not count toward the review cap. The worker rewords the prompt once as a correctness review ("The prompt") and starts a fresh session with the first-review command; a second stop goes to the coordinator.
 
 A run that a signal killed gives no verdict and does not count toward the review cap. A killed run has an exit code of 128 or higher, an empty or missing `<verdict-file>`, and no auth or content-filter error in `<out-file>`. The worker starts it again once, with the same command and prompt and a fresh `<verdict-file>` and `<out-file>`; a second kill goes to the coordinator.
 
 A run whose `<out-file>` shows a service error, an HTTP 5xx status or a disconnect or reset before the response headers, gives no verdict and does not count toward the review cap. The worker waits 10 minutes with a background timer, `sleep 600`, then starts the review once more, with the same command and prompt and a fresh `<verdict-file>` and `<out-file>`; a second service error goes to the coordinator.
+
+A run that failed on a usage limit gives no verdict and does not count toward the review cap. The worker reviews at once with the `code-review` skill, and each later review runs the same way: the fixed point is `<integration-branch>`, the spec is the saved ticket or brief, and each review sub-agent is set explicitly to the worker's own model and effort. The loop limits stay: at most 3 reviews in total across both reviewers, and the same-class rule ("Review loop"). A review with no blocking finding is the approval. The worker's report says which reviewer ran each review.
 
 ## Review loop
 
@@ -292,9 +299,13 @@ A run whose `<out-file>` shows a service error, an HTTP 5xx status or a disconne
 3. On `VERDICT: APPROVED`, the loop ends. The worker merges the integration tip when the skill that delegated the work asks for that, and reports to the coordinator, with the failures "Check runs" asks for. If the integration tip moves after the report, the coordinator asks the worker to merge it and run the checks again; a merge with no conflict needs no new review.
 4. The coordinator checks the report against the brief and the approval. The pull request names the head commit from the report, the one its merge is pinned to, and says that this head was checked but not reviewed by Codex. With a worker pane it then closes that pane, as "Worker pane" in `docs/agents/iterm2.md` says.
 
-Codex reviews at most 3 times. If the third verdict is still `CHANGES REQUESTED`, the loop stops, the worker reports, and the coordinator tells the user. When two verdicts in a row raise the same class of finding, such as one more uncovered case of the same kind each round, the worker stops and reports, and the coordinator asks the user for a policy on that class before the next review. A pane that stopped on a problem stays open. Non-blocking findings go in the report.
+Reviews run at most 3 times in all, across both reviewers when a usage limit moves the loop to `code-review` ("Run a review"). If the third verdict is still `CHANGES REQUESTED`, the loop stops, the worker reports, and the coordinator tells the user. When two verdicts in a row raise the same class of finding, such as one more uncovered case of the same kind each round, the worker stops and reports, ending its report with the options it sees and the sentence that the policy on this class is the user's to give, and the coordinator asks the user for a policy on that class before the next review. A pane that stopped on a problem stays open. Non-blocking findings go in the report.
 
-Document-only changes skip the Codex loop; the doc sub-agent runs `/writing-for-agents` instead.
+Document-only changes skip the Codex loop; the doc sub-agent runs `/writing-for-agents` instead, except for the fact-check below.
+
+### Fact-check
+
+When a change to `README.md`, `docs/runbook.md` or `.env.example` states what the app does (behaviour, settings, defaults, key bindings, file locations, install steps), a fresh Sonnet sub-agent that did not write the text reads the diff and verifies each such statement against the code. It reports each mismatch with the file and line that disproves it, and the author fixes the mismatches before the coordinator commits. Other documents (the guides, the glossary, decision records) keep the rule above.
 
 ## Concurrency
 
