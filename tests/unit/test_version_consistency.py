@@ -34,18 +34,30 @@ _VERSION_BADGE = re.compile(
 
 
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
-_FENCE = re.compile(r"^ {0,3}(```|~~~)")
+_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 
 
 def _top_badge_block(text: str) -> str:
-    """The README lines before the first ``## `` heading, outside comments and fences."""
+    """The README lines before the first ``## `` heading, outside comments and fences.
+
+    A fence closes only on a line of the opening fence's character, at least as long,
+    with nothing after it but spaces (CommonMark).
+    """
     kept: list[str] = []
-    in_fence = False
+    fence: str | None = None
     for line in _HTML_COMMENT.sub("", text).splitlines():
-        if _FENCE.match(line):
-            in_fence = not in_fence
+        match = _FENCE.match(line)
+        if fence is not None:
+            if (
+                match
+                and match.group(1)[0] == fence[0]
+                and len(match.group(1)) >= len(fence)
+                and not match.group(2).strip()
+            ):
+                fence = None
             continue
-        if in_fence:
+        if match:
+            fence = match.group(1)
             continue
         if line.startswith("## "):
             break
@@ -110,6 +122,28 @@ def test_readme_badge_version_ignores_a_badge_in_a_fenced_block() -> None:
         "# App\n\n```markdown\n"
         "[![Version](https://img.shields.io/badge/version-0.4.2-blue)](./pyproject.toml)\n"
         "```\n\n## Install\n"
+    )
+
+    with pytest.raises(AssertionError, match="no Version badge"):
+        readme_badge_version(text)
+
+
+def test_readme_badge_version_ignores_a_badge_after_a_backtick_line_in_a_tilde_fence() -> None:
+    text = (
+        "# App\n\n~~~markdown\n```\n"
+        "[![Version](https://img.shields.io/badge/version-0.4.2-blue)](./pyproject.toml)\n"
+        "~~~\n\n## Install\n"
+    )
+
+    with pytest.raises(AssertionError, match="no Version badge"):
+        readme_badge_version(text)
+
+
+def test_readme_badge_version_ignores_a_badge_after_a_short_line_in_a_long_fence() -> None:
+    text = (
+        "# App\n\n````markdown\n```\n"
+        "[![Version](https://img.shields.io/badge/version-0.4.2-blue)](./pyproject.toml)\n"
+        "````\n\n## Install\n"
     )
 
     with pytest.raises(AssertionError, match="no Version badge"):
