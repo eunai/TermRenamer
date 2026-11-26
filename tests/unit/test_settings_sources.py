@@ -23,12 +23,25 @@ def _write(path: Path, text: str) -> Path:
     return path
 
 
-def _user_file(dirs: IsolatedDirs) -> Path:
-    return dirs.config_home / "termrenamer" / ".env"
+@pytest.mark.parametrize(
+    ("platform", "folder"),
+    [("win32", "appdata"), ("linux", "config_home"), ("darwin", "config_home")],
+)
+def test_fixture_user_settings_file_follows_the_running_platform(
+    platform: str,
+    folder: str,
+    isolated_settings_dirs: IsolatedDirs,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shared fixture puts the user settings file where the app reads it on each platform."""
+    monkeypatch.setattr(sys, "platform", platform)
+    base: Path = getattr(isolated_settings_dirs, folder)
+
+    assert isolated_settings_dirs.user_settings_file == base / "termrenamer" / ".env"
 
 
 def test_user_settings_file_alone_supplies_a_value(isolated_settings_dirs: IsolatedDirs) -> None:
-    _write(_user_file(isolated_settings_dirs), "TERMRENAMER_TMDB_API_KEY=from-user-file\n")
+    _write(isolated_settings_dirs.user_settings_file, "TERMRENAMER_TMDB_API_KEY=from-user-file\n")
 
     settings = load_settings()
 
@@ -52,7 +65,7 @@ def _set_source(
     elif source == "folder":
         _write(dirs.workdir / ".env", line)
     else:
-        _write(_user_file(dirs), line)
+        _write(dirs.user_settings_file, line)
 
 
 @pytest.mark.parametrize(
@@ -82,7 +95,7 @@ def test_every_source_contributes_its_own_variables(
         "TERMRENAMER_TMDB_API_KEY=folder-key\nTERMRENAMER_ENABLE_FOLDER_RENAME=true\n",
     )
     _write(
-        _user_file(isolated_settings_dirs),
+        isolated_settings_dirs.user_settings_file,
         "TERMRENAMER_TMDB_API_KEY=user-key\n"
         "TERMRENAMER_ENABLE_FOLDER_RENAME=false\n"
         "TERMRENAMER_OMDB_API_KEY=user-omdb\n",
@@ -125,7 +138,7 @@ def test_explicit_file_is_the_only_file_read(
     isolated_settings_dirs: IsolatedDirs, tmp_path: Path
 ) -> None:
     _write(
-        _user_file(isolated_settings_dirs),
+        isolated_settings_dirs.user_settings_file,
         "TERMRENAMER_TMDB_API_KEY=user-key\nTERMRENAMER_OMDB_API_KEY=user-omdb\n",
     )
     _write(isolated_settings_dirs.workdir / ".env", "TERMRENAMER_TVDB_API_KEY=folder-tvdb\n")
@@ -247,7 +260,7 @@ def test_user_settings_file_location_follows_the_platform_rule(
 def test_missing_tmdb_key_message_names_the_user_settings_file(
     isolated_settings_dirs: IsolatedDirs,
 ) -> None:
-    expected = isolated_settings_dirs.config_home / "termrenamer" / ".env"
+    expected = isolated_settings_dirs.user_settings_file
 
     with pytest.raises(ValidationError) as excinfo:
         load_settings()
@@ -281,7 +294,7 @@ def _wiring_without_optional_providers() -> PlanningWiring:
 def test_missing_tvdb_key_message_names_the_user_settings_file(
     isolated_settings_dirs: IsolatedDirs,
 ) -> None:
-    expected = isolated_settings_dirs.config_home / "termrenamer" / ".env"
+    expected = isolated_settings_dirs.user_settings_file
 
     with pytest.raises(ValidationError) as excinfo:
         _wiring_without_optional_providers().resolve_tv(provider_id="tvdb")
@@ -293,7 +306,7 @@ def test_missing_tvdb_key_message_names_the_user_settings_file(
 def test_missing_omdb_key_message_names_the_user_settings_file(
     isolated_settings_dirs: IsolatedDirs,
 ) -> None:
-    expected = isolated_settings_dirs.config_home / "termrenamer" / ".env"
+    expected = isolated_settings_dirs.user_settings_file
 
     with pytest.raises(ValidationError) as excinfo:
         _wiring_without_optional_providers().resolve_film(provider_id="omdb")
@@ -306,7 +319,7 @@ def test_wrong_value_in_user_settings_file_gives_the_validation_message(
     isolated_settings_dirs: IsolatedDirs,
 ) -> None:
     _write(
-        _user_file(isolated_settings_dirs),
+        isolated_settings_dirs.user_settings_file,
         "TERMRENAMER_TMDB_API_KEY=k\nTERMRENAMER_ENABLE_FOLDER_RENAME=maybe\n",
     )
 
@@ -319,7 +332,7 @@ def test_wrong_value_in_user_settings_file_gives_the_validation_message(
 def test_unreadable_user_settings_file_gives_a_validation_error_naming_it(
     isolated_settings_dirs: IsolatedDirs,
 ) -> None:
-    user_file = _user_file(isolated_settings_dirs)
+    user_file = isolated_settings_dirs.user_settings_file
     user_file.parent.mkdir(parents=True)
     user_file.write_bytes(b"TERMRENAMER_TMDB_API_KEY=\xff\xfe\n")
 
