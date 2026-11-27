@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import errno
 import os
+import sys
 from pathlib import Path
 
 import pytest
 from textual.widgets import Input
 from textual_fspicker import FileOpen, SelectDirectory
+from textual_fspicker.parts import DirectoryNavigation
 
 from termrenamer.core.models import ScanMode
 from termrenamer.tui.views import SettingsView
@@ -136,6 +138,88 @@ async def test_a_folder_refused_with_its_parent_keeps_the_app_and_the_queue(
     assert "This folder cannot be read: Permission denied" in text
     assert running
     assert sources == (queued.resolve(),)
+
+
+@pytest.mark.parametrize(
+    ("number", "words"),
+    [(errno.EACCES, "Permission denied"), (errno.ENAMETOOLONG, "File name too long")],
+)
+async def test_a_typed_path_the_disk_cannot_answer_gets_no_suggestion_and_keeps_the_app(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, number: int, words: str
+) -> None:
+    """The file dialog suggests as the person types; a path the disk refuses to look at
+    gets no suggestion, and the dialog, the typed text and the queue stay."""
+    queued = tmp_path / "Queued"
+    queued.mkdir()
+    start = (tmp_path / "Start").resolve()
+    (start / "Locked").mkdir(parents=True)
+    monkeypatch.chdir(start)
+    exists = Path.exists
+
+    def refused(path: Path, *args: object, **kwargs: object) -> bool:
+        if "Locked" in path.parts:
+            raise OSError(number, words, str(path))
+        return exists(path, *args, **kwargs)  # type: ignore[arg-type]
+
+    typed = f"Locked{os.sep}x"
+    app = make_app()
+    async with app.run_test(size=WIDE) as pilot:
+        await queue(pilot, queued.resolve())
+        await press(pilot, "a")
+        await wait_for_listing(pilot)
+        monkeypatch.setattr(Path, "exists", refused)
+        field = app.screen.query_one(Input)
+        field.focus()
+        await pilot.press(*typed)
+        await wait_for_listing(pilot)
+        await pilot.pause()
+        shown = field.value
+        dialog = app.screen
+        monkeypatch.setattr(Path, "exists", exists)
+        await press(pilot, "escape")
+        sources = app.queue.sources
+        running = app.is_running
+
+    assert isinstance(dialog, FileOpen)
+    assert shown == typed
+    assert running
+    assert sources == (queued.resolve(),)
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="a Windows folder has no search permission to take away"
+)
+@pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0, reason="the superuser reads any folder"
+)
+async def test_a_folder_that_lists_but_cannot_be_entered_says_why_in_the_folder_picker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Its names can be read, but not one of them can be looked at, ``..`` included (read
+    but no search permission): the listing is empty and says why."""
+    start = (tmp_path / "Start").resolve()
+    unsearchable = start / "Unsearchable"
+    (unsearchable / "Inside").mkdir(parents=True)
+    monkeypatch.chdir(start)
+    app = make_app()
+    try:
+        async with app.run_test(size=WIDE) as pilot:
+            await press(pilot, "f")
+            await wait_for_listing(pilot)
+            unsearchable.chmod(0o444)
+            app.screen.query_one(DirectoryNavigation).location = unsearchable
+            await wait_for_listing(pilot)
+            await pilot.pause()
+            text = screen_text(app)
+            dialog = app.screen
+            await press(pilot, "escape")
+            running = app.is_running
+    finally:
+        unsearchable.chmod(0o755)
+
+    assert isinstance(dialog, SelectDirectory)
+    assert "This folder cannot be read: Permission denied" in text
+    assert running
 
 
 async def test_a_root_with_an_unknown_user_in_settings_is_refused_and_the_old_one_kept(

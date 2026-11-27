@@ -1,15 +1,18 @@
 """The file and folder dialogs: textual_fspicker's, made safe for any folder.
 
-Three parts of the package's dialogs are swapped for the app's own:
+Four parts of the package's dialogs are swapped for the app's own:
 
 - The folder listing reads its entry styles on the app's thread only. The dialog lists
   its folder in a thread, and that thread reads the listing widget's component
   styles; the app empties and refills that table each time it restyles the widget
   (focus, hover, a theme), so a read from the thread in between would fail the worker
   and stop the app.
-- A folder that cannot be listed (it is gone, or the disk refuses it) leaves the
-  dialog open with an empty listing and says why, in place of ending the app. The
-  ``..`` entry stays, so the person can go up.
+- A folder that cannot be listed or entered (it is gone, the disk refuses to list it,
+  or its names can be read but not looked at) leaves the dialog open and says why, in
+  place of ending the app. Its listing is empty, with ``..`` when the folder above can
+  be read; backspace goes up either way.
+- The file dialog's name field suggests a path as the person types; a path the disk
+  cannot answer for gets no suggestion, in place of ending the app.
 - The current folder is shown as written: a folder named ``[$accent]x`` is never read
   as markup.
 """
@@ -29,6 +32,7 @@ from textual.widget import Widget
 from textual_fspicker import FileOpen, SelectDirectory
 from textual_fspicker.parts import CurrentDirectory, DirectoryNavigation
 from textual_fspicker.parts.directory_navigation import DirectoryEntryStyling
+from textual_fspicker.suggest_path import SuggestPath
 
 _PACKAGE_LOAD = cast(
     "Callable[[DirectoryNavigation], None]",
@@ -79,13 +83,14 @@ class _Listing(DirectoryNavigation):
         self.post_message(self.Unreadable(error.strerror or str(error)))
 
     def _repopulate_display(self) -> None:
-        """List the entries read, with ``..`` first. When even ``..`` cannot be read (a
-        folder inside one of another user), the listing is left with no entry; the
-        dialog has said why already."""
+        """List the entries read, with ``..`` first. When even ``..`` cannot be looked at
+        (the folder can be listed but not entered, or not at all), the listing is left
+        with no entry and the dialog says why."""
         try:
             super()._repopulate_display()
-        except OSError:
+        except OSError as exc:
             self.clear_options()
+            self.post_message(self.Unreadable(exc.strerror or str(exc)))
 
 
 class _Folder(CurrentDirectory):
@@ -132,12 +137,24 @@ def _safe(widgets: Iterable[Widget], location: Path) -> Iterator[Widget]:
             yield widget
 
 
+class _Suggestions(SuggestPath):
+    """The package's path suggestions, with none for a path the disk cannot answer for
+    (a folder that refuses to be looked in, a name too long)."""
+
+    async def get_suggestion(self, value: str) -> str | None:
+        try:
+            return await super().get_suggestion(value)
+        except OSError:
+            return None
+
+
 class FilePicker(FileOpen):
     """The file dialog, opening at ``location``."""
 
     def __init__(self, location: Path) -> None:
         super().__init__(str(location))
         self._start = location
+        self._suggest_path = _Suggestions()
 
     def compose(self) -> Iterator[Widget]:
         return _safe(super().compose(), self._start)
