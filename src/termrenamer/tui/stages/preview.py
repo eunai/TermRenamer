@@ -34,6 +34,12 @@ class _DetailsScroll(VerticalScroll, can_focus=False):
     key table even when the column is taller than the screen."""
 
 
+_WAITING_ACTIONS = ("apply", "leave_out", "pick_match")
+"""The actions that wait while a picked Match's episodes are looked up."""
+_WAITING_BUTTONS = ("#apply", "#leave-out", "#change-match")
+"""Their buttons, off the screen meanwhile."""
+
+
 class PreviewStage(TitleListStage):
     """The details column with the summary and Apply, and the Plan's Title list."""
 
@@ -91,7 +97,9 @@ class PreviewStage(TitleListStage):
                     )
                 with Vertical(id="preview-summary"):
                     yield Static("", id="summary-counts")
-                    yield ActionButton("enter", "Apply…", press_key="enter", classes="-strong")
+                    yield ActionButton(
+                        "enter", "Apply…", press_key="enter", id="apply", classes="-strong"
+                    )
                     yield Static("Nothing moves until you confirm.", id="preview-note")
             with Vertical(classes="stage-body"):
                 yield from self.compose_heading()
@@ -132,7 +140,7 @@ class PreviewStage(TitleListStage):
         """
         kept = self._kept_entry(plan) if keep_selection else None
         self._plan = plan
-        self._looking_up = False
+        self._show_looking_up(False)
         self._rows = title_rows(plan)
         self._file = 0
         row_index = 0
@@ -161,15 +169,21 @@ class PreviewStage(TitleListStage):
 
     def mark_looking_up(self) -> None:
         """Mark the selected Title looking up, while its new Match's episodes are looked
-        up; showing a Plan clears the mark. Apply, Leave out and Change match wait."""
+        up; showing a Plan clears the mark. Apply, Leave out and Change match wait: their
+        keys leave the footer and their buttons the screen."""
         selected = self.title_list.selected
         if selected is not None:
             self.title_list.put_row(replace(selected, status=StatusWord.LOOKING_UP))
-        self._looking_up = True
+        self._show_looking_up(True)
         self.changed()
 
+    def _show_looking_up(self, looking_up: bool) -> None:
+        self._looking_up = looking_up
+        for button_id in _WAITING_BUTTONS:
+            self.query_one(button_id).visible = not looking_up
+
     def key_enabled(self, action: str) -> bool:
-        return not (self._looking_up and action in ("apply", "leave_out", "pick_match"))
+        return not (self._looking_up and action in _WAITING_ACTIONS)
 
     def _kept_entry(self, plan: Plan) -> PlanEntry | None:
         """The entry of ``plan`` with the selected file's recorded source, or ``None``."""

@@ -76,10 +76,11 @@ _STAGE_IDS = {
 
 
 _BUILD = "build"
+"""The worker that builds the Plan."""
 _APPLY = "apply"
+"""The worker that applies the Plan."""
 _PICK = "pick"
-"""The names of the workers: the build of the Plan, its Apply, and the episode lookups
-for a picked TV Match."""
+"""The worker that looks up a picked TV Match's episodes."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,8 +246,19 @@ class TermRenamerApp(App[None]):
                 continue
             actions = [action for _name, action in key.bindings]
             if all(self._target(a) is not None and view.key_enabled(a) for a in actions):
+                if self._pick is not None and "discard_plan" in actions:
+                    key = replace(key, hint="Abandon change")  # what esc does meanwhile
                 shown.append(key)
         return shown
+
+    def _locked_message(self, what: str) -> str:
+        """Why ``what`` (such as "Mode") cannot change now that the settings are locked."""
+        if self._pick is not None:
+            return (
+                f"{what} cannot change while the new Match's episodes are looked up. "
+                "esc abandons the change."
+            )
+        return locked_message(what)
 
     def _target(self, action: str) -> DOMNode | None:
         """Where ``action`` is implemented: the current Stage's view, else the app."""
@@ -270,7 +282,7 @@ class TermRenamerApp(App[None]):
             if not on_main and not key.anywhere:
                 continue
             if key.guarded and self.session_settings.locked:
-                self.say(locked_message(key.guarded), MessageKind.WARNING)
+                self.say(self._locked_message(key.guarded), MessageKind.WARNING)
                 return
             target = self._target(action)
             if on_main and self.stage not in key.stages:
@@ -542,7 +554,7 @@ class TermRenamerApp(App[None]):
             f"Looking up the episodes of {candidate_text(answer.match)}… esc abandons the change."
         )
 
-    @work(thread=True, group="pick", exit_on_error=False, name=_PICK)
+    @work(thread=True, group=_PICK, exit_on_error=False, name=_PICK)
     def _look_up_pick(
         self,
         plan: Plan,

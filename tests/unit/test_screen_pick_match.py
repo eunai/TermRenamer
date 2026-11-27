@@ -105,7 +105,7 @@ def shows(**kwargs: object) -> Shows:
 def film_backups(parent: Path) -> Path:
     folder = parent / "Films"
     folder.mkdir()
-    for name in ("Heat.1995.mkv", "1080p.mkv", "1080p.srt", "Unknown.Film.2003.mkv"):
+    for name in ("Heat.1995.mkv", "1080p.mkv", "1080p.srt", "Quiet.Harbour.2003.mkv"):
         (folder / name).write_bytes(b"x")
     return folder
 
@@ -222,7 +222,7 @@ async def test_escape_closes_the_picker_with_the_plan_unchanged(tmp_path: Path) 
     assert not on_picker
 
 
-async def test_typing_a_title_searches_again_and_the_results_replace_the_candidates(
+async def test_typing_a_title_searches_again_and_what_it_finds_replaces_the_candidates(
     tmp_path: Path,
 ) -> None:
     provider = films()
@@ -305,7 +305,7 @@ async def test_a_title_with_no_match_opens_on_no_match_found_and_the_typed_searc
     async with app.run_test(size=SIZE) as pilot:
         await film_preview(pilot, tmp_path)
         rows = [row.name for row in app.query_one("#preview-titles").rows]  # type: ignore[attr-defined]
-        await press(pilot, *["down"] * rows.index("Unknown Film (2003)"), "t")
+        await press(pilot, *["down"] * rows.index("Quiet Harbour (2003)"), "t")
         now = text_of(app, "#picker-now")
         lines = picker_lines(app)
         typing = picker(app).typing
@@ -314,7 +314,7 @@ async def test_a_title_with_no_match_opens_on_no_match_found_and_the_typed_searc
     assert now == "No match found."
     assert lines == ["▸ / Type a title"]
     assert typing
-    assert typed == "Unknown Film 2003"
+    assert typed == "Quiet Harbour 2003"
 
 
 async def test_a_not_recognised_film_is_matched_by_a_typed_title_and_forms_a_title(
@@ -392,7 +392,7 @@ async def test_picking_a_tv_candidate_looks_its_episodes_up_off_the_screens_thre
 ) -> None:
     provider = shows(hold_show="40")
     app = make_app(wiring(tv=provider))
-    async with app.run_test(size=(300, 40)) as pilot:
+    async with app.run_test(size=SIZE) as pilot:
         await queue(pilot, tv_backups(tmp_path))
         await build(pilot)
         await press(pilot, "t")
@@ -401,10 +401,18 @@ async def test_picking_a_tv_candidate_looks_its_episodes_up_off_the_screens_thre
         await pilot.pause()
         looking = screen_text(app)
         keys_while_looking = footer_keys(app)
+        buttons_while_looking = [
+            app.query_one(f"#{name}").visible for name in ("change-match", "leave-out", "apply")
+        ]
+        await press(pilot, "m")
+        mode_refused = screen_text(app)
         await press(pilot, "enter", "x")
         refused = screen_text(app)
         provider.release.set()
         await settle(pilot)
+        buttons_after = [
+            app.query_one(f"#{name}").visible for name in ("change-match", "leave-out", "apply")
+        ]
         text = screen_text(app)
         heading = text_of(app, "#details-heading").splitlines()
         plan = app.plan
@@ -412,6 +420,13 @@ async def test_picking_a_tv_candidate_looks_its_episodes_up_off_the_screens_thre
     assert any(line.endswith("looking up 2") for line in lines_with(looking, "Harbour Lights"))
     # Apply, Leave out and Change match wait for the lookups.
     assert not {"enter Apply…", "x Leave out", "t Match"} & set(keys_while_looking)
+    assert buttons_while_looking == [False, False, False]
+    assert "esc Abandon change" in keys_while_looking
+    assert "esc Discard Plan" not in keys_while_looking
+    assert (
+        "Mode cannot change while the new Match's episodes are looked up. "
+        "esc abandons the change." in mode_refused
+    )
     assert "Looking up the episodes for the new Match. esc abandons the change." in refused
     assert plan is not None
     title = next(t for t in plan.titles if t.match == LIGHTS_US)
@@ -421,6 +436,7 @@ async def test_picking_a_tv_candidate_looks_its_episodes_up_off_the_screens_thre
     assert videos[0].destination.name == "Harbour Lights US - S01E01 - Pilot.mkv"
     assert "Harbour Lights now matches Harbour Lights US." in text
     assert heading[0] == "Harbour Lights US"
+    assert buttons_after == [True, True, True]
 
 
 async def test_escape_during_the_episode_lookup_keeps_the_old_plan(tmp_path: Path) -> None:
@@ -450,7 +466,7 @@ async def test_a_failed_episode_lookup_keeps_the_old_plan_with_the_providers_mes
 ) -> None:
     provider = shows(failing={"40"})
     app = make_app(wiring(tv=provider))
-    async with app.run_test(size=(300, 40)) as pilot:
+    async with app.run_test(size=SIZE) as pilot:
         await queue(pilot, tv_backups(tmp_path))
         await build(pilot)
         built = app.plan
