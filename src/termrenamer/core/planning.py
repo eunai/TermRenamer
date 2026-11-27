@@ -8,8 +8,9 @@ their files; nothing is renamed.
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
-from dataclasses import dataclass, replace
+import re
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import overload
 
@@ -261,29 +262,48 @@ def _parse(path: Path, mode: ScanMode) -> ParseResult | FilmParseResult:
 
 
 def _wanted_name(
-    video: _Video, match: Candidate, episode_title: str | None, options: PlanOptions
+    source: Path,
+    root: Path,
+    episode: tuple[int, int] | None,
+    match: Candidate,
+    episode_title: str | None,
+    options: PlanOptions,
 ) -> Path | None:
-    """The name today's templates give ``video`` for ``match``; ``None`` for no episode."""
-    if isinstance(video.parsed, ParseResult):
-        if episode_title is None:
+    """The name today's templates give the video ``source`` for ``match``.
+
+    ``episode`` is a TV video's season and first episode, ``None`` for a film; a TV
+    video with no ``episode_title`` (its episode was not found) gets ``None``. A built
+    and a derived Plan both name their videos here, so a name from a Provider always
+    goes through the templates' cleaning of path separators and dots.
+    """
+    if options.mode is ScanMode.TV:
+        if episode is None or episode_title is None:
             return None
+        season, number = episode
         return format_tv_destination(
-            root=video.root,
-            parse=video.parsed,
+            root=root,
+            parse=ParseResult(show_hint=match.name, season=season, episodes=(number,)),
             metadata=EpisodeMetadata(show_title=match.name, episode_title=episode_title),
-            original_path=video.path,
+            original_path=source,
             dest_root=options.destination_root,
             enable_folder_rename=options.folder_rename,
             enable_season_folders=options.season_folders,
         )
-    assert match.year is not None
+    if match.year is None:
+        return None
     return format_film_destination(
-        root=video.root,
+        root=root,
         metadata=MovieMetadata(title=match.name, year=match.year),
-        original_path=video.path,
+        original_path=source,
         dest_root=options.destination_root,
         enable_folder_rename=options.folder_rename,
     )
+
+
+def _episode_of(parsed: ParseResult | FilmParseResult) -> tuple[int, int] | None:
+    if isinstance(parsed, ParseResult):
+        return (parsed.season, parsed.primary_episode)
+    return None
 
 
 @overload
@@ -401,7 +421,14 @@ def plan_queue(
     for video in videos:
         title = title_of[video.path]
         wanted = (
-            _wanted_name(video, title.match, episode_titles.get(video.path), options)
+            _wanted_name(
+                video.path,
+                video.root,
+                _episode_of(video.parsed),
+                title.match,
+                episode_titles.get(video.path),
+                options,
+            )
             if title.match is not None
             else None
         )
@@ -507,7 +534,26 @@ class PutBack:
     video: PlanEntry
 
 
-PlanChange = LeaveOut | PutBack
+@dataclass(frozen=True, slots=True)
+class PickMatch:
+    """Give ``target`` the Match ``match``, which the person picked.
+
+    ``target`` is a Title of the Plan, or a not recognised Film video of it, which
+    then forms a Title of its own or joins the Title that already has ``match``.
+    ``found`` is the search the picker showed ``match`` from, in the Provider's order;
+    the Title's Candidates become those results beside ``match``. In TV Mode,
+    ``episodes`` holds the episode title the picked show gives each of the Title's
+    videos, by the source the Plan recorded, ``None`` where the episode was not found:
+    :func:`look_up_episodes` asks the Provider for them before the Plan is derived.
+    """
+
+    target: Title | PlanEntry
+    match: Candidate
+    found: tuple[Candidate, ...] = ()
+    episodes: Mapping[Path, str | None] = field(default_factory=dict)
+
+
+PlanChange = LeaveOut | PutBack | PickMatch
 """A change the person makes to a Plan on the Preview."""
 
 
@@ -517,16 +563,21 @@ def derive_plan(plan: Plan, change: PlanChange) -> Plan:
     Destinations and Name taken are worked out again across the whole Plan, in
     source-path order, as a fresh build would: each wanted path is tested on disk
     again, a name that only a left out file had claimed is free for the next entry,
-    and a video put back gets the status a fresh Plan gives it. No Provider is asked.
-    The change names its entry of ``plan`` itself, and the entries keep the order of
-    ``plan``: the disk is read again only to test whether a wanted name is taken.
+    and a video put back gets the status a fresh Plan gives it. No Provider is asked:
+    a :class:`PickMatch` carries every answer it needs. The change names its entry or
+    Title of ``plan`` itself, and the entries keep the order of ``plan``: the disk is
+    read again only to test whether a wanted name is taken.
 
     Raises:
-        ValueError: ``change`` names an entry that is not in ``plan``, a Sidecar, a
-            video that cannot be left out (no match, not recognised, already left
-            out), or for :class:`PutBack` a video that is not left out.
+        ValueError: ``change`` names an entry or Title that is not in ``plan``, a
+            Sidecar, a video that cannot be left out (no match, not recognised,
+            already left out), for :class:`PutBack` a video that is not left out, or
+            for :class:`PickMatch` a target that cannot be given that Match.
         OSError: testing a wanted path on disk failed.
     """
+    if isinstance(change, PickMatch):
+        titles, entries = _picked(plan, change)
+        return _plan_of(plan.options, titles, _claim_names(entries, plan.options))
     video = change.video
     if video not in plan.entries:
         msg = f"{video.source} is not in the Plan."
@@ -543,8 +594,178 @@ def derive_plan(plan: Plan, change: PlanChange) -> Plan:
         if video.status is not EntryStatus.LEFT_OUT:
             msg = f"{video.source} is not left out."
             raise ValueError(msg)
-        status = EntryStatus.READY  # worked out again when the names are claimed
+        # Worked out again when the names are claimed. A video whose picked show has
+        # no such episode comes back with no match.
+        status = EntryStatus.READY if video.wanted is not None else EntryStatus.NO_MATCH
     entries = tuple(
         replace(entry, status=status) if entry == video else entry for entry in plan.entries
     )
     return _plan_of(plan.options, plan.titles, _claim_names(entries, plan.options))
+
+
+def _picked(plan: Plan, change: PickMatch) -> tuple[tuple[Title, ...], tuple[PlanEntry, ...]]:
+    """The Titles and entries of ``plan`` once ``change``'s target has its new Match.
+
+    The target's videos take names from the Match; the Title that already had that
+    Match, if any, becomes one Title with them. Entries stay in the Plan's order.
+    """
+    options, match = plan.options, change.match
+    target = change.target
+    if isinstance(target, Title):
+        if target not in plan.titles:
+            msg = f"{target.name} is not a Title of the Plan."
+            raise ValueError(msg)
+        videos = tuple(v for v in plan.videos if v.title == target)
+    else:
+        if target not in plan.entries or target.is_sidecar:
+            msg = f"{target.source} is not a video of the Plan."
+            raise ValueError(msg)
+        if target.status is not EntryStatus.NOT_RECOGNISED:
+            msg = f"{target.source} is not a not recognised file: pick a Match for its Title."
+            raise ValueError(msg)
+        if options.mode is ScanMode.TV:
+            msg = "Matching a not recognised TV file by hand is not available yet."
+            raise ValueError(msg)
+        videos = (target,)
+    if options.mode is ScanMode.TV:
+        missing = [v.source for v in videos if v.source not in change.episodes]
+        if missing:
+            msg = f"No episode title was looked up for {missing[0]}."
+            raise ValueError(msg)
+    elif match.year is None:
+        msg = f"{match.name} has no year, so it cannot name a film."
+        raise ValueError(msg)
+
+    joined = next(
+        (t for t in plan.titles if t != target and t.match is not None and t.match.id == match.id),
+        None,
+    )
+    candidates = tuple(c for c in change.found if c.id != match.id)
+    if joined is not None:
+        joined_videos = tuple(v for v in plan.videos if v.title == joined)
+        # The merged Title keeps the Candidates of the group whose title hint sorts
+        # first; a not recognised file has no hint, so it joins the Title as it is.
+        if not isinstance(target, Title) or _first_hint(joined_videos, options.mode) < _first_hint(
+            videos, options.mode
+        ):
+            candidates = joined.candidates
+        members = videos + joined_videos
+    else:
+        members = videos
+    title = Title(
+        name=match.name,
+        year=match.year,
+        seasons=tuple(sorted({v.season for v in members if v.season is not None})),
+        match=match,
+        candidates=candidates,
+    )
+    replaced = {t for t in (target, joined) if isinstance(t, Title)}
+    moved = {v.source for v in videos}
+
+    entries: list[PlanEntry] = []
+    for entry in plan.entries:
+        if entry.source in moved and not entry.is_sidecar:
+            episode = (
+                (entry.season, entry.episode)
+                if entry.season is not None and entry.episode is not None
+                else None
+            )
+            wanted = _wanted_name(
+                entry.source,
+                entry.root,
+                episode,
+                match,
+                change.episodes.get(entry.source),
+                options,
+            )
+            if entry.status is EntryStatus.LEFT_OUT:
+                status = EntryStatus.LEFT_OUT  # the person's choice holds
+            else:
+                status = EntryStatus.READY if wanted is not None else EntryStatus.NO_MATCH
+            entries.append(replace(entry, title=title, wanted=wanted, status=status))
+        elif entry.title in replaced or (entry.is_sidecar and entry.video in moved):
+            # A Sidecar's status follows its video when the names are claimed.
+            entries.append(replace(entry, title=title))
+        else:
+            entries.append(entry)
+    titles = [t for t in plan.titles if t not in replaced]
+    titles.append(title)
+    titles.sort(key=lambda t: (t.name.casefold(), t.year or 0))
+    return tuple(titles), tuple(entries)
+
+
+def look_up_episodes(
+    plan: Plan,
+    title: Title,
+    show: Candidate,
+    provider: TvMetadataProvider,
+    *,
+    cancel: CancelSignal | None = None,
+) -> dict[Path, str | None] | None:
+    """The episode title ``show`` gives each video of ``title``, a TV Title of ``plan``.
+
+    The answers are keyed by the source the Plan recorded for each video, ``None``
+    where the episode is not found, ready for a :class:`PickMatch`. Each video's
+    season and episode are the ones the Plan recorded. ``cancel`` is checked before
+    each lookup: once it is set, the lookups stop and ``None`` is returned. A lookup
+    failure raises :class:`~termrenamer.util.errors.ProviderError`.
+    """
+    lookup = _lookup(provider, ScanMode.TV)
+    assert isinstance(lookup, TvLookup)
+    episodes: dict[Path, str | None] = {}
+    for video in plan.videos:
+        if video.title != title or video.season is None or video.episode is None:
+            continue
+        if cancel is not None and cancel.is_set():
+            return None
+        episodes[video.source] = lookup.episode_title(
+            show_id=show.id, season=video.season, episode=video.episode
+        )
+    return episodes
+
+
+_TYPED_YEAR = re.compile(r"^(?P<hint>.*?\S)[\s(]+(?P<year>\d{4})\)?$")
+
+
+def typed_hint(text: str) -> tuple[str, int | None]:
+    """The title hint and year hint of a title the person typed.
+
+    A four-digit year at the end of the text, after a space or in parentheses, is the
+    year hint; the rest is the title hint. Text that is only a year is a title.
+    """
+    stripped = text.strip()
+    found = _TYPED_YEAR.match(stripped)
+    if found is None:
+        return stripped, None
+    return found["hint"].strip(), int(found["year"])
+
+
+def search_typed(
+    text: str, mode: ScanMode, provider: TvMetadataProvider | FilmMetadataProvider
+) -> tuple[Candidate, ...]:
+    """Search ``provider`` again for the title the person typed, in the Provider's order.
+
+    It is an ordinary search, so a lookup with a cache stores it under the typed hint.
+    A Film search with the year hint that finds nothing is tried once more without it,
+    and a film without a year is dropped, as in a build. A TV search asks with the
+    title hint alone; with a year hint, only the shows first aired that year are kept,
+    or every show when none was. ``()`` is nothing found; a failure raises
+    :class:`~termrenamer.util.errors.ProviderError`.
+    """
+    hint, year = typed_hint(text)
+    lookup = _lookup(provider, mode)
+    if isinstance(lookup, FilmLookup):
+        films = lookup.search_films(hint=hint, year=year)
+        return tuple(film for film in films if film.year is not None)
+    shows = lookup.search_shows(hint=hint)
+    that_year = tuple(show for show in shows if year is not None and show.year == year)
+    return that_year or shows
+
+
+def _first_hint(videos: Sequence[PlanEntry], mode: ScanMode) -> tuple[str, int]:
+    """The group key that sorts first among ``videos``: their title hints read again
+    from the recorded file names, with the year hint for Film, as the build grouped
+    them. Only names are read, never the disk."""
+    return min(
+        _Video(path=v.source, root=v.root, parsed=_parse(v.source, mode)).group_key for v in videos
+    )
