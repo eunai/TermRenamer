@@ -17,9 +17,9 @@ Two layers keep a secret out of the log lines:
    secret that a server echoes back in an error, or that another library logs on its
    own at WARNING or above, is masked only when it is a registered key or token.
 
-The screen shows a Provider's message, never a log line: a
-:class:`~termrenamer.util.errors.ProviderError` masks the same values in its message
-as it is made.
+The message line and the Match picker show a Provider's message itself, not a
+formatted log line, so a :class:`~termrenamer.util.errors.ProviderError` masks the
+same values in its message as it is made.
 """
 
 from __future__ import annotations

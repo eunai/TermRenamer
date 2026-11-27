@@ -1,6 +1,7 @@
-"""Text the screen did not write itself (a path, a file name, a Match's name as the Provider returned it, an error)
-reaches the screen as itself: never read as markup, whatever brackets or backslashes it
-holds. A Windows folder ends in a backslash, which must not escape what follows it.
+"""Text the screen did not write itself (a path, a file name, a Match's name as the
+Provider returned it, an error) reaches the screen as itself: never read as markup,
+whatever brackets or backslashes it holds. A Windows folder ends in a backslash, which
+must not escape what follows it.
 
 Each test drives the app to the Stage or dialog that shows the text and reads the screen.
 The folders are real, in the test's temporary folder, so on Windows each folder the

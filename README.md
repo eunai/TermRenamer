@@ -169,9 +169,10 @@ the current session only, and the app never writes the user settings file.
 6. **Applied.** The Stage counts the videos renamed, skipped and failed, and
    any that already had their names or were left out. It lists each video
    skipped, failed or left out with the reason, each Sidecar not renamed while
-   its video was, and each Straggler not merged. A video that already had its
-   name is only counted, and a Sidecar skipped with its video is not listed on
-   its own; the Logs (`l`) have every result. `u` undoes the last Apply, and `n`
+   its video was renamed or already had its name, and each Straggler not
+   merged. A video that already had its name is only counted, and a Sidecar
+   skipped with its video is not listed on its own; the Logs (`l`) have every
+   outcome. `u` undoes the last Apply, and `n`
    starts a new batch with an empty queue.
 
 `l` shows the Logs and `?` lists the keys. A button on the screen shows its key,

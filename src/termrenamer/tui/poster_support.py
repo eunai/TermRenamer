@@ -133,9 +133,10 @@ class PosterSource:
         does, so two views never download one Poster twice. A download that fails (an
         error status, a body that is not an image, a file that cannot be stored) is
         added to :attr:`failed` and logged in one line, here, before a new call can
-        start another; a call for a request already in :attr:`failed` sends nothing. Before each new attempt the download asks ``wanted`` of every
-        call that joined it; when none still wants the Poster it is given up, records
-        nothing, and a later call tries again.
+        start another; a call for a request already in :attr:`failed` sends nothing.
+        Before each attempt the download asks ``wanted`` of every call that joined it;
+        when none still wants the Poster it is given up, records nothing, and a later
+        call tries again.
 
         Raises:
             PosterError: The download failed or was given up.
