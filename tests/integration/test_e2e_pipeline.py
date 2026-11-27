@@ -30,7 +30,7 @@ def test_full_pipeline_stub(tmp_path: Path) -> None:
     plan = plan_folder(root, ScanMode.TV, provider, folder_rename=False)
     assert len(plan.entries) == 4
 
-    results = apply_plan(plan, confirmed=True)
+    results = apply_plan(plan, confirmed=True).results
     assert all(r.status is ApplyStatus.RENAMED for r in results)
     assert (root / "random_notes.txt").exists()
     remaining = {p.name for p in root.rglob("*") if p.is_file()}
@@ -52,6 +52,6 @@ def test_tv_dest_root_pipeline(tmp_path: Path) -> None:
         provider,
         destination_root=tv_dest,
     )
-    results = apply_plan(plan, confirmed=True)
+    results = apply_plan(plan, confirmed=True).results
     assert all(r.status is ApplyStatus.RENAMED for r in results)
     assert (tv_dest / "Show Name" / "Season 01").exists()

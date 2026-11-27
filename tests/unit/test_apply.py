@@ -30,7 +30,7 @@ def test_apply_moves_files(tmp_path: Path) -> None:
         _mapping={("show", 1, 1): EpisodeMetadata(show_title="Show", episode_title="Pilot")},
     )
     plan = plan_folder(tmp_path, ScanMode.TV, provider)
-    results = apply_plan(plan, confirmed=True)
+    results = apply_plan(plan, confirmed=True).results
     assert all(r.status is ApplyStatus.RENAMED for r in results)
     assert not vid.exists()
     assert any(p.exists() for p in tmp_path.rglob("*.mkv"))
@@ -44,7 +44,7 @@ def test_apply_skips_stale_source(tmp_path: Path) -> None:
     )
     plan = plan_folder(tmp_path, ScanMode.TV, provider)
     vid.unlink()
-    results = apply_plan(plan, confirmed=True)
+    results = apply_plan(plan, confirmed=True).results
     assert results[0].status is ApplyStatus.SKIP
 
 
@@ -98,7 +98,7 @@ def test_apply_merge_stragglers_moves_extra_files_to_dest_parent(
     )
     assert len(plan.entries) == 1
     main_dest = plan.entries[0].destination
-    results = apply_plan(plan, confirmed=True)
+    results = apply_plan(plan, confirmed=True).results
     assert [r.status for r in results] == [ApplyStatus.RENAMED]
     nfo_gone = (base / "extra.nfo").exists()
     assert not nfo_gone

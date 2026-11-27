@@ -207,17 +207,53 @@ class PlanEntry:
         """Whether its name is taken and it is not applied (Name taken set to ``skip``)."""
         return self.status is EntryStatus.NAME_TAKEN and self.destination is None
 
+    @property
+    def to_apply(self) -> bool:
+        """Whether Apply applies it: ready, or name taken with a numbered name. Only such
+        an entry claims its name."""
+        return self.destination is not None and self.status in (
+            EntryStatus.READY,
+            EntryStatus.NAME_TAKEN,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceFolder:
+    """A source folder that is a folder Source or lies inside one, and its direct
+    children as found when the Plan was built. A source folder is the parent folder of
+    an entry."""
+
+    path: Path
+    children: tuple[Path, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Straggler:
+    """A file or folder left in a source folder that Apply merges into a target folder
+    (a folder an entry of the Plan moves into), at the path the Plan fixed for it.
+
+    ``source`` is the child as found when the Plan was built; its parent is the source
+    folder. ``destination`` is its path in the target folder.
+    """
+
+    source: Path
+    destination: Path
+
 
 @dataclass(frozen=True, slots=True)
 class Plan:
     """The immutable batch that the Preview shows and Apply executes unchanged.
 
-    Entries are in source-path order; Titles are in name order.
+    Entries and Stragglers are in source-path order; Titles are in name order.
+    ``source_folders`` holds the children of each source folder that Stragglers are
+    listed from; a Plan built with Folder rename off lists no Stragglers.
     """
 
     options: PlanOptions
     titles: tuple[Title, ...]
     entries: tuple[PlanEntry, ...]
+    stragglers: tuple[Straggler, ...] = ()
+    source_folders: tuple[SourceFolder, ...] = ()
 
     @property
     def mode(self) -> ScanMode:
@@ -240,12 +276,49 @@ class ApplyStatus(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class ApplyResult:
-    """Result of a single apply operation."""
+    """What Apply did with one entry or one Straggler, and why."""
 
     source: Path
     destination: Path | None
     status: ApplyStatus
     reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class Move:
+    """One file or folder Apply moved, from ``source`` to ``destination``.
+
+    ``fingerprint`` is a file's size and modification time at its new place, taken
+    without following symbolic links; ``None`` for a folder.
+    """
+
+    source: Path
+    destination: Path
+    fingerprint: PlanFingerprint | None
+
+
+@dataclass(frozen=True, slots=True)
+class ApplyOutcome:
+    """Everything one Apply did, in the order it did it; Undo reverses it from this alone.
+
+    ``results`` holds one result per entry: videos in source-path order, then Sidecars.
+    ``stragglers`` holds one result per Straggler of the Plan, in the Plan's order; a
+    Straggler that moved is ``RENAMED``. ``moves`` lists every move: the entries renamed,
+    in ``results`` order, then the Stragglers moved. ``folders_created`` lists each folder
+    Apply made, each before the folders inside it. ``folders_removed`` lists each emptied
+    source folder Apply removed after every move, each before its parent.
+    """
+
+    results: tuple[ApplyResult, ...]
+    stragglers: tuple[ApplyResult, ...]
+    moves: tuple[Move, ...]
+    folders_created: tuple[Path, ...]
+    folders_removed: tuple[Path, ...]
+
+    @property
+    def stragglers_merged(self) -> int:
+        """How many Stragglers Apply moved."""
+        return sum(1 for r in self.stragglers if r.status is ApplyStatus.RENAMED)
 
 
 def videos_of(entries: Iterable[PlanEntry]) -> tuple[PlanEntry, ...]:

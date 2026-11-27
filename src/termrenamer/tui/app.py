@@ -1,7 +1,7 @@
 """The Spotlight screen: a header, the Stages row, the current Stage's view and the footer.
 
 The app owns the batch's flow: the queue, the session's settings owner, the Plan and
-the Apply results. It builds the Plan and applies it off the screen's thread, and it
+the Apply outcome. It builds the Plan and applies it off the screen's thread, and it
 moves between the four Stages. Each Stage's view lives in its own module under
 :mod:`termrenamer.tui.stages`, each dialog under :mod:`termrenamer.tui.dialogs` and
 each view under :mod:`termrenamer.tui.views`. Every key goes through the key table in
@@ -27,7 +27,7 @@ from textual.worker import Worker, WorkerState
 from termrenamer.app_bootstrap import Settings, ThemeName
 from termrenamer.core.apply import apply_plan
 from termrenamer.core.models import (
-    ApplyResult,
+    ApplyOutcome,
     Plan,
     PlanOptions,
     ScanMode,
@@ -118,7 +118,7 @@ class TermRenamerApp(App[None]):
         self.stage = Stage.QUEUE
         self.plan: Plan | None = None
         """The Plan the Preview shows, or ``None``."""
-        self.results: tuple[ApplyResult, ...] | None = None
+        self.outcome: ApplyOutcome | None = None
         """What the last Apply did, while the Applied Stage shows it."""
         self._applying = False
         self._cancel: threading.Event | None = None
@@ -383,21 +383,29 @@ class TermRenamerApp(App[None]):
         self._apply(plan)
 
     @work(thread=True, exclusive=True, group="batch", exit_on_error=False, name=_APPLY)
-    def _apply(self, plan: Plan) -> tuple[Plan, tuple[ApplyResult, ...]]:
-        return plan, tuple(apply_plan(plan, confirmed=True))
+    def _apply(self, plan: Plan) -> tuple[Plan, ApplyOutcome]:
+        return plan, apply_plan(plan, confirmed=True)
 
-    def _apply_finished(self, plan: Plan, results: tuple[ApplyResult, ...]) -> None:
+    def _apply_finished(self, plan: Plan, outcome: ApplyOutcome) -> None:
         self._applying = False
         self.session_settings.unlock()
         self.plan = None
-        self.results = results
-        for result in results:
+        self.outcome = outcome
+        for result in outcome.results:
             target = f" → {result.destination}" if result.destination is not None else ""
             self._messages.info(
                 "%s %s%s: %s", result.status.value, result.source, target, result.reason
             )
+        for result in outcome.stragglers:
+            self._messages.info(
+                "Straggler %s %s → %s: %s",
+                result.status.value,
+                result.source,
+                result.destination,
+                result.reason,
+            )
         applied = self.query_one(AppliedStage)
-        applied.show_results(plan, results)
+        applied.show_results(plan, outcome)
         self._show_stage(Stage.APPLIED)
         counts = applied.counts
         failed = counts is not None and counts.failed
@@ -432,7 +440,7 @@ class TermRenamerApp(App[None]):
 
     def action_new_batch(self) -> None:
         self.queue.clear()
-        self.results = None
+        self.outcome = None
         self.query_one(QueueStage).show_queue(())
         self._show_stage(Stage.QUEUE)
         self.say("Ready for a new batch.")

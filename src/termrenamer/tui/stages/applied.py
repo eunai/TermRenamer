@@ -15,11 +15,11 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.markup import escape
 from textual.widgets import Static
 
-from termrenamer.core.models import ApplyResult, ApplyStatus, Plan, PlanEntry
+from termrenamer.core.models import ApplyOutcome, ApplyResult, ApplyStatus, Plan, PlanEntry
 from termrenamer.core.title_rows import AppliedCounts
 from termrenamer.tui.stages.base import StageView
 from termrenamer.tui.widgets.action_button import ActionButton
-from termrenamer.tui.words import agree, folder_text, why_not_renamed
+from termrenamer.tui.words import agree, folder_text, plural, why_not_renamed
 
 _APPLIED = frozenset({ApplyStatus.RENAMED, ApplyStatus.UNCHANGED})
 
@@ -91,8 +91,9 @@ class AppliedStage(StageView):
     def counts(self) -> AppliedCounts | None:
         return self._counts
 
-    def show_results(self, plan: Plan, results: Sequence[ApplyResult]) -> None:
-        counts = AppliedCounts.of(plan, results)
+    def show_results(self, plan: Plan, outcome: ApplyOutcome) -> None:
+        counts = AppliedCounts.of(plan, outcome)
+        results = outcome.results
         self._counts = counts
         line = (
             f"[$success]{counts.renamed} renamed[/] [$tr-dim]·[/] "
@@ -102,6 +103,8 @@ class AppliedStage(StageView):
         if counts.unchanged:
             had = agree(counts.unchanged, "had its name", "had their names")
             line += f"\n[$tr-dim]{counts.unchanged} already {had}[/]"
+        if counts.stragglers_merged:
+            line += f"\n[$tr-dim]{plural(counts.stragglers_merged, 'Straggler')} merged[/]"
         self.query_one("#applied-counts", Static).update(line)
         self.query_one("#applied-title", Static).update(
             "The Plan is applied." + ("" if counts.failed else "\nNothing failed.")

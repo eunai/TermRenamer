@@ -225,7 +225,7 @@ async def test_n_at_the_applied_stage_starts_a_new_batch_with_an_empty_queue(
         text = screen_text(app)
         assert app.stage is Stage.QUEUE
         assert app.queue.sources == ()
-        assert app.results is None
+        assert app.outcome is None
     assert "Nothing queued yet" in text
     assert "● Queue" in text
 

@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from termrenamer.core.models import (
-    ApplyResult,
+    ApplyOutcome,
     ApplyStatus,
     EntryStatus,
     Plan,
@@ -53,12 +53,13 @@ class TitleRow:
 
 @dataclass(frozen=True, slots=True)
 class PlanCounts:
-    """What a Plan holds, counted in videos (Sidecars are not counted).
+    """What a Plan holds, counted in videos (Sidecars are not counted), and its Stragglers.
 
     ``to_rename`` counts the videos Apply will rename: ready or name taken, with a
     destination that is not where the video already is. A video that already has its
     name is not counted as renamed. The other counts count videos by status;
-    ``left_out`` stays 0 until a video can be left out (#27).
+    ``left_out`` stays 0 until a video can be left out (#27). ``stragglers`` is the
+    one count that is not of videos: the Stragglers the Plan lists, which Apply merges.
     """
 
     titles: int
@@ -69,6 +70,7 @@ class PlanCounts:
     no_match: int
     not_recognised: int
     left_out: int
+    stragglers: int
 
     @classmethod
     def of(cls, plan: Plan) -> PlanCounts:
@@ -86,27 +88,31 @@ class PlanCounts:
             no_match=sum(1 for v in videos if v.status is EntryStatus.NO_MATCH),
             not_recognised=sum(1 for v in videos if v.status is EntryStatus.NOT_RECOGNISED),
             left_out=0,
+            stragglers=len(plan.stragglers),
         )
 
 
 @dataclass(frozen=True, slots=True)
 class AppliedCounts:
-    """How many videos Apply renamed, left unchanged (already named), skipped and failed."""
+    """How many videos Apply renamed, left unchanged (already named), skipped and failed,
+    and how many Stragglers it merged."""
 
     renamed: int
     unchanged: int
     skipped: int
     failed: int
+    stragglers_merged: int
 
     @classmethod
-    def of(cls, plan: Plan, results: Sequence[ApplyResult]) -> AppliedCounts:
+    def of(cls, plan: Plan, outcome: ApplyOutcome) -> AppliedCounts:
         videos = {entry.source for entry in plan.videos}
-        statuses = [r.status for r in results if r.source in videos]
+        statuses = [r.status for r in outcome.results if r.source in videos]
         return cls(
             renamed=statuses.count(ApplyStatus.RENAMED),
             unchanged=statuses.count(ApplyStatus.UNCHANGED),
             skipped=statuses.count(ApplyStatus.SKIP),
             failed=statuses.count(ApplyStatus.FAIL),
+            stragglers_merged=outcome.stragglers_merged,
         )
 
 

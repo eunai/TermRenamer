@@ -1,14 +1,14 @@
 """Plan the queued Sources: the one entry point that builds a Plan.
 
 :func:`plan_queue` takes the queue, the plan options and the build's Provider, and
-returns one Plan. It touches the filesystem only to list the Sources and to stat
-their files; nothing is renamed.
+returns one Plan. It touches the filesystem only to list the Sources and the source
+folders, to stat their files and to test the wanted names; nothing is renamed.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import overload
@@ -29,6 +29,7 @@ from termrenamer.core.models import (
     PlanFingerprint,
     PlanOptions,
     ScanMode,
+    SourceFolder,
     Title,
 )
 from termrenamer.core.parse import parse_filename, parse_film_filename
@@ -45,6 +46,7 @@ from termrenamer.core.progress import (
     TitleLookupStarted,
 )
 from termrenamer.core.scan import classify, scan
+from termrenamer.core.stragglers import plan_stragglers
 from termrenamer.core.templates import format_film_destination, format_tv_destination
 from termrenamer.util.errors import ParseError
 
@@ -72,11 +74,13 @@ class PlanBuild:
 
 @dataclass(frozen=True, slots=True)
 class _Found:
-    """A video or Sidecar of the queue, with the folder of its owning Source."""
+    """A video or Sidecar of the queue, with the folder of its owning Source, and
+    whether that Source is a folder."""
 
     path: Path
     root: Path
     kind: FileKind
+    in_folder_source: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,7 +151,8 @@ def _collect(sources: Sequence[Path]) -> tuple[list[_Found], list[str]]:
         if resolved.is_dir():
             rank = (0, len(resolved.parts))
             contributed = [
-                _Found(path=f.path, root=resolved, kind=f.kind) for f in scan(root=resolved)
+                _Found(path=f.path, root=resolved, kind=f.kind, in_folder_source=True)
+                for f in scan(root=resolved)
             ]
         elif classify(resolved.suffix) is FileKind.VIDEO:
             rank = (1, 0)
@@ -317,10 +322,12 @@ def plan_queue(
     """Plan every file of the queued ``sources`` with ``options``, in one Plan.
 
     Returns the Plan and a message for each Source that was skipped (it no longer
-    exists, or it is a file that is not a video). ``listener`` is told each event of
-    :mod:`termrenamer.core.progress` as the build runs; an exception it raises stops
-    the build. ``cancel`` is checked before each lookup: once it is set, the build
-    stops and returns ``None``.
+    exists, or it is a file that is not a video). The Plan records the children of each
+    source folder inside a folder Source and, with Folder rename on, lists its
+    Stragglers (:func:`~termrenamer.core.stragglers.plan_stragglers`). ``listener`` is
+    told each event of :mod:`termrenamer.core.progress` as the build runs; an exception
+    it raises stops the build. ``cancel`` is checked before each lookup: once it is set,
+    the build stops and returns ``None``.
     """
     lookup = _lookup(provider, options.mode)
     found, messages = _collect(sources)
@@ -442,5 +449,35 @@ def plan_queue(
 
     entries.sort(key=lambda e: path_key(e.source))
     titles = sorted(set(title_of.values()), key=lambda t: (t.name.casefold(), t.year or 0))
-    plan = Plan(options=options, titles=tuple(titles), entries=tuple(entries))
+    in_folder_source = {path_key(f.path) for f in found if f.in_folder_source}
+    folders = _source_folders(
+        e.source.parent for e in entries if path_key(e.source) in in_folder_source
+    )
+    plan = Plan(
+        options=options,
+        titles=tuple(titles),
+        entries=tuple(entries),
+        stragglers=plan_stragglers(options, entries, folders),
+        source_folders=folders,
+    )
     return PlanBuild(plan=plan, messages=tuple(messages))
+
+
+def _source_folders(folders: Iterable[Path]) -> tuple[SourceFolder, ...]:
+    """Each of ``folders`` once, in source-path order, with its direct children now.
+
+    The folder that holds a file Source is never passed here, so the files beside a
+    queued file are never Stragglers. A folder that cannot be listed has no children,
+    with a logged warning.
+    """
+    unique = {path_key(folder): folder for folder in folders}
+    recorded = []
+    for key in sorted(unique):
+        folder = unique[key]
+        try:
+            children = tuple(sorted(folder.iterdir(), key=path_key))
+        except OSError as exc:
+            _LOG.warning("Cannot list %s for Stragglers: %s", folder, exc)
+            children = ()
+        recorded.append(SourceFolder(path=folder, children=children))
+    return tuple(recorded)

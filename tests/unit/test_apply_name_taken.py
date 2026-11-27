@@ -60,7 +60,7 @@ def test_under_suffix_a_taken_name_is_applied_with_its_number(tmp_path: Path) ->
     video = _taken_folder(tmp_path)
     folder = video.parent
 
-    results = apply_plan(_plan([video], NameTakenPolicy.SUFFIX), confirmed=True)
+    results = apply_plan(_plan([video], NameTakenPolicy.SUFFIX), confirmed=True).results
 
     assert _by_name(results) == {
         "Show.Name.S01E01.mkv": (ApplyStatus.RENAMED, "ok"),
@@ -79,7 +79,7 @@ def test_under_skip_a_taken_name_and_its_sidecar_are_skipped_as_name_taken(
     video = _taken_folder(tmp_path)
     folder = video.parent
 
-    results = apply_plan(_plan([video], NameTakenPolicy.SKIP), confirmed=True)
+    results = apply_plan(_plan([video], NameTakenPolicy.SKIP), confirmed=True).results
 
     assert _by_name(results) == {
         "Show.Name.S01E01.mkv": (ApplyStatus.SKIP, "name taken"),
@@ -101,7 +101,7 @@ def test_under_skip_a_sidecar_whose_own_name_is_taken_stays_while_its_video_move
 
     results = apply_plan(
         _plan([tmp_path / "Show.Name.S01E01.mkv"], NameTakenPolicy.SKIP), confirmed=True
-    )
+    ).results
 
     assert _by_name(results) == {
         "Show.Name.S01E01.mkv": (ApplyStatus.RENAMED, "ok"),
@@ -137,7 +137,7 @@ def test_a_name_taken_after_the_preview_is_never_overwritten(
     plan = _plan([tmp_path / "Show.Name.S01E01.mkv"], policy)
     (tmp_path / f"{PILOT}.mkv").write_bytes(b"arrived later")
 
-    results = apply_plan(plan, confirmed=True)
+    results = apply_plan(plan, confirmed=True).results
 
     assert _by_name(results) == {
         "Show.Name.S01E01.mkv": (ApplyStatus.SKIP, "destination exists at apply time"),
@@ -157,7 +157,7 @@ def test_the_plan_is_applied_as_previewed_whatever_the_name_on_disk_does_later(
     plan = _plan([video], NameTakenPolicy.SKIP)
     (folder / f"{PILOT}.mkv").unlink()
 
-    results = apply_plan(plan, confirmed=True)
+    results = apply_plan(plan, confirmed=True).results
 
     assert _by_name(results)["Show.Name.S01E01.mkv"] == (ApplyStatus.SKIP, "name taken")
     assert sorted(_contents(folder)) == ["Show.Name.S01E01.mkv", "Show.Name.S01E01.srt"]
