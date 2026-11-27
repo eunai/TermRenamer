@@ -23,7 +23,6 @@ from textual.dom import DOMNode
 from textual.message import Message
 from textual.widgets import ContentSwitcher
 from textual.worker import Worker, WorkerState
-from textual_fspicker import FileOpen, SelectDirectory
 
 from termrenamer.app_bootstrap import Settings, ThemeName
 from termrenamer.core.apply import apply_plan
@@ -38,7 +37,7 @@ from termrenamer.core.progress import PlanEvent
 from termrenamer.core.queue import SourceQueue
 from termrenamer.session_settings import SessionSettings, locked_message
 from termrenamer.tui import keys
-from termrenamer.tui.dialogs import ApplyConfirm
+from termrenamer.tui.dialogs import ApplyConfirm, FilePicker, FolderPicker
 from termrenamer.tui.log_book import LogBook, LogBookHandler
 from termrenamer.tui.stage import Stage
 from termrenamer.tui.stages import AppliedStage, PlanStage, PreviewStage, QueueStage, StageView
@@ -256,11 +255,11 @@ class TermRenamerApp(App[None]):
 
     def action_add_file(self) -> None:
         """Open the file dialog; the picked file is queued, Escape changes nothing."""
-        self.push_screen(FileOpen(str(Path.cwd())), self._source_picked)
+        self.push_screen(FilePicker(Path.cwd()), self._source_picked)
 
     def action_add_folder(self) -> None:
         """Open the folder dialog; the picked folder is queued, Escape changes nothing."""
-        self.push_screen(SelectDirectory(str(Path.cwd())), self._source_picked)
+        self.push_screen(FolderPicker(Path.cwd()), self._source_picked)
 
     def _source_picked(self, path: Path | None) -> None:
         if path is None or self.stage is not Stage.QUEUE:

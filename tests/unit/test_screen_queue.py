@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
+import threading
+from collections.abc import Iterator
 from pathlib import Path
+
+import pytest
+from textual_fspicker.parts import DirectoryNavigation
 
 from termrenamer.tui.stage import Stage
 
@@ -69,6 +75,68 @@ async def test_a_opens_the_file_dialog_and_f_the_folder_dialog_and_escape_change
         assert app.screen is app.screen_stack[0]
         assert app.queue.sources == ()
         assert "Nothing queued yet" in screen_text(app)
+
+
+@pytest.mark.parametrize("key", ["a", "f"])
+async def test_the_dialog_reads_its_listing_styles_only_on_the_app_thread(
+    key: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The app empties and refills a widget's style table each time it restyles it, so
+    # a read of that table from the listing thread can find it empty and stop the app.
+    monkeypatch.chdir(tv_backups(tmp_path))
+    readers: set[int] = set()
+    real_read = DirectoryNavigation.get_component_rich_style
+
+    def spy(self: DirectoryNavigation, *names: str, partial: bool = False) -> object:
+        readers.add(threading.get_ident())
+        return real_read(self, *names, partial=partial)
+
+    monkeypatch.setattr(DirectoryNavigation, "get_component_rich_style", spy)
+    app = make_app()
+    async with app.run_test(size=SIZE) as pilot:
+        await press(pilot, key)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        listed = app.screen.query_one(DirectoryNavigation).option_count
+        await press(pilot, "escape")
+    assert listed > 0
+    assert readers == {threading.get_ident()}
+
+
+@pytest.mark.parametrize("key", ["a", "f"])
+async def test_escape_before_the_dialog_has_listed_its_folder_changes_nothing(
+    key: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A folder on a slow share: its listing holds after the last entry until the test
+    # lets it go, so the dialog closes while the listing is still running.
+    share = tv_backups(tmp_path).resolve()
+    monkeypatch.chdir(share)
+    held = threading.Event()
+    go = threading.Event()
+    real_iterdir = Path.iterdir
+
+    def slow_iterdir(self: Path) -> Iterator[Path]:
+        yield from real_iterdir(self)
+        if self.resolve() == share:
+            held.set()
+            go.wait(timeout=10)
+
+    monkeypatch.setattr(Path, "iterdir", slow_iterdir)
+    app = make_app()
+    async with app.run_test(size=SIZE) as pilot:
+        await press(pilot, key)
+        assert await asyncio.to_thread(held.wait, 10)
+        await press(pilot, "escape")
+        assert app.screen is app.screen_stack[0]
+        go.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        text = screen_text(app)
+        lines = [line for _, line in app.log_book.lines_after(0)]
+    assert app.queue.sources == ()
+    assert "Nothing queued yet" in text
+    loud = (" WARNING ", " ERROR ", " CRITICAL ")
+    assert not [line for line in lines if any(level in line for level in loud)]
 
 
 async def test_a_queued_folder_and_file_are_drawn_with_the_queue_actions(tmp_path: Path) -> None:
