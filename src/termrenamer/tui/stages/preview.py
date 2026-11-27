@@ -1,35 +1,62 @@
-"""The Preview Stage: one row per Title with its status word and its count of videos."""
+"""The Preview Stage: the selected Title's details on the left, the Title list on the right.
+
+The details column holds the selected Title's name, status word and counts, one cell
+per video, the summary of the whole Plan and the Apply action. ``↑`` ``↓`` select a
+Title, ``←`` ``→`` a file of it; the footer shows that file's current and new paths.
+The column stays left of the Title list, where the Poster panel goes (#29).
+"""
 
 from __future__ import annotations
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.markup import escape
 from textual.widgets import Static
 
-from termrenamer.core.models import Plan
+from termrenamer.core.models import EntryStatus, Plan, PlanEntry
 from termrenamer.core.title_rows import PlanCounts, TitleRow, title_rows
-from termrenamer.tui.stages.title_list_stage import TitleListStage, match_name
+from termrenamer.tui.stages.title_list_stage import TitleListStage
 from termrenamer.tui.widgets.action_button import ActionButton
+from termrenamer.tui.widgets.title_details import TitleDetails
 from termrenamer.tui.widgets.title_list import ListRow, StatusWord, TitleList
-from termrenamer.tui.words import plural
+from termrenamer.tui.words import match_name, plural, why_not_renamed
+
+_LABEL_WIDTH = 6
+"""``from`` and ``to`` and the spaces after them, in the footer."""
 
 
 class PreviewStage(TitleListStage):
-    """The Plan's Title list, and the Apply action under it."""
+    """The details column with the summary and Apply, and the Plan's Title list."""
 
     DEFAULT_CSS = """
-    PreviewStage #preview-actions {
-        height: 3;
-        padding: 1 0 0 0;
+    PreviewStage #details {
+        width: 39;
+        height: 1fr;
+        border-right: solid $tr-line;
+    }
+    PreviewStage #details-scroll {
+        height: 1fr;
+        padding: 1 1 0 3;
+        scrollbar-size-vertical: 1;
+    }
+    PreviewStage #details-actions {
+        height: auto;
+        margin-top: 1;
+    }
+    PreviewStage #details-actions ActionButton {
+        margin: 0 0 1 0;
+    }
+    PreviewStage #preview-summary {
+        height: auto;
+        padding: 1 1 1 3;
         border-top: solid $tr-line;
     }
-    PreviewStage #preview-actions ActionButton {
-        margin: 0 0 0 2;
+    PreviewStage #summary-counts {
+        margin-bottom: 1;
     }
     PreviewStage #preview-note {
-        width: auto;
         color: $tr-dim;
-        padding: 0 2;
+        margin-top: 1;
     }
     """
 
@@ -37,14 +64,32 @@ class PreviewStage(TitleListStage):
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._plan: Plan | None = None
         self._rows: tuple[TitleRow, ...] = ()
+        self._file = 0
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="stage-body"):
-            yield from self.compose_heading()
-            yield TitleList(id="preview-titles")
-            with Horizontal(id="preview-actions"):
-                yield ActionButton("enter", "Apply…", press_key="enter", classes="-strong")
-                yield Static("Nothing moves until you confirm.", id="preview-note")
+        with Horizontal():
+            with Vertical(id="details"):
+                with VerticalScroll(id="details-scroll"):
+                    yield TitleDetails()
+                    with Vertical(id="details-actions"):
+                        yield ActionButton(
+                            "t", "Change match", press_key="t", id="change-match", classes="-plain"
+                        )
+                        yield ActionButton(
+                            "x", "Leave out", press_key="x", id="leave-out", classes="-plain"
+                        )
+                with Vertical(id="preview-summary"):
+                    yield Static("", id="summary-counts")
+                    yield ActionButton("enter", "Apply…", press_key="enter", classes="-strong")
+                    yield Static("Nothing moves until you confirm.", id="preview-note")
+            with Vertical(classes="stage-body"):
+                yield from self.compose_heading()
+                yield TitleList(id="preview-titles")
+
+    def on_mount(self) -> None:
+        # Each button shows once its key's action is built (#27, #28).
+        for button_id, action in (("#change-match", "pick_match"), ("#leave-out", "leave_out")):
+            self.query_one(button_id).display = callable(getattr(self, f"action_{action}", None))
 
     @property
     def plan(self) -> Plan | None:
@@ -58,10 +103,19 @@ class PreviewStage(TitleListStage):
             return None
         return self._rows[int(selected.key)]
 
+    @property
+    def selected_file(self) -> PlanEntry | None:
+        """The selected video of the selected row, or ``None``."""
+        row = self.selected_row
+        if row is None or not row.files:
+            return None
+        return row.files[min(self._file, len(row.files) - 1)]
+
     def show_plan(self, plan: Plan) -> None:
         """Show ``plan``'s Titles, and each not recognised video as a row of its own."""
         self._plan = plan
         self._rows = title_rows(plan)
+        self._file = 0
         rows = [
             ListRow(
                 key=str(index),
@@ -75,10 +129,108 @@ class PreviewStage(TitleListStage):
         self.title_list.set_rows([])
         self.title_list.set_rows(rows)
         self.show_heading_count(len(rows))
+        self.query_one("#summary-counts", Static).update(_summary(PlanCounts.of(plan)))
+        self._show_details()
+
+    def redraw(self) -> None:
+        super().redraw()
+        self._show_details()
+
+    def _show_details(self) -> None:
+        if self._plan is not None:
+            self.query_one(TitleDetails).show(self.selected_row, self._plan.mode, self._file)
         self.changed()
+
+    # ------------------------------------------------------------------ keys
+
+    def action_select_previous(self) -> None:
+        self.title_list.select_previous()
+        self._file = 0
+        self._show_details()
+
+    def action_select_next(self) -> None:
+        self.title_list.select_next()
+        self._file = 0
+        self._show_details()
+
+    def action_previous_file(self) -> None:
+        self._file = max(0, self._file - 1)
+        self._show_details()
+
+    def action_next_file(self) -> None:
+        row = self.selected_row
+        if row is not None:
+            self._file = min(self._file + 1, len(row.files) - 1)
+        self._show_details()
+
+    # --------------------------------------------------------------- footer
 
     def count_text(self) -> str:
         if self._plan is None:
             return ""
         counts = PlanCounts.of(self._plan)
         return f"{plural(counts.titles, 'Title')} · {plural(counts.videos, 'video')}"
+
+    def footer_lines(self) -> tuple[str, ...]:
+        row, video = self.selected_row, self.selected_file
+        if row is None or video is None:
+            return ()
+        width = max(20, self.app.size.width - 4 - _LABEL_WIDTH)
+        why = why_not_renamed(video)
+        notes = [why] if why is not None else []
+        if why is None and video.status is EntryStatus.NAME_TAKEN:
+            notes.append("name taken, gets a number")
+        notes.extend(_sidecar_notes(row.sidecars_of(video), moves=why is None))
+        note = "".join(f" · {n}" for n in notes)
+        to = str(video.destination) if video.destination is not None else "not renamed"
+        if why is None:
+            colour = "$warning" if video.status is EntryStatus.NAME_TAKEN else "$accent"
+        elif video.status is EntryStatus.READY:
+            colour = "$tr-dim"
+        else:
+            colour = f"${StatusWord(video.status.value).colour}"
+        return (
+            f"[$tr-dim]from[/]  [$foreground]{escape(fit_path(str(video.source), width))}[/]",
+            f"[$tr-dim]to[/]    [{colour}]{escape(fit_path(to, width - len(note)))}[/]"
+            f"[$tr-dim]{escape(note)}[/]",
+        )
+
+
+def fit_path(text: str, width: int) -> str:
+    """``text`` cut from the left to ``width`` cells, so a path keeps its file name."""
+    if len(text) <= width:
+        return text
+    return "…" + text[-max(1, width - 1) :]
+
+
+def _sidecar_notes(sidecars: tuple[PlanEntry, ...], *, moves: bool) -> list[str]:
+    """How many of a video's Sidecars move with it and how many stay."""
+    moving = [s for s in sidecars if moves and why_not_renamed(s) is None]
+    staying = len(sidecars) - len(moving)
+    notes = []
+    if moving:
+        n = len(moving)
+        notes.append(f"{plural(n, 'Sidecar')} {'moves' if n == 1 else 'move'} with it")
+    if staying:
+        notes.append(f"{plural(staying, 'Sidecar')} {'stays' if staying == 1 else 'stay'}")
+    return notes
+
+
+def _summary(counts: PlanCounts) -> str:
+    """The Plan's videos counted by status, on three lines to fit the column."""
+
+    def part(n: int, word: str, colour: str) -> str:
+        return f"[{colour}]{n} {word}[/]"
+
+    dot = " [$tr-dim]·[/] "
+    return "\n".join(
+        (
+            part(counts.ready, "ready", "$success")
+            + dot
+            + part(counts.name_taken, "name taken", "$warning"),
+            part(counts.no_match, "no match", "$error")
+            + dot
+            + part(counts.not_recognised, "not recognised", "$error"),
+            part(counts.left_out, "left out", "$tr-dim"),
+        )
+    )

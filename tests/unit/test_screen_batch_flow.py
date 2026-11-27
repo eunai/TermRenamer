@@ -148,7 +148,7 @@ async def test_enter_opens_the_apply_confirm_and_n_or_escape_renames_nothing(
             assert names_in(folder) == _BEFORE
     assert "Apply the Plan?" in text
     assert "Rename 3 videos in their own folders." in text
-    assert "Skip 0 with no match · 1 not recognised" in text
+    assert "Skip 1 video: 1 not recognised" in text
     assert "Nothing has been renamed yet." in text
 
 
@@ -329,4 +329,4 @@ async def test_the_confirm_does_not_count_a_video_that_already_has_its_name(
         await press(pilot, "enter")
         text = screen_text(app)
         await press(pilot, "n")
-    assert "Rename 1 video in their own folders." in text
+    assert "Rename 1 video in its own folder." in text

@@ -9,9 +9,9 @@ from textual.widgets import Static
 
 from termrenamer.core.models import ScanMode
 from termrenamer.core.progress import PlanEvent, TitleLookedUp
-from termrenamer.tui.stages.title_list_stage import TitleListStage, match_name, title_name
+from termrenamer.tui.stages.title_list_stage import TitleListStage
 from termrenamer.tui.widgets.title_list import ListRow, StatusWord, TitleList
-from termrenamer.tui.words import plural
+from termrenamer.tui.words import match_name, plural, title_name
 
 
 class PlanStage(TitleListStage):

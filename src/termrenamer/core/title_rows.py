@@ -40,6 +40,16 @@ class TitleRow:
         """How many of the row's files are videos."""
         return len(videos_of(self.entries))
 
+    @property
+    def files(self) -> tuple[PlanEntry, ...]:
+        """The row's videos in the order its cells show them: by season and episode
+        in TV Mode, then in the Plan's source-path order."""
+        return tuple(sorted(videos_of(self.entries), key=lambda e: (e.season or 0, e.episode or 0)))
+
+    def sidecars_of(self, video: PlanEntry) -> tuple[PlanEntry, ...]:
+        """The Sidecars that belong to ``video``, one of the row's files."""
+        return tuple(e for e in self.entries if e.video == video.source)
+
 
 @dataclass(frozen=True, slots=True)
 class PlanCounts:
@@ -47,14 +57,18 @@ class PlanCounts:
 
     ``to_rename`` counts the videos Apply will rename: ready or name taken, with a
     destination that is not where the video already is. A video that already has its
-    name is not counted as renamed.
+    name is not counted as renamed. The other counts count videos by status;
+    ``left_out`` stays 0 until a video can be left out (#27).
     """
 
     titles: int
     videos: int
     to_rename: int
+    ready: int
+    name_taken: int
     no_match: int
     not_recognised: int
+    left_out: int
 
     @classmethod
     def of(cls, plan: Plan) -> PlanCounts:
@@ -65,8 +79,11 @@ class PlanCounts:
             to_rename=sum(
                 1 for v in videos if v.status in _RENAMED and v.destination not in (None, v.source)
             ),
+            ready=sum(1 for v in videos if v.status is EntryStatus.READY),
+            name_taken=sum(1 for v in videos if v.status is EntryStatus.NAME_TAKEN),
             no_match=sum(1 for v in videos if v.status is EntryStatus.NO_MATCH),
             not_recognised=sum(1 for v in videos if v.status is EntryStatus.NOT_RECOGNISED),
+            left_out=0,
         )
 
 

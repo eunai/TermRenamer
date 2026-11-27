@@ -35,7 +35,6 @@ from termrenamer.core.models import (
 from termrenamer.core.planning import plan_queue
 from termrenamer.core.progress import PlanEvent
 from termrenamer.core.queue import SourceQueue
-from termrenamer.core.title_rows import PlanCounts
 from termrenamer.session_settings import SessionSettings, locked_message
 from termrenamer.tui import keys
 from termrenamer.tui.dialogs import ApplyConfirm
@@ -340,16 +339,7 @@ class TermRenamerApp(App[None]):
         plan = self.plan
         if plan is None or self._applying:
             return
-        counts = PlanCounts.of(plan)
-        root = plan.options.destination_root
-        under = f"under {root}/" if root is not None else "in their own folders"
-        confirm = ApplyConfirm(
-            videos=counts.to_rename,
-            under=under,
-            no_match=counts.no_match,
-            not_recognised=counts.not_recognised,
-        )
-        self.push_screen(confirm, self._apply_answered)
+        self.push_screen(ApplyConfirm(plan), self._apply_answered)
 
     def _apply_answered(self, yes: bool | None) -> None:
         plan = self.plan

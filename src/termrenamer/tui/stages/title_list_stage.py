@@ -6,18 +6,8 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Static
 
-from termrenamer.core.models import Candidate, ScanMode, Title
 from termrenamer.tui.stages.base import StageView
 from termrenamer.tui.widgets.title_list import TitleList
-
-
-def title_name(name: str, year: int | None, mode: ScanMode) -> str:
-    """A Title as the list writes it: a film with its year, a show by its name alone."""
-    return f"{name} ({year})" if mode is ScanMode.FILM and year is not None else name
-
-
-def match_name(match: Candidate | Title, mode: ScanMode) -> str:
-    return title_name(match.name, match.year, mode)
 
 
 class TitleListStage(StageView):

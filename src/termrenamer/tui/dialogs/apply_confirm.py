@@ -6,6 +6,9 @@ over the Title list, right of where the Poster panel goes.
 
 from __future__ import annotations
 
+import os
+from collections import Counter
+
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -13,11 +16,43 @@ from textual.markup import escape
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
+from termrenamer.core.models import EntryStatus, Plan
+from termrenamer.core.title_rows import PlanCounts
 from termrenamer.tui.widgets.action_button import ActionButton
+from termrenamer.tui.words import plural, why_not_renamed
+
+
+def confirm_lines(plan: Plan) -> tuple[str, ...]:
+    """What the confirm says (Textual markup): the videos renamed and where, the videos
+    skipped counted by status, those that already have their names, and that nothing
+    has been renamed yet."""
+    counts = PlanCounts.of(plan)
+    root = plan.options.destination_root
+    if root is not None:
+        where = f"under {root}{os.sep}"
+    else:
+        where = "in its own folder" if counts.to_rename == 1 else "in their own folders"
+    staying = [v for v in plan.videos if why_not_renamed(v) is not None]
+    named = [v for v in staying if v.destination == v.source]
+    skipped = Counter(v.status for v in staying if v.destination != v.source)
+    if skipped:
+        reasons = " · ".join(f"{skipped[s]} {s.value}" for s in EntryStatus if skipped[s])
+        skip = f"Skip {plural(skipped.total(), 'video')}: {reasons}"
+    else:
+        skip = "Skip none."
+    lines = [
+        f"[$foreground]Rename {plural(counts.to_rename, 'video')} {escape(where)}.[/]",
+        f"[$foreground]{skip}[/]",
+    ]
+    if named:
+        that = "that already has its name" if len(named) == 1 else "that already have their names"
+        lines.append(f"[$tr-dim]Leave {plural(len(named), 'video')} {that}.[/]")
+    lines += ["", "[$warning]Nothing has been renamed yet.[/]"]
+    return tuple(lines)
 
 
 class ApplyConfirm(ModalScreen[bool]):
-    """ "Apply the Plan?" with how many videos will be renamed, and Apply or Back."""
+    """ "Apply the Plan?" with what Apply will do (:func:`confirm_lines`), and Apply or Back."""
 
     BINDINGS = [
         Binding("y", "answer(True)", show=False),
@@ -34,7 +69,7 @@ class ApplyConfirm(ModalScreen[bool]):
     ApplyConfirm #confirm-dialog {
         width: 62;
         max-width: 100%;
-        height: 12;
+        height: auto;
         margin-right: 12;
         padding: 0 2;
         border: round $accent;
@@ -43,8 +78,8 @@ class ApplyConfirm(ModalScreen[bool]):
         background: $tr-dialog;
     }
     ApplyConfirm #confirm-lines {
-        height: 6;
-        padding: 1 0 0 0;
+        height: auto;
+        padding: 1 0 1 0;
     }
     ApplyConfirm .buttons {
         height: 1;
@@ -54,21 +89,13 @@ class ApplyConfirm(ModalScreen[bool]):
     }
     """
 
-    def __init__(self, *, videos: int, under: str, no_match: int, not_recognised: int) -> None:
+    def __init__(self, plan: Plan) -> None:
         super().__init__()
-        self._videos = videos
-        self._under = under
-        self._skipped = f"Skip {no_match} with no match · {not_recognised} not recognised"
+        self._lines = confirm_lines(plan)
 
     def compose(self) -> ComposeResult:
-        noun = "video" if self._videos == 1 else "videos"
         with Vertical(id="confirm-dialog"):
-            yield Static(
-                f"[$foreground]Rename {self._videos} {noun} {escape(self._under)}.[/]\n"
-                f"[$foreground]{self._skipped}[/]\n\n"
-                "[$warning]Nothing has been renamed yet.[/]",
-                id="confirm-lines",
-            )
+            yield Static("\n".join(self._lines), id="confirm-lines")
             with Horizontal(classes="buttons"):
                 yield ActionButton("y", "Apply", press_key="y", id="confirm-yes", classes="-strong")
                 yield ActionButton("n", "Back", press_key="n", id="confirm-no", classes="-plain")
