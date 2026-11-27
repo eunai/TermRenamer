@@ -53,7 +53,7 @@ Settings come from three sources, highest first: `TERMRENAMER_*` environment var
 
 - **Planning / Preview**: safe to rerun; no renames occur until **confirmed Apply**.
 - **After a partial Apply**: read the Applied Stage's "Not renamed" list, or `l` for every result; fix underlying errors; build the Plan again for what remains. `u` undoes the whole last Apply while the Applied Stage is shown: it puts files back only while they are as Apply left them, and never replaces anything. Undo is gone once you start a new batch or quit.
-- **Deleting the SQLite cache** (`TERMRENAMER_CACHE_DB_PATH`): safe; the app falls back to network-only behavior. Remove the file or unset the env var to disable on-disk cache.
+- **Deleting the SQLite cache** (the file `TERMRENAMER_CACHE_DB_PATH` names): safe, and it clears the cache; a session that starts with the setting still set makes a new file at its first lookup. To stop caching on disk, remove `TERMRENAMER_CACHE_DB_PATH` from the environment and from each settings file that sets it.
 
 ## Quality verification (developers)
 

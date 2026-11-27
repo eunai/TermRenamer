@@ -22,7 +22,7 @@ The user's choice of TV or Film, which decides how filenames are parsed, which p
 An online metadata source (TMDB, TheTVDB or OMDb) that a plan looks titles up in; TV and Film accept different providers.
 
 **Sidecar**:
-A subtitle or info file (such as `.srt` or `.nfo`) that moves with the video sharing its folder and filename stem; one with no such video is left alone.
+A subtitle or info file (such as `.srt` or `.nfo`) that moves with the video sharing its folder and filename stem. One with no such video is unpaired, not a Sidecar: with Folder rename on, it can move as a Straggler when a video moves out of its folder, and otherwise it is left alone.
 
 **Folder rename**:
 The setting that lets a plan move media into canonical show or film folders; when off, only the filename changes in its current folder.

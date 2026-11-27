@@ -167,9 +167,12 @@ the current session only, and the app never writes the user settings file.
 5. Press `Enter`. The Apply confirm says what Apply will do. `y` or `Enter`
    renames; `n` or `Esc` goes back with nothing changed.
 6. **Applied.** The Stage counts the videos renamed, skipped and failed, and
-   any that already had their names or were left out, and lists each file that
-   was not renamed with the reason. `u` undoes the last Apply, and `n` starts a
-   new batch with an empty queue.
+   any that already had their names or were left out. It lists each video
+   skipped, failed or left out with the reason, each Sidecar not renamed while
+   its video was, and each Straggler not merged. A video that already had its
+   name is only counted, and a Sidecar skipped with its video is not listed on
+   its own; the Logs (`l`) have every result. `u` undoes the last Apply, and `n`
+   starts a new batch with an empty queue.
 
 `l` shows the Logs and `?` lists the keys. A button on the screen shows its key,
 and clicking it does what the key does. Clicking a row of the Queue's Sources, of
@@ -220,7 +223,10 @@ Apply and Undo confirms, the Match picker, the file and folder dialogs).
   while its video moves, and says that nothing has been renamed yet.
 - **TV and Film Modes.** TV uses TMDB or TheTVDB v4. Film uses TMDB or OMDb.
   OMDb is a Provider you select, not an automatic fallback. At start, and when
-  you change Mode, the Provider is the first of that Mode that has a key.
+  you change Mode, the Provider is the first of that Mode that has a key, or
+  TMDB, marked "no key", when none of that Mode has one. The app starts in TV
+  Mode, so with only an OMDb key the header shows `TMDB (no key)` until `m`
+  changes to Film, where OMDb is selected.
 - **Source queue.** Add files with `a` and folders with `f`. A folder is
   searched, with its subfolders, for `.mkv`, `.mp4`, `.avi`, `.webm` and `.m4v`
   videos. A folder and a file inside it can both be queued: the file is planned

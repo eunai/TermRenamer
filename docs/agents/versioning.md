@@ -20,7 +20,7 @@ SemVer requires a declared public API. This repo's is:
 - The user settings file's location: `%APPDATA%\termrenamer\.env` on Windows (`AppData\Roaming` in the home folder when `APPDATA` is unset or empty); `$XDG_CONFIG_HOME/termrenamer/.env` everywhere else, macOS included (`~/.config` when `XDG_CONFIG_HOME` is unset, empty or relative).
 - The settings precedence, highest first: environment variables, a `.env` in the current working folder (that folder only), then the user settings file. A blank value counts as not set.
 - The rename output: the filename and folder layout a plan produces for given metadata and settings, and the Name taken policy (never overwrite; `suffix` adds a number, `skip` leaves the file where it is).
-- The TUI workflow contract: the Queue, Plan, Preview and Applied Stages, with an explicit confirm before any rename; the documented key bindings (`a`, `f`, `c`, `b`, `m`, `p`, `s`, `t`, `x`, `u`, `n`, `i`, `l`, `?`, `q`, the arrow keys, `enter` and `esc`).
+- The TUI workflow contract: the Queue, Plan, Preview and Applied Stages, with an explicit confirm before any rename; the documented key bindings (`a`, `f`, `c`, `b`, `m`, `p`, `s`, `t`, `x`, `u`, `n`, `i`, `l`, `?`, `q` and `Ctrl+Q`, the arrow keys, `enter` and `esc`; `y` and `n` in the Apply and Undo confirms; Space in Settings; `/` and `1` to `3` in the Match picker).
 - The supported Python version (3.13+) and the supported providers (TMDB, TheTVDB v4, OMDb).
 
 Everything else is internal and changes without a version signal: the Python modules under `src/termrenamer/` (no import API is offered), the SQLite cache schema (the cache is safe to delete), log message text, and the TUI's widget layout and styling.
