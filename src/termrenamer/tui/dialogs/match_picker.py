@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.markup import escape
+from textual.content import Content
 from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import Input, Static
@@ -96,16 +96,16 @@ class ChoiceRow(Horizontal):
 
     def compose(self) -> ComposeResult:
         yield Static("", classes="choice-mark")
-        yield Static(escape(self._key), classes="choice-key")
-        yield Static(escape(self._text), classes="choice-text")
+        yield Static(Content(self._key), classes="choice-key")
+        yield Static(Content(self._text), classes="choice-text")
         yield from self._extra
 
     def show(self, key: str, text: str, *, selected: bool) -> None:
         """Show the row's key and text, marked when it is the selected row."""
         self._key, self._text = key, text
         self.query_one(".choice-mark", Static).update("▸" if selected else "")
-        self.query_one(".choice-key", Static).update(escape(key))
-        self.query_one(".choice-text", Static).update(escape(text))
+        self.query_one(".choice-key", Static).update(Content(key))
+        self.query_one(".choice-text", Static).update(Content(text))
         self.set_class(selected, "-selected")
 
 
@@ -231,7 +231,7 @@ class MatchPicker(ModalScreen[Picked | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="picker-dialog"):
-            yield Static(escape(self._now), id="picker-now")
+            yield Static(Content(self._now), id="picker-now")
             with Vertical(id="picker-rows"):
                 for index in range(_CANDIDATE_ROWS):
                     yield ChoiceRow(str(index + 1), "", id=f"picker-choice-{index}")
@@ -240,7 +240,7 @@ class MatchPicker(ModalScreen[Picked | None]):
             yield Static("↑↓ choose · 1-3 or enter use it · / type · esc close", id="picker-hint")
 
     def on_mount(self) -> None:
-        self.query_one("#picker-dialog").border_title = f" {escape(self._heading)} "
+        self.query_one("#picker-dialog").border_title = Content(f" {self._heading} ")
         self._say("")
         if self._start_typing:
             self.action_type()
@@ -269,7 +269,7 @@ class MatchPicker(ModalScreen[Picked | None]):
     def _say(self, text: str, colour: str = "$tr-dim") -> None:
         """Show ``text`` on the picker's status line; no text hides the line."""
         status = self.query_one("#picker-status", Static)
-        status.update(f"[{colour}]{escape(text)}[/]")
+        status.update(Content.from_markup(f"[{colour}]$text[/]", text=text))
         status.display = bool(text)
 
     # ------------------------------------------------------------------ keys

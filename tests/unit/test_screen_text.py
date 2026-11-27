@@ -17,16 +17,19 @@ from termrenamer.tui.widgets.header import AppHeader
 
 from .screen_driver import (
     SIZE,
+    FilmStandIn,
     TvStandIn,
     build,
     make_app,
     press,
     queue,
+    screen_text,
     settings,
     text_of,
     wiring,
 )
 from .test_plan_stragglers import _options, _two_discs, _write
+from .test_screen_pick_match import picker_lines
 
 MARKUP_NAME = "[$accent]x [bold]Harbour Lights[/] $name \\"
 """A Provider's name that reads as markup, a style variable and a value's name included,
@@ -125,3 +128,28 @@ async def test_names_in_brackets_reach_every_stage_as_they_are(tmp_path: Path) -
         f"[b]holiday[i].mkv  {folder}{os.sep}",
         "    not recognised: its name could not be read",
     ]
+
+
+async def test_the_match_picker_shows_candidates_names_as_they_are(tmp_path: Path) -> None:
+    first = Candidate(id="1", name="[$accent]Heat[/] \\", year=1995)
+    second = Candidate(id="2", name="[Group] Heat[i]", year=1986)
+    films = FilmStandIn(films={("heat", 1995): (first, second)})
+    folder = tmp_path / "Films"
+    _write(folder / "Heat.1995.mkv")
+    app = make_app(wired=wiring(film=films))
+    async with app.run_test(size=SIZE) as pilot:
+        await press(pilot, "m")
+        await queue(pilot, folder)
+        await build(pilot)
+        await press(pilot, "t")
+        lines = picker_lines(app)
+        now = text_of(app, "#picker-now")
+        text = screen_text(app)
+
+    assert now == "Now: [$accent]Heat[/] \\ (1995)"
+    assert lines == [
+        "▸ 1 [$accent]Heat[/] \\ (1995) (current)",
+        "2 [Group] Heat[i] (1986)",
+        "/ Type a title",
+    ]
+    assert "Pick a match for [$accent]Heat[/] \\ (1995) · TMDB" in text
