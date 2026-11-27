@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from conftest import plan_folder
 from termrenamer.api.tmdb import StaticTvMetadataProvider
 from termrenamer.core.models import EpisodeMetadata, ScanMode
-from termrenamer.core.planning import build_rename_plan
 
 
 def test_scan_to_plan(tmp_path: Path) -> None:
@@ -14,5 +14,5 @@ def test_scan_to_plan(tmp_path: Path) -> None:
     provider = StaticTvMetadataProvider(
         _mapping={("x", 1, 1): EpisodeMetadata(show_title="X", episode_title="Pilot")},
     )
-    plan = build_rename_plan(root=tmp_path, mode=ScanMode.TV, provider=provider)
+    plan = plan_folder(tmp_path, ScanMode.TV, provider)
     assert len(plan.entries) == 1

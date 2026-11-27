@@ -10,7 +10,8 @@ _VIDEO_EXT = frozenset({".mkv", ".mp4", ".avi", ".webm", ".m4v"})
 _SIDECAR_EXT = frozenset({".srt", ".nfo", ".sub", ".idx"})
 
 
-def _classify(suffix: str) -> FileKind | None:
+def classify(suffix: str) -> FileKind | None:
+    """Return a file's kind by its suffix: video, Sidecar, or ``None`` for any other file."""
     s = suffix.lower()
     if s in _VIDEO_EXT:
         return FileKind.VIDEO
@@ -29,7 +30,7 @@ def scan(*, root: Path) -> list[ScannedFile]:
     for path in resolved_root.rglob("*"):
         if not path.is_file():
             continue
-        kind = _classify(path.suffix)
+        kind = classify(path.suffix)
         if kind is None:
             continue
         out.append(ScannedFile(path=path, root=resolved_root, kind=kind))

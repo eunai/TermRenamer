@@ -11,9 +11,10 @@ from termrenamer.core.collisions import allocate_destination, name_is_taken
 from termrenamer.core.models import (
     ApplyResult,
     ApplyStatus,
-    PlanEntryStatus,
+    EntryStatus,
+    Plan,
+    PlanEntry,
     PlanFingerprint,
-    RenamePlan,
 )
 from termrenamer.core.planning import planning_order_key
 from termrenamer.util.errors import ValidationError
@@ -66,14 +67,31 @@ def _remove_empty_source_dirs(applied_source_parents: set[Path]) -> None:
             _LOG.warning("Skipping source directory cleanup for %s: %s", dir_path, exc)
 
 
+def _kept_in_place(child: Path, entry_keys: frozenset[str], target_keys: frozenset[str]) -> bool:
+    """Whether the Straggler merge must leave ``child`` where it is.
+
+    That is a file of the Plan or a folder holding one, and a folder that is,
+    contains or lies inside a target folder (a folder an entry of the Plan moves into).
+    """
+    key = str(child).casefold()
+    if any(k == key or k.startswith(key + os.sep) for k in entry_keys):
+        return True
+    return any(
+        t == key or t.startswith(key + os.sep) or key.startswith(t + os.sep) for t in target_keys
+    )
+
+
 def _merge_stray_folder_contents(
     merge_pairs: set[tuple[Path, Path]],
     occupied: set[Path],
+    entry_keys: frozenset[str],
+    target_keys: frozenset[str],
 ) -> set[Path]:
     """After planned moves, move any remaining children into destination folders.
 
-    Uses the same `` (1)`` / `` (2)`` collision policy as planning. Log-only
-    on failures. Returns old parents that may now be empty.
+    Uses the same `` (1)`` / `` (2)`` collision policy as planning. What
+    :func:`_kept_in_place` names is never moved this way. Log-only on failures.
+    Returns old parents that may now be empty.
     """
     extra_empty_candidates: set[Path] = set()
     for old_p, new_p in sorted(
@@ -87,6 +105,7 @@ def _merge_stray_folder_contents(
         except OSError as exc:
             _LOG.warning("Cannot list %s for merge: %s", old_p, exc)
             continue
+        children = [c for c in children if not _kept_in_place(c, entry_keys, target_keys)]
         if not children:
             continue
         try:
@@ -106,131 +125,107 @@ def _merge_stray_folder_contents(
     return extra_empty_candidates
 
 
-def apply_plan(
-    plan: RenamePlan,
-    *,
-    confirmed: bool,
-    merge_stragglers: bool = False,
-) -> list[ApplyResult]:
-    """Execute a frozen rename plan.
+_NOT_APPLIED_REASON: dict[EntryStatus, str] = {
+    EntryStatus.NO_MATCH: "no match",
+    EntryStatus.NOT_RECOGNISED: "not recognised",
+}
+
+
+def _apply_entry(entry: PlanEntry) -> ApplyResult:
+    """Rename one entry after the checks; touch nothing when a check fails."""
+    source = entry.source
+    dest = entry.destination
+
+    def result(status: ApplyStatus, reason: str) -> ApplyResult:
+        return ApplyResult(source=source, destination=dest, status=status, reason=reason)
+
+    if dest is None or entry.status in _NOT_APPLIED_REASON:
+        return result(ApplyStatus.SKIP, _NOT_APPLIED_REASON.get(entry.status, entry.status.value))
+    if not source.exists():
+        return result(ApplyStatus.SKIP, "stale: source missing")
+    current_fp = _stat_fingerprint(source)
+    if (
+        current_fp.size != entry.fingerprint.size
+        or current_fp.mtime_ns != entry.fingerprint.mtime_ns
+    ):
+        return result(ApplyStatus.SKIP, "stale: source changed since plan")
+    if str(dest) == str(source):
+        return result(ApplyStatus.UNCHANGED, "already has its name")
+    if name_is_taken(dest, source=source):
+        return result(ApplyStatus.SKIP, "destination exists at apply time")
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return result(ApplyStatus.FAIL, f"mkdir failed: {exc}")
+    try:
+        _rename_or_move(source, dest)
+    except OSError as exc:
+        return result(ApplyStatus.FAIL, f"rename/move failed: {exc}")
+    return result(ApplyStatus.RENAMED, "ok")
+
+
+def apply_plan(plan: Plan, *, confirmed: bool) -> list[ApplyResult]:
+    """Execute a Plan exactly as previewed.
+
+    Applies the entries with the status ready or name taken; reports every other
+    entry as skipped with its status as the reason. Each video is handled before the
+    Sidecars, and a Sidecar is applied only when its video was renamed or unchanged
+    in this Apply. While the Plan was built with Folder rename on, the files left in
+    a folder that a video moved out of are merged into the video's new folder,
+    except files of the Plan.
 
     Args:
-        plan: Immutable plan from preview.
+        plan: The Plan the Preview showed.
         confirmed: Must be True or :class:`ValidationError` is raised.
-        merge_stragglers: When True, after successful planned moves, copy/move any
-            files or folders still under a source parent into the new destination
-            parent (same collision rules). Intended when folder-rename mode moved
-            media out of a season/show folder that had extra files.
 
     Returns:
-        Per-operation results in deterministic source-path order.
+        One result per entry: videos in source-path order, then Sidecars.
     """
     if not confirmed:
         msg = "Apply refused: user confirmation is required before filesystem changes"
         raise ValidationError(msg)
 
-    ordered = sorted(plan.entries, key=lambda e: planning_order_key(e))
+    ordered = sorted(plan.entries, key=lambda e: (e.is_sidecar, planning_order_key(e.source)))
     results: list[ApplyResult] = []
     applied_source_parents: set[Path] = set()
     merge_pairs: set[tuple[Path, Path]] = set()
     occupied: set[Path] = set()
+    video_applied: set[Path] = set()
 
     for entry in ordered:
-        source = entry.source
+        if entry.video is not None and entry.video not in video_applied:
+            reason = _NOT_APPLIED_REASON.get(entry.status, "video not applied")
+            results.append(
+                ApplyResult(
+                    source=entry.source,
+                    destination=entry.destination,
+                    status=ApplyStatus.SKIP,
+                    reason=reason,
+                ),
+            )
+            continue
+        outcome = _apply_entry(entry)
+        results.append(outcome)
+        if outcome.status is ApplyStatus.UNCHANGED:
+            video_applied.add(entry.source)
+        if outcome.status is not ApplyStatus.RENAMED or entry.destination is None:
+            continue
+        video_applied.add(entry.source)
         dest = entry.destination
-
-        if entry.status is PlanEntryStatus.UNMATCHED:
-            results.append(
-                ApplyResult(
-                    source=source,
-                    destination=dest,
-                    status=ApplyStatus.SKIP,
-                    reason="unmatched: no metadata found",
-                ),
-            )
-            continue
-
-        if not source.exists():
-            results.append(
-                ApplyResult(
-                    source=source,
-                    destination=dest,
-                    status=ApplyStatus.SKIP,
-                    reason="stale: source missing",
-                ),
-            )
-            continue
-
-        current_fp = _stat_fingerprint(source)
-        if (
-            current_fp.size != entry.fingerprint.size
-            or current_fp.mtime_ns != entry.fingerprint.mtime_ns
-        ):
-            results.append(
-                ApplyResult(
-                    source=source,
-                    destination=dest,
-                    status=ApplyStatus.SKIP,
-                    reason="stale: source changed since plan",
-                ),
-            )
-            continue
-
-        if name_is_taken(dest, source=source):
-            results.append(
-                ApplyResult(
-                    source=source,
-                    destination=dest,
-                    status=ApplyStatus.SKIP,
-                    reason="destination exists at apply time",
-                ),
-            )
-            continue
-
-        try:
-            dest.parent.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            results.append(
-                ApplyResult(
-                    source=source,
-                    destination=dest,
-                    status=ApplyStatus.FAIL,
-                    reason=f"mkdir failed: {exc}",
-                ),
-            )
-            continue
-
-        src_parent = source.parent
-        try:
-            _rename_or_move(source, dest)
-        except OSError as exc:
-            results.append(
-                ApplyResult(
-                    source=source,
-                    destination=dest,
-                    status=ApplyStatus.FAIL,
-                    reason=f"rename/move failed: {exc}",
-                ),
-            )
-            continue
-
-        results.append(
-            ApplyResult(
-                source=source,
-                destination=dest,
-                status=ApplyStatus.SUCCESS,
-                reason="ok",
-            ),
-        )
         occupied.add(dest)
-        if src_parent != dest.parent:
-            applied_source_parents.add(src_parent)
-            if merge_stragglers:
-                merge_pairs.add((src_parent, dest.parent))
+        if entry.source.parent != dest.parent:
+            applied_source_parents.add(entry.source.parent)
+            if plan.options.folder_rename:
+                merge_pairs.add((entry.source.parent, dest.parent))
 
-    if merge_stragglers and merge_pairs:
-        stray_parents = _merge_stray_folder_contents(merge_pairs, occupied)
-        applied_source_parents |= stray_parents
+    if merge_pairs:
+        entry_keys = frozenset(str(e.source).casefold() for e in plan.entries)
+        target_keys = frozenset(
+            str(e.destination.parent).casefold() for e in plan.entries if e.destination
+        )
+        applied_source_parents |= _merge_stray_folder_contents(
+            merge_pairs, occupied, entry_keys, target_keys
+        )
 
     _remove_empty_source_dirs(applied_source_parents)
 

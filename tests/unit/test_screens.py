@@ -13,6 +13,7 @@ from textual.widgets import Button, Checkbox, Input, TabPane
 
 from termrenamer.api.tmdb import StaticFilmMetadataProvider, StaticTvMetadataProvider
 from termrenamer.app_bootstrap import Settings
+from termrenamer.core.models import ScanMode
 from termrenamer.tui.app import TermRenamerApp
 from termrenamer.tui.screens import AddSourceQuickPick, HelpScreen, SettingsScreen
 from termrenamer.tui.screens.footer_bindings import footer_bindings_for_modal
@@ -176,7 +177,7 @@ async def test_settings_screen_loads_initial_values_from_settings(tmp_path: Path
 async def test_settings_screen_persist_updates_overrides_and_settings_snapshot(
     tmp_path: Path,
 ) -> None:
-    """Saving a TV destination updates ``_settings_overrides`` and replaces ``_settings``."""
+    """Saving a TV destination writes it to the settings owner."""
     baseline = _settings(tmp_path)
     app = TermRenamerApp(wiring=_wiring(), settings=baseline)
     async with app.run_test() as pilot:
@@ -191,9 +192,7 @@ async def test_settings_screen_persist_updates_overrides_and_settings_snapshot(
         screen.on_input_submitted(Input.Submitted(tv_input, str(override_target)))
         await pilot.pause()
 
-        assert app._settings_overrides.get("tv") == override_target
-        assert app._settings is not None
-        assert app._settings.tv_dest_folder == override_target
+        assert app.session_settings.destination_root(ScanMode.TV) == override_target
 
 
 @pytest.mark.asyncio
@@ -262,7 +261,7 @@ async def test_help_screen_proxy_actions_open_settings_and_quit() -> None:
 
 @pytest.mark.asyncio
 async def test_settings_screen_empty_save_clears_override(tmp_path: Path) -> None:
-    """Submitting an empty string stores ``None`` on the override map."""
+    """Submitting an empty string clears the Destination root in the settings owner."""
     app = TermRenamerApp(wiring=_wiring(), settings=_settings(tmp_path))
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -273,9 +272,7 @@ async def test_settings_screen_empty_save_clears_override(tmp_path: Path) -> Non
         film_input.value = ""
         screen.on_input_submitted(Input.Submitted(film_input, ""))
         await pilot.pause()
-        assert app._settings_overrides.get("film") is None
-        assert app._settings is not None
-        assert app._settings.film_dest_folder is None
+        assert app.session_settings.destination_root(ScanMode.FILM) is None
 
 
 @pytest.mark.asyncio
@@ -303,11 +300,8 @@ async def test_settings_layout_persist_layout_updates_overrides(
         await pilot.pause()
         screen._persist_layout(True, True)  # noqa: SLF001
         await pilot.pause()
-        assert app._settings_overrides.get("folder_rename") is True
-        assert app._settings_overrides.get("season_folders") is True
-        assert app._settings is not None
-        assert app._settings.enable_folder_rename is True
-        assert app._settings.enable_season_folders is True
+        assert app.session_settings.folder_rename is True
+        assert app.session_settings.season_folders is True
 
 
 @pytest.mark.asyncio

@@ -9,7 +9,7 @@ from textual.widgets import Label, RichLog, TabbedContent
 
 from termrenamer.api.omdb import StaticOmdbFilmMetadataProvider
 from termrenamer.api.tmdb import StaticFilmMetadataProvider, StaticTvMetadataProvider
-from termrenamer.core.models import EpisodeMetadata, MovieMetadata, PlanEntryStatus, ScanMode
+from termrenamer.core.models import EntryStatus, EpisodeMetadata, MovieMetadata, ScanMode
 from termrenamer.tui.app import TermRenamerApp
 from termrenamer.wiring import PlanningWiring
 
@@ -76,7 +76,7 @@ async def test_with_only_a_tvdb_key_a_tv_plan_is_built_with_thetvdb(tmp_path: Pa
         await _build(app, pilot)
 
         assert app.current_plan is not None
-        assert [e.status for e in app.current_plan.entries] == [PlanEntryStatus.MATCHED]
+        assert [e.status for e in app.current_plan.entries] == [EntryStatus.READY]
 
 
 @pytest.mark.asyncio
@@ -100,7 +100,7 @@ async def test_with_only_an_omdb_key_a_film_plan_is_built_with_omdb(tmp_path: Pa
         await _build(app, pilot)
 
         assert app.current_plan is not None
-        assert [e.status for e in app.current_plan.entries] == [PlanEntryStatus.MATCHED]
+        assert [e.status for e in app.current_plan.entries] == [EntryStatus.READY]
 
 
 @pytest.mark.parametrize(

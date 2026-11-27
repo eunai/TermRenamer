@@ -45,14 +45,14 @@ async def test_source_tree_shows_empty_hint_on_mount() -> None:
 
 @pytest.mark.asyncio
 async def test_on_folder_picked_appends_to_queue_and_refreshes(tmp_path: Path) -> None:
-    """Folder-picker callback pushes onto ``_queue`` and rebuilds the source tree."""
+    """Folder-picker callback adds to the queue and rebuilds the source tree."""
     (tmp_path / "a.mkv").write_bytes(b"x")
     app = TermRenamerApp(wiring=_wiring())
     async with app.run_test() as pilot:
         await pilot.pause()
         app._on_folder_picked(tmp_path)
         await pilot.pause()
-        assert app._queue == [tmp_path.resolve()]
+        assert app.queue.sources == (tmp_path.resolve(),)
         tree = app.query_one("#source-tree", Tree)
         labels = [str(c.label) for c in tree.root.children]
         assert labels, "Tree should have at least one entry after queueing a folder"
@@ -69,7 +69,7 @@ async def test_on_file_picked_appends_to_queue(tmp_path: Path) -> None:
         await pilot.pause()
         app._on_file_picked(f)
         await pilot.pause()
-        assert app._queue == [f.resolve()]
+        assert app.queue.sources == (f.resolve(),)
 
 
 @pytest.mark.asyncio
@@ -81,22 +81,22 @@ async def test_on_folder_picked_none_is_noop() -> None:
         app._on_folder_picked(None)
         app._on_file_picked(None)
         await pilot.pause()
-        assert app._queue == []
+        assert app.queue.sources == ()
 
 
 @pytest.mark.asyncio
 async def test_clear_queue_resets_state(tmp_path: Path) -> None:
-    """``clear`` empties ``_queue`` and clears derived plan state."""
+    """``clear`` empties the queue and clears derived plan state."""
     (tmp_path / "a.mkv").write_bytes(b"x")
     app = TermRenamerApp(wiring=_wiring())
     async with app.run_test() as pilot:
         await pilot.pause()
         app._on_folder_picked(tmp_path)
         await pilot.pause()
-        assert app._queue
+        assert app.queue.sources
         app._clear_queue()
         await pilot.pause()
-        assert app._queue == []
+        assert app.queue.sources == ()
         tree = app.query_one("#source-tree", Tree)
         labels = [str(c.label) for c in tree.root.children]
         assert labels and "empty" in labels[0].lower()
@@ -131,7 +131,7 @@ async def test_clear_queue_on_empty_logs_without_error() -> None:
         await pilot.pause()
         app._clear_queue()
         await pilot.pause()
-        assert app._queue == []
+        assert app.queue.sources == ()
 
 
 @pytest.mark.asyncio
@@ -150,7 +150,7 @@ async def test_append_to_queue_oserror_is_logged(
         bad = _Fail(str(tmp_path))
         app._append_to_queue(bad, kind="folder")
         await pilot.pause()
-    assert app._queue == []
+    assert app.queue.sources == ()
 
 
 @pytest.mark.asyncio

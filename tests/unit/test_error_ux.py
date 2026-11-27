@@ -9,7 +9,7 @@ import pytest
 from textual.widgets import Button
 
 from termrenamer.api.tmdb import StaticFilmMetadataProvider, StaticTvMetadataProvider
-from termrenamer.core.models import EpisodeMetadata, MovieMetadata, PlanEntryStatus
+from termrenamer.core.models import EntryStatus, EpisodeMetadata, MovieMetadata
 from termrenamer.tui.app import TermRenamerApp
 from termrenamer.util.errors import ApplyError, ProviderError, ValidationError
 from termrenamer.wiring import PlanningWiring
@@ -28,8 +28,10 @@ def _static_wiring() -> PlanningWiring:
 
 
 @pytest.mark.asyncio
-async def test_provider_error_shows_actionable_message(tmp_path: Path) -> None:
-    """ProviderError during plan build should appear in logs without secrets."""
+async def test_a_title_the_provider_finds_nothing_for_is_planned_as_no_match(
+    tmp_path: Path,
+) -> None:
+    """Nothing found is a Plan entry with the status no match, not an error."""
     (tmp_path / "Show.Name.S01E01.mkv").write_bytes(b"a")
     tv = StaticTvMetadataProvider(_mapping={})
     film = StaticFilmMetadataProvider(_mapping={})
@@ -43,7 +45,7 @@ async def test_provider_error_shows_actionable_message(tmp_path: Path) -> None:
         await pilot.pause()
         assert app.current_plan is not None
         assert len(app.current_plan.entries) == 1
-        assert app.current_plan.entries[0].status is PlanEntryStatus.UNMATCHED
+        assert app.current_plan.entries[0].status is EntryStatus.NO_MATCH
 
 
 @pytest.mark.asyncio
@@ -57,7 +59,7 @@ async def test_validation_error_during_plan_logged(tmp_path: Path) -> None:
         app._on_folder_picked(tmp_path)
         await pilot.pause()
         with mock.patch(
-            "termrenamer.tui.app.build_rename_plan",
+            "termrenamer.tui.app.plan_queue",
             side_effect=ValidationError("Missing TMDB API key"),
         ):
             await pilot.press("b")

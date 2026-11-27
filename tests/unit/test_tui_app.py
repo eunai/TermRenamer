@@ -150,22 +150,22 @@ def test_command_palette_disabled() -> None:
 
 
 def test_queue_is_empty_on_init() -> None:
-    """``_queue`` exists and starts empty before any source is added."""
+    """the queue exists and starts empty before any source is added."""
     app = TermRenamerApp(wiring=_static_wiring())
-    assert app._queue == []
+    assert app.queue.sources == ()
 
 
 @pytest.mark.asyncio
 async def test_queue_records_folder_path_after_picker_callback(tmp_path: Path) -> None:
-    """The folder-picker callback appends the resolved folder onto ``_queue``."""
+    """The folder-picker callback appends the resolved folder onto the queue."""
     wiring = _static_wiring()
     app = TermRenamerApp(wiring=wiring)
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert app._queue == []
+        assert app.queue.sources == ()
         await _queue_folder(app, pilot, tmp_path)
         await pilot.pause()
-        assert app._queue == [tmp_path.resolve()]
+        assert app.queue.sources == (tmp_path.resolve(),)
 
 
 @pytest.mark.asyncio
@@ -193,7 +193,7 @@ async def test_build_plan_unexpected_exception_logged(tmp_path: Path) -> None:
         await _queue_folder(app, pilot, tmp_path)
         await pilot.pause()
         with mock.patch(
-            "termrenamer.tui.app.build_rename_plan",
+            "termrenamer.tui.app.plan_queue",
             side_effect=RuntimeError("boom"),
         ):
             await pilot.press("b")

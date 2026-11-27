@@ -31,7 +31,7 @@ def _tmdb_missing_message() -> str:
 
 @dataclass(frozen=True, slots=True)
 class PlanningWiring:
-    """TV + film providers for :func:`termrenamer.core.planning.build_rename_plan`.
+    """TV + film providers for :func:`termrenamer.core.planning.plan_queue`.
 
     Each Provider is present, or ``None`` when its key is missing. No Provider is
     required on its own; selecting one with no key is reported when a plan is built.
@@ -54,6 +54,12 @@ class PlanningWiring:
             ScanMode.TV: frozenset(pid for pid, p in tv.items() if p is not None),
             ScanMode.FILM: frozenset(pid for pid, p in film.items() if p is not None),
         }
+
+    def resolve(self, *, mode: ScanMode, provider_id: str) -> TvLookup | FilmLookup:
+        """Return one build's lookup for ``mode`` through ``provider_id``, over the cache."""
+        if mode is ScanMode.TV:
+            return self.resolve_tv(provider_id=provider_id)
+        return self.resolve_film(provider_id=provider_id)
 
     def resolve_tv(self, *, provider_id: str) -> TvLookup:
         """Return one build's TV lookup through ``tmdb`` or ``tvdb``, over the cache."""

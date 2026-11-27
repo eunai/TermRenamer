@@ -16,8 +16,8 @@ import pytest
 
 from termrenamer.api.lookup import FilmLookup, TvLookup
 from termrenamer.app_bootstrap import Settings
-from termrenamer.core.models import PlanEntryStatus, RenamePlan, ScanMode
-from termrenamer.core.planning import build_rename_plan, merge_rename_plans
+from termrenamer.core.models import EntryStatus, Plan, PlanOptions, ScanMode
+from termrenamer.core.planning import plan_queue
 from termrenamer.util.http import HttpClient, HttpClientConfig
 from termrenamer.wiring import PlanningWiring, build_planning_wiring
 
@@ -93,29 +93,21 @@ def _wiring(tmp_path: Path, recorder: Recorder, *, cache: bool = True) -> Planni
     return build_planning_wiring(settings, http)
 
 
-def _build(
-    wiring: PlanningWiring, roots: list[Path], *, mode: ScanMode, provider_id: str
-) -> RenamePlan:
-    """Build one plan the way the app does: one lookup for every root of the build."""
-    lookup: TvLookup | FilmLookup
-    if mode is ScanMode.TV:
-        lookup = wiring.resolve_tv(provider_id=provider_id)
-    else:
-        lookup = wiring.resolve_film(provider_id=provider_id)
-    plans = [
-        build_rename_plan(
-            root=root,
-            mode=mode,
-            provider=lookup,
-            enable_folder_rename=False,
-        )
-        for root in roots
-    ]
-    return merge_rename_plans(plans)
+def _build(wiring: PlanningWiring, roots: list[Path], *, mode: ScanMode, provider_id: str) -> Plan:
+    """Build one Plan the way the app does: one lookup for every Source of the build."""
+    lookup: TvLookup | FilmLookup = wiring.resolve(mode=mode, provider_id=provider_id)
+    options = PlanOptions(
+        mode=mode,
+        provider_id=provider_id,
+        destination_root=None,
+        folder_rename=False,
+        season_folders=False,
+    )
+    return plan_queue(roots, options, lookup).plan
 
 
-def _names(plan: RenamePlan) -> dict[str, str]:
-    return {e.source.name: e.destination.name for e in plan.entries}
+def _names(plan: Plan) -> dict[str, str]:
+    return {e.source.name: e.destination.name for e in plan.entries if e.destination}
 
 
 def _tv_roots(tmp_path: Path) -> list[Path]:
@@ -161,7 +153,7 @@ def test_a_second_build_on_another_thread_is_served_from_the_cache(
     recorder = Recorder()
     wiring = _wiring(tmp_path, recorder)
     roots = _tv_roots(tmp_path)
-    plans: list[RenamePlan] = []
+    plans: list[Plan] = []
 
     def run(provider_id: str) -> None:
         plans.append(_build(wiring, roots, mode=ScanMode.TV, provider_id=provider_id))
@@ -206,7 +198,7 @@ def test_a_build_searches_once_per_group_and_fetches_an_episode_list_once_per_sh
 
     assert recorder.count("api4.thetvdb.com", "/v4/search") == 1
     assert recorder.count("api4.thetvdb.com", "/v4/series/81001/episodes/default") == 1
-    assert {e.status for e in plan.entries} == {PlanEntryStatus.MATCHED}
+    assert {e.status for e in plan.entries} == {EntryStatus.READY}
 
     _build(wiring, roots, mode=ScanMode.TV, provider_id="tvdb")
     assert recorder.count("api4.thetvdb.com", "/v4/series/81001/episodes/default") == 2

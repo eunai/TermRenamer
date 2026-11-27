@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from conftest import plan_folder
 from termrenamer.api.tmdb import StaticFilmMetadataProvider
 from termrenamer.core.apply import apply_plan
 from termrenamer.core.models import MovieMetadata, ScanMode
-from termrenamer.core.planning import build_rename_plan
 
 
 def test_film_scan_plan_apply(tmp_path: Path) -> None:
@@ -17,7 +17,7 @@ def test_film_scan_plan_apply(tmp_path: Path) -> None:
             ("the matrix", 1999): MovieMetadata(title="The Matrix", year=1999),
         },
     )
-    plan = build_rename_plan(root=tmp_path, mode=ScanMode.FILM, provider=provider)
+    plan = plan_folder(tmp_path, ScanMode.FILM, provider)
     assert len(plan.entries) == 1
     dest = plan.entries[0].destination
     assert "The Matrix (1999)" in str(dest)
@@ -35,11 +35,11 @@ def test_film_dest_root_moves_and_prunes_empty_source_dir(tmp_path: Path) -> Non
     provider = StaticFilmMetadataProvider(
         _mapping={("the matrix", 1999): MovieMetadata(title="The Matrix", year=1999)},
     )
-    plan = build_rename_plan(
-        root=src_root,
-        mode=ScanMode.FILM,
-        provider=provider,
-        film_dest_root=dest_root,
+    plan = plan_folder(
+        src_root,
+        ScanMode.FILM,
+        provider,
+        destination_root=dest_root,
     )
     apply_plan(plan=plan, confirmed=True)
     assert not vid.exists()

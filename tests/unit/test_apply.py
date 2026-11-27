@@ -6,18 +6,10 @@ from pathlib import Path
 
 import pytest
 
+from conftest import plan_folder
 from termrenamer.api.tmdb import StaticTvMetadataProvider
 from termrenamer.core.apply import apply_plan
-from termrenamer.core.models import (
-    ApplyStatus,
-    EpisodeMetadata,
-    PlanEntryStatus,
-    PlanFingerprint,
-    RenamePlan,
-    RenamePlanEntry,
-    ScanMode,
-)
-from termrenamer.core.planning import build_rename_plan
+from termrenamer.core.models import ApplyStatus, EpisodeMetadata, ScanMode
 from termrenamer.util.errors import ValidationError
 
 
@@ -26,7 +18,7 @@ def test_apply_requires_confirmation(tmp_path: Path) -> None:
     provider = StaticTvMetadataProvider(
         _mapping={("show", 1, 1): EpisodeMetadata(show_title="S", episode_title="E")},
     )
-    plan = build_rename_plan(root=tmp_path, mode=ScanMode.TV, provider=provider)
+    plan = plan_folder(tmp_path, ScanMode.TV, provider)
     with pytest.raises(ValidationError):
         apply_plan(plan, confirmed=False)
 
@@ -37,9 +29,9 @@ def test_apply_moves_files(tmp_path: Path) -> None:
     provider = StaticTvMetadataProvider(
         _mapping={("show", 1, 1): EpisodeMetadata(show_title="Show", episode_title="Pilot")},
     )
-    plan = build_rename_plan(root=tmp_path, mode=ScanMode.TV, provider=provider)
+    plan = plan_folder(tmp_path, ScanMode.TV, provider)
     results = apply_plan(plan, confirmed=True)
-    assert all(r.status is ApplyStatus.SUCCESS for r in results)
+    assert all(r.status is ApplyStatus.RENAMED for r in results)
     assert not vid.exists()
     assert any(p.exists() for p in tmp_path.rglob("*.mkv"))
 
@@ -50,7 +42,7 @@ def test_apply_skips_stale_source(tmp_path: Path) -> None:
     provider = StaticTvMetadataProvider(
         _mapping={("show", 1, 1): EpisodeMetadata(show_title="Show", episode_title="Pilot")},
     )
-    plan = build_rename_plan(root=tmp_path, mode=ScanMode.TV, provider=provider)
+    plan = plan_folder(tmp_path, ScanMode.TV, provider)
     vid.unlink()
     results = apply_plan(plan, confirmed=True)
     assert results[0].status is ApplyStatus.SKIP
@@ -65,32 +57,8 @@ def test_apply_operation_order_lexical(tmp_path: Path) -> None:
             ("a", 1, 1): EpisodeMetadata(show_title="A", episode_title="E"),
         },
     )
-    plan = build_rename_plan(root=tmp_path, mode=ScanMode.TV, provider=provider)
+    plan = plan_folder(tmp_path, ScanMode.TV, provider)
     assert [e.source.name for e in plan.entries] == ["a.S01E01.mkv", "b.S01E01.mkv"]
-
-
-def test_apply_skips_unmatched_entry(tmp_path: Path) -> None:
-    root = tmp_path.resolve()
-    src = tmp_path / "a.mkv"
-    src.write_bytes(b"x")
-    st = src.stat()
-    fp = PlanFingerprint(path=src, size=st.st_size, mtime_ns=int(st.st_mtime_ns))
-    entry = RenamePlanEntry(
-        source=src,
-        destination=tmp_path / "Movie not found.",
-        root=root,
-        is_primary=True,
-        primary_source=None,
-        fingerprint=fp,
-        group_id="g",
-        status=PlanEntryStatus.UNMATCHED,
-    )
-    plan = RenamePlan(entries=(entry,), mode=ScanMode.FILM)
-    results = apply_plan(plan, confirmed=True)
-    assert len(results) == 1
-    assert results[0].status is ApplyStatus.SKIP
-    assert "unmatched" in results[0].reason
-    assert src.exists()
 
 
 def test_remove_empty_source_dirs_skips_non_empty(tmp_path: Path) -> None:
@@ -107,7 +75,7 @@ def test_remove_empty_source_dirs_skips_non_empty(tmp_path: Path) -> None:
 def test_apply_merge_stragglers_moves_extra_files_to_dest_parent(
     tmp_path: Path,
 ) -> None:
-    """With merge_stragglers, files left in the source directory move with collision rules."""
+    """With Folder rename on, files left in the source folder move with collision rules."""
     base = tmp_path / "in" / "The Simpsons" / "Season1"
     base.mkdir(parents=True)
     vid = base / "Show.Name.S01E01.mkv"
@@ -121,17 +89,17 @@ def test_apply_merge_stragglers_moves_extra_files_to_dest_parent(
             ),
         },
     )
-    plan = build_rename_plan(
-        root=tmp_path / "in",
-        mode=ScanMode.TV,
-        provider=provider,
-        enable_folder_rename=True,
-        enable_season_folders=True,
+    plan = plan_folder(
+        tmp_path / "in",
+        ScanMode.TV,
+        provider,
+        folder_rename=True,
+        season_folders=True,
     )
     assert len(plan.entries) == 1
     main_dest = plan.entries[0].destination
-    results = apply_plan(plan, confirmed=True, merge_stragglers=True)
-    assert [r.status for r in results] == [ApplyStatus.SUCCESS]
+    results = apply_plan(plan, confirmed=True)
+    assert [r.status for r in results] == [ApplyStatus.RENAMED]
     nfo_gone = (base / "extra.nfo").exists()
     assert not nfo_gone
     nfo_at_dest = main_dest.parent / "extra.nfo"

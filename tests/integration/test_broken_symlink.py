@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
+from conftest import plan_folder
 from termrenamer.api.tmdb import StaticTvMetadataProvider
 from termrenamer.core.apply import apply_plan
-from termrenamer.core.models import ApplyStatus, EpisodeMetadata, RenamePlan, ScanMode
-from termrenamer.core.planning import build_rename_plan
+from termrenamer.core.models import ApplyStatus, EpisodeMetadata, Plan, ScanMode
 
 
 def _can_symlink(base: Path) -> bool:
@@ -42,11 +42,11 @@ def _pilot_provider() -> StaticTvMetadataProvider:
     )
 
 
-def _plan(root: Path, **kwargs: bool) -> RenamePlan:
-    return build_rename_plan(root=root, mode=ScanMode.TV, provider=_pilot_provider(), **kwargs)
+def _plan(root: Path, **kwargs: bool) -> Plan:
+    return plan_folder(root, ScanMode.TV, _pilot_provider(), **kwargs)
 
 
-def _planned_for(plan: RenamePlan, source_name: str) -> Path:
+def _planned_for(plan: Plan, source_name: str) -> Path:
     return next(e.destination for e in plan.entries if e.source.name == source_name)
 
 
@@ -82,13 +82,13 @@ def test_straggler_whose_name_is_a_broken_link_gets_the_numbered_name(media: Pat
     season.mkdir(parents=True)
     (season / "Show.S01E01.mkv").write_bytes(b"v")
     (season / "extra.nfo").write_text("nfo", encoding="utf-8")
-    plan = _plan(media / "in", enable_folder_rename=True, enable_season_folders=True)
+    plan = _plan(media / "in", folder_rename=True, season_folders=True)
     dest_folder = plan.entries[0].destination.parent
     _plant_broken_link(dest_folder / "extra.nfo")
 
-    results = apply_plan(plan, confirmed=True, merge_stragglers=True)
+    results = apply_plan(plan, confirmed=True)
 
-    assert [r.status for r in results] == [ApplyStatus.SUCCESS]
+    assert [r.status for r in results] == [ApplyStatus.RENAMED]
     assert (dest_folder / "extra (1).nfo").read_text(encoding="utf-8") == "nfo"
     assert (dest_folder / "extra.nfo").is_symlink()
     assert not (season / "extra.nfo").exists()
@@ -141,5 +141,5 @@ def test_case_only_rename_keeps_the_wanted_name_and_applies(tmp_path: Path) -> N
 
     results = apply_plan(plan, confirmed=True)
 
-    assert [r.status for r in results] == [ApplyStatus.SUCCESS]
+    assert [r.status for r in results] == [ApplyStatus.RENAMED]
     assert [p.name for p in folder.iterdir()] == ["Show - S01E01 - Pilot.mkv"]

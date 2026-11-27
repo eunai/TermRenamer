@@ -8,18 +8,13 @@ generic Placeholder tab reserved for future options.
   rename is on).
 - Placeholder: intentionally minimal.
 
-Destination and layout saves write session overrides to
-``TermRenamerApp._settings_overrides`` and, when the app was constructed with a
-bootstrap :class:`termrenamer.app_bootstrap.Settings` object, replace that
-snapshot via :func:`dataclasses.replace` so new values flow into planning without
-mutating a frozen instance in place.
-
-Never rewrites ``.env`` on disk; never creates or reads ``mock_settings.toml``.
+Every value is read from and written to the app's settings owner
+(:class:`termrenamer.session_settings.SessionSettings`); a change lasts for the
+session. Never rewrites ``.env`` on disk; never creates or reads ``mock_settings.toml``.
 """
 
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 from typing import Literal
 
@@ -39,7 +34,12 @@ from textual.widgets import (
 )
 from textual_fspicker import SelectDirectory
 
+from termrenamer.core.models import ScanMode
+from termrenamer.session_settings import SessionSettings
 from termrenamer.tui.screens.footer_bindings import footer_bindings_for_modal
+from termrenamer.util.errors import ValidationError
+
+_MODES: dict[Literal["tv", "film"], ScanMode] = {"tv": ScanMode.TV, "film": ScanMode.FILM}
 
 
 class SettingsScreen(Screen[None]):
@@ -207,95 +207,60 @@ class SettingsScreen(Screen[None]):
 
         self.app.push_screen(SelectDirectory(str(Path.cwd())), _cb)
 
+    def _owner(self) -> SessionSettings:
+        """The app's settings owner, which this screen reads and writes."""
+        owner = getattr(self.app, "session_settings", None)
+        if not isinstance(owner, SessionSettings):
+            msg = "SettingsScreen needs an app with a session_settings owner"
+            raise TypeError(msg)
+        return owner
+
     def _load_destination(self, kind: Literal["tv", "film"]) -> str:
-        """Session override wins; otherwise fall back to the production ``Settings``."""
-        app = self.app
-        overrides = getattr(app, "_settings_overrides", None)
-        if isinstance(overrides, dict):
-            override = overrides.get(kind)
-            if override is not None and isinstance(override, Path):
-                return str(override)
-        settings = getattr(app, "_settings", None)
-        if settings is not None:
-            attr = "tv_dest_folder" if kind == "tv" else "film_dest_folder"
-            value = getattr(settings, attr, None)
-            if value is not None:
-                return str(value)
-        return ""
+        root = self._owner().destination_root(_MODES[kind])
+        return str(root) if root is not None else ""
 
     def _load_folder_rename(self) -> bool:
-        app = self.app
-        overrides = getattr(app, "_settings_overrides", None)
-        if isinstance(overrides, dict):
-            o = overrides.get("folder_rename")
-            if isinstance(o, bool):
-                return o
-        settings = getattr(app, "_settings", None)
-        if settings is not None:
-            return bool(settings.enable_folder_rename)
-        return False
+        return self._owner().folder_rename
 
     def _load_season_folders(self) -> bool:
-        app = self.app
-        overrides = getattr(app, "_settings_overrides", None)
-        if isinstance(overrides, dict):
-            o = overrides.get("season_folders")
-            if isinstance(o, bool):
-                return o
-        settings = getattr(app, "_settings", None)
-        if settings is not None:
-            return bool(settings.enable_season_folders)
-        return False
+        return self._owner().season_folders
+
+    def _log(self, message: str) -> None:
+        log = getattr(self.app, "_log_line", None)
+        if callable(log):
+            log(message)
 
     def _persist_layout(self, folder_rename: bool, season_folders: bool) -> None:
-        """Session overrides + ``Settings`` snapshot for layout toggles."""
+        """Write the layout toggles to the settings owner (season off unless folder rename)."""
         if not folder_rename:
             season_folders = False
-        app = self.app
-        overrides = getattr(app, "_settings_overrides", None)
-        if not isinstance(overrides, dict):
-            overrides = {}
-            app._settings_overrides = overrides  # type: ignore[attr-defined]
-        overrides["folder_rename"] = folder_rename
-        overrides["season_folders"] = season_folders
-        settings = getattr(app, "_settings", None)
-        if settings is not None:
-            app._settings = replace(  # type: ignore[attr-defined]
-                settings,
-                enable_folder_rename=folder_rename,
-                enable_season_folders=season_folders,
-            )
-        log = getattr(app, "_log_line", None)
-        if callable(log):
-            log(
-                "[dim]Saved layout: folder rename = "
-                f"{folder_rename!r}, season folders = {season_folders!r}[/dim]",
-            )
+        owner = self._owner()
+        try:
+            owner.set_folder_rename(folder_rename)
+            owner.set_season_folders(season_folders)
+        except ValidationError as exc:
+            self._log(f"[yellow]{exc}[/yellow]")
+            return
+        self._log(
+            "[dim]Saved layout: folder rename = "
+            f"{folder_rename!r}, season folders = {season_folders!r}[/dim]",
+        )
         self._show_save_toast("Layout settings saved")
 
     def _persist(self, kind: Literal["tv", "film"], value: str) -> None:
-        """Write session overrides and snapshot ``Settings`` when the app has one."""
-        app = self.app
-        overrides = getattr(app, "_settings_overrides", None)
-        if not isinstance(overrides, dict):
-            overrides = {}
-            app._settings_overrides = overrides  # type: ignore[attr-defined]
+        """Write a Destination root to the settings owner; blank clears it."""
         trimmed = value.strip()
         path_obj = Path(trimmed).expanduser() if trimmed else None
-        overrides[kind] = path_obj
-        settings = getattr(app, "_settings", None)
-        if settings is not None:
-            if kind == "tv":
-                app._settings = replace(settings, tv_dest_folder=path_obj)  # type: ignore[attr-defined]
-            else:
-                app._settings = replace(settings, film_dest_folder=path_obj)  # type: ignore[attr-defined]
+        try:
+            self._owner().set_destination_root(_MODES[kind], path_obj)
+        except ValidationError as exc:
+            self._log(f"[yellow]{exc}[/yellow]")
+            return
         label = "TV" if kind == "tv" else "Film"
-        log = getattr(app, "_log_line", None)
-        if callable(log):
-            if trimmed:
-                log(f"[dim]Saved {label} destination → {trimmed}[/dim]")
-            else:
-                log(f"[dim]Cleared {label} destination override[/dim]")
+        if trimmed:
+            self._log(f"[dim]Saved {label} destination → {trimmed}[/dim]")
+        else:
+            self._log(f"[dim]Cleared {label} destination override[/dim]")
         self._show_save_toast(f"{label} destination saved")
 
     def _show_save_toast(self, message: str) -> None:

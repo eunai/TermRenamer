@@ -22,13 +22,6 @@ class FileKind(StrEnum):
     OTHER = "other"
 
 
-class PlanEntryStatus(StrEnum):
-    """Whether planning resolved metadata for this entry."""
-
-    MATCHED = "matched"
-    UNMATCHED = "unmatched"
-
-
 @dataclass(frozen=True, slots=True)
 class ScannedFile:
     """A file discovered under a working root."""
@@ -110,32 +103,104 @@ class PlanFingerprint:
     mtime_ns: int
 
 
+class EntryStatus(StrEnum):
+    """The status of one entry of a Plan: a video or a Sidecar.
+
+    A Sidecar whose video will not be applied has its video's status.
+    """
+
+    READY = "ready"
+    NAME_TAKEN = "name taken"
+    NO_MATCH = "no match"
+    NOT_RECOGNISED = "not recognised"
+
+
 @dataclass(frozen=True, slots=True)
-class RenamePlanEntry:
-    """One planned rename operation."""
+class PlanOptions:
+    """The settings one Plan is built with, fixed for the life of that Plan.
+
+    The session's settings owner makes them with the settings' rules applied:
+    ``destination_root`` is the Destination root for ``mode``, and is ``None`` while
+    ``folder_rename`` is off; ``season_folders`` holds only in TV Mode with
+    ``folder_rename`` on.
+    """
+
+    mode: ScanMode
+    provider_id: str
+    destination_root: Path | None
+    folder_rename: bool
+    season_folders: bool
+
+
+@dataclass(frozen=True, slots=True)
+class Title:
+    """One show or film of a Plan: its Match, or none, and the Candidates beside it.
+
+    ``name`` is the Match's name, or the title hint read from the files when the
+    search found nothing. ``year`` is the Match's year (a film's, or a show's first
+    aired year when known), or for a Film Title with no Match the year hint.
+    ``seasons`` lists the seasons of a TV Title's files.
+    """
+
+    name: str
+    year: int | None
+    seasons: tuple[int, ...]
+    match: Candidate | None
+    candidates: tuple[Candidate, ...]
+
+    @property
+    def poster_ref(self) -> str | None:
+        """The Match's Poster reference, or ``None``."""
+        return self.match.poster_ref if self.match is not None else None
+
+
+@dataclass(frozen=True, slots=True)
+class PlanEntry:
+    """One video or Sidecar of a Plan.
+
+    ``destination`` is ``None`` for an entry that is not applied for want of a name
+    (no match, not recognised). ``video`` is a Sidecar's video, ``None`` for a video.
+    ``root`` is the owning Source's folder, which the templates build under when the
+    Destination root is unset. ``fingerprint`` holds the source's size and
+    modification time at planning time.
+    """
 
     source: Path
-    destination: Path
+    destination: Path | None
+    status: EntryStatus
+    title: Title | None
+    video: Path | None
+    season: int | None
+    episode: int | None
     root: Path
-    is_primary: bool
-    primary_source: Path | None
     fingerprint: PlanFingerprint
-    group_id: str
-    status: PlanEntryStatus = PlanEntryStatus.MATCHED
+
+    @property
+    def is_sidecar(self) -> bool:
+        return self.video is not None
 
 
 @dataclass(frozen=True, slots=True)
-class RenamePlan:
-    """Immutable batch of planned renames (preview/apply use the same object)."""
+class Plan:
+    """The immutable batch that the Preview shows and Apply executes unchanged.
 
-    entries: tuple[RenamePlanEntry, ...]
-    mode: ScanMode
+    Entries are in source-path order; Titles are in name order.
+    """
+
+    options: PlanOptions
+    titles: tuple[Title, ...]
+    entries: tuple[PlanEntry, ...]
+
+    @property
+    def mode(self) -> ScanMode:
+        return self.options.mode
 
 
 class ApplyStatus(StrEnum):
     """Per-operation outcome."""
 
-    SUCCESS = "success"
+    RENAMED = "renamed"
+    UNCHANGED = "unchanged"
     SKIP = "skip"
     FAIL = "fail"
 
@@ -145,6 +210,6 @@ class ApplyResult:
     """Result of a single apply operation."""
 
     source: Path
-    destination: Path
+    destination: Path | None
     status: ApplyStatus
     reason: str

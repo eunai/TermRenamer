@@ -10,6 +10,10 @@ from pathlib import Path
 
 import pytest
 
+from termrenamer.api.base import FilmMetadataProvider, TvMetadataProvider
+from termrenamer.core.models import Plan, PlanOptions, ScanMode
+from termrenamer.core.planning import plan_queue
+
 # The environment pytest started with, before any test isolation; for subprocesses
 # that need the developer's real tool caches (such as the wheel build).
 REAL_ENVIRON: dict[str, str] = dict(os.environ)
@@ -62,3 +66,24 @@ def isolated_settings_dirs(
     monkeypatch.setenv("APPDATA", str(dirs.appdata))
     monkeypatch.chdir(dirs.workdir)
     yield dirs
+
+
+def plan_folder(
+    root: Path,
+    mode: ScanMode,
+    provider: TvMetadataProvider | FilmMetadataProvider,
+    *,
+    destination_root: Path | None = None,
+    folder_rename: bool = True,
+    season_folders: bool = True,
+    provider_id: str = "tmdb",
+) -> Plan:
+    """Plan one folder Source through the core entry point, as the app builds a Plan."""
+    options = PlanOptions(
+        mode=mode,
+        provider_id=provider_id,
+        destination_root=destination_root if folder_rename else None,
+        folder_rename=folder_rename,
+        season_folders=mode is ScanMode.TV and folder_rename and season_folders,
+    )
+    return plan_queue([root], options, provider).plan
