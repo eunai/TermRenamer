@@ -37,7 +37,7 @@ from termrenamer.core.models import (
 )
 from termrenamer.core.planning import plan_queue
 from termrenamer.core.queue import SourceQueue
-from termrenamer.session_settings import SessionSettings
+from termrenamer.session_settings import SessionSettings, SettingsLockedError
 from termrenamer.tui.screens import AddSourceQuickPick, HelpScreen, SettingsScreen
 from termrenamer.tui.widgets.activity_pane import ActivityPane
 from termrenamer.tui.widgets.mode_provider_bar import (
@@ -285,10 +285,21 @@ class TermRenamerApp(App[None]):
         root.addHandler(rlh)
 
     def on_scan_mode_changed(self, event: ScanModeChanged) -> None:
-        self.session_settings.set_mode(event.mode)
+        try:
+            self.session_settings.set_mode(event.mode)
+        except SettingsLockedError:
+            self._refuse_bar_change("Mode")
 
     def on_provider_changed(self, event: ProviderChanged) -> None:
-        self.session_settings.set_provider(event.provider_id)
+        try:
+            self.session_settings.set_provider(event.provider_id)
+        except SettingsLockedError:
+            self._refuse_bar_change("Provider")
+
+    def _refuse_bar_change(self, what: str) -> None:
+        """A bar change reached the owner after the lock: say so, and show the owner's values."""
+        self._log_line(_LOCKED_MESSAGE.format(what=what))
+        self.query_one("#mode-bar", ModeProviderBar).show(self.scan_mode, self.provider_id)
 
     def _on_plan_setting_changed(self, setting: str) -> None:
         """A setting a Plan is built with changed: discard the Plan, keep the queue."""

@@ -119,10 +119,8 @@ def _merge_stragglers(
     return maybe_empty
 
 
-_NOT_APPLIED_REASON: dict[EntryStatus, str] = {
-    EntryStatus.NO_MATCH: "no match",
-    EntryStatus.NOT_RECOGNISED: "not recognised",
-}
+_NOT_APPLIED = frozenset({EntryStatus.NO_MATCH, EntryStatus.NOT_RECOGNISED})
+"""Statuses Apply skips, giving the status as the reason."""
 
 
 def _apply_entry(entry: PlanEntry) -> ApplyResult:
@@ -133,8 +131,8 @@ def _apply_entry(entry: PlanEntry) -> ApplyResult:
     def result(status: ApplyStatus, reason: str) -> ApplyResult:
         return ApplyResult(source=source, destination=dest, status=status, reason=reason)
 
-    if dest is None or entry.status in _NOT_APPLIED_REASON:
-        return result(ApplyStatus.SKIP, _NOT_APPLIED_REASON.get(entry.status, entry.status.value))
+    if dest is None or entry.status in _NOT_APPLIED:
+        return result(ApplyStatus.SKIP, entry.status.value)
     if not source.exists():
         return result(ApplyStatus.SKIP, "stale: source missing")
     current_fp = fingerprint(source)
@@ -184,11 +182,11 @@ def apply_plan(plan: Plan, *, confirmed: bool) -> list[ApplyResult]:
     applied_source_parents: set[Path] = set()
     merge_pairs: set[tuple[Path, Path]] = set()
     occupied: set[Path] = set()
-    video_applied: set[Path] = set()
+    applied_sources: set[Path] = set()
 
     for entry in ordered:
-        if entry.video is not None and entry.video not in video_applied:
-            reason = _NOT_APPLIED_REASON.get(entry.status, "video not applied")
+        if entry.video is not None and entry.video not in applied_sources:
+            reason = entry.status.value if entry.status in _NOT_APPLIED else "video not applied"
             results.append(
                 ApplyResult(
                     source=entry.source,
@@ -200,11 +198,10 @@ def apply_plan(plan: Plan, *, confirmed: bool) -> list[ApplyResult]:
             continue
         outcome = _apply_entry(entry)
         results.append(outcome)
-        if outcome.status is ApplyStatus.UNCHANGED:
-            video_applied.add(entry.source)
+        if outcome.status in (ApplyStatus.RENAMED, ApplyStatus.UNCHANGED):
+            applied_sources.add(entry.source)
         if outcome.status is not ApplyStatus.RENAMED or entry.destination is None:
             continue
-        video_applied.add(entry.source)
         dest = entry.destination
         occupied.add(dest)
         if entry.source.parent != dest.parent:

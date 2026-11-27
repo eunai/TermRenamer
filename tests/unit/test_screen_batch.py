@@ -289,3 +289,29 @@ async def test_settings_mode_and_provider_cannot_change_while_a_plan_is_applied(
         await pilot.press("m")
         await pilot.pause()
         assert app.scan_mode is ScanMode.FILM
+
+
+@pytest.mark.asyncio
+async def test_a_bar_change_that_arrives_after_the_lock_is_refused_and_the_bar_shows_the_owner(
+    tmp_path: Path,
+) -> None:
+    from textual.widgets import Switch
+
+    from termrenamer.tui.widgets.mode_provider_bar import ModeProviderBar
+
+    app = TermRenamerApp(wiring=_wiring())
+    async with app.run_test(size=_SIZE) as pilot:
+        await _show_logs(app, pilot)
+        bar = app.query_one("#mode-bar", ModeProviderBar)
+        app.session_settings.lock()
+        bar.toggle_mode()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.is_running
+        assert app.scan_mode is ScanMode.TV
+        assert app.provider_id == "tmdb"
+        assert app.query_one("#mode-toggle", Switch).value is False
+        assert app.query_one("#provider-tmdb", Switch).value is True
+        assert "cannot change while a Plan is being built" in _log_text(app)
+        app.session_settings.unlock()

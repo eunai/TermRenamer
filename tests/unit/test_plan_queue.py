@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -403,7 +404,7 @@ def test_a_sidecar_whose_own_name_is_taken_is_numbered_while_its_video_is_ready(
     assert sidecar.destination == tmp_path.resolve() / "Show Name - S01E01 - Pilot (1).srt"
 
 
-def test_a_film_result_without_a_year_is_dropped(tmp_path: Path) -> None:
+def test_a_film_candidate_without_a_year_is_dropped(tmp_path: Path) -> None:
     (tmp_path / "Harbour.Lights.mkv").write_bytes(b"a")
     no_year = Candidate(id="x", name="Harbour Lights", year=None)
     harbour = Candidate(id="h11", name="Harbour Lights", year=2011)
@@ -414,3 +415,43 @@ def test_a_film_result_without_a_year_is_dropped(tmp_path: Path) -> None:
     [title] = plan.titles
     assert (title.match, title.candidates) == (harbour, ())
     assert plan.entries[0].destination == tmp_path.resolve() / "Harbour Lights (2011).mkv"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symbolic links need privileges on Windows")
+def test_a_symlinked_video_is_its_own_file_and_never_stands_in_for_its_target(
+    tmp_path: Path,
+) -> None:
+    a, b = tmp_path / "A", tmp_path / "B"
+    a.mkdir()
+    b.mkdir()
+    (b / "Show.Name.S01E01.mkv").write_bytes(b"real")
+    (a / "Show.Name.S01E01.mkv").symlink_to(b / "Show.Name.S01E01.mkv")
+    (b / "zlink.Show.Name.S01E02.mkv").symlink_to(b / "Show.Name.S01E01.mkv")
+
+    plan = plan_queue([a, b], _tv_options(), _show_name()).plan
+
+    assert [(e.root.name, e.source.name) for e in plan.entries] == [
+        ("A", "Show.Name.S01E01.mkv"),
+        ("B", "Show.Name.S01E01.mkv"),
+        ("B", "zlink.Show.Name.S01E02.mkv"),
+    ]
+
+
+def test_a_name_taken_on_disk_and_wanted_by_two_sources_numbers_once_across_the_plan(
+    tmp_path: Path,
+) -> None:
+    library = tmp_path / "Library"
+    season = library / "Show Name" / "Season 01"
+    season.mkdir(parents=True)
+    (season / "Show Name - S01E01 - Pilot.mkv").write_bytes(b"already there")
+    for disc in ("Disc A", "Disc B"):
+        (tmp_path / disc).mkdir()
+        (tmp_path / disc / "Show.Name.S01E01.mkv").write_bytes(disc.encode())
+    options = _tv_options(destination_root=library, folder_rename=True, season_folders=True)
+
+    plan = plan_queue([tmp_path / "Disc B", tmp_path / "Disc A"], options, _show_name()).plan
+
+    assert [(e.source.parent.name, e.destination.name) for e in plan.entries if e.destination] == [
+        ("Disc A", "Show Name - S01E01 - Pilot (1).mkv"),
+        ("Disc B", "Show Name - S01E01 - Pilot (2).mkv"),
+    ]

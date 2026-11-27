@@ -174,7 +174,7 @@ async def test_settings_screen_loads_initial_values_from_settings(tmp_path: Path
 
 
 @pytest.mark.asyncio
-async def test_settings_screen_persist_updates_overrides_and_settings_snapshot(
+async def test_settings_screen_saves_the_tv_destination_root_to_the_settings_owner(
     tmp_path: Path,
 ) -> None:
     """Saving a TV destination writes it to the settings owner."""
@@ -186,13 +186,13 @@ async def test_settings_screen_persist_updates_overrides_and_settings_snapshot(
         app.push_screen(screen)
         await pilot.pause()
 
-        override_target = tmp_path / "new_tv"
+        new_root = tmp_path / "new_tv"
         tv_input = app.screen.query_one("#tv-destination-input", Input)
-        tv_input.value = str(override_target)
-        screen.on_input_submitted(Input.Submitted(tv_input, str(override_target)))
+        tv_input.value = str(new_root)
+        screen.on_input_submitted(Input.Submitted(tv_input, str(new_root)))
         await pilot.pause()
 
-        assert app.session_settings.destination_root(ScanMode.TV) == override_target
+        assert app.session_settings.destination_root(ScanMode.TV) == new_root
 
 
 @pytest.mark.asyncio
@@ -260,7 +260,7 @@ async def test_help_screen_proxy_actions_open_settings_and_quit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_settings_screen_empty_save_clears_override(tmp_path: Path) -> None:
+async def test_settings_screen_empty_save_clears_the_destination_root(tmp_path: Path) -> None:
     """Submitting an empty string clears the Destination root in the settings owner."""
     app = TermRenamerApp(wiring=_wiring(), settings=_settings(tmp_path))
     async with app.run_test() as pilot:
@@ -289,7 +289,7 @@ async def test_settings_layout_season_disabled_when_folder_rename_off() -> None:
 
 
 @pytest.mark.asyncio
-async def test_settings_layout_persist_layout_updates_overrides(
+async def test_settings_layout_saves_the_toggles_to_the_settings_owner(
     tmp_path: Path,
 ) -> None:
     app = TermRenamerApp(wiring=_wiring(), settings=_settings(tmp_path))

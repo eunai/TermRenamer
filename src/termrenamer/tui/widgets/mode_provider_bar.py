@@ -208,6 +208,16 @@ class ModeProviderBar(Horizontal):
             return
         self.query_one(f"#{next_sid}", Switch).value = True
 
+    def show(self, mode: ScanMode, provider_id: str) -> None:
+        """Show ``mode`` and ``provider_id`` without posting a change message."""
+        self._set_switch(_MODE_TOGGLE_ID, mode is ScanMode.FILM)
+        self._set_mode_label_active(mode)
+        self._apply_provider_mask(mode, emit=False)
+        target = f"provider-{provider_id}"
+        for pid in _PROVIDER_SWITCH_IDS:
+            self._set_switch(pid, pid == target)
+        self._set_provider_label_active(target)
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Forward the settings button click to the host app."""
         if event.button.id == "open-settings":

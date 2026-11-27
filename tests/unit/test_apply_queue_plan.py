@@ -176,3 +176,23 @@ def test_stragglers_never_include_a_target_folder_or_a_folder_inside_one(
         "Another Show - S02E05 - Mid.mkv",
         "notes.txt",
     ]
+
+
+def test_a_sidecar_changed_since_planning_is_skipped_while_its_video_moves(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "Show.Name.S01E01.mkv").write_bytes(b"v")
+    (tmp_path / "Show.Name.S01E01.srt").write_text("s", encoding="utf-8")
+    plan = _plan([tmp_path])
+    (tmp_path / "Show.Name.S01E01.srt").write_text("edited since planning", encoding="utf-8")
+
+    results = apply_plan(plan, confirmed=True)
+
+    assert _by_name(results) == {
+        "Show.Name.S01E01.mkv": (ApplyStatus.RENAMED, "ok"),
+        "Show.Name.S01E01.srt": (ApplyStatus.SKIP, "stale: source changed since plan"),
+    }
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "Show Name - S01E01 - Pilot.mkv",
+        "Show.Name.S01E01.srt",
+    ]

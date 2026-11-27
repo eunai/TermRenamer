@@ -55,11 +55,16 @@ def fingerprint(path: Path) -> PlanFingerprint:
 
 
 def _normalized_source_key(path: Path) -> str:
-    return str(path.resolve()).casefold()
+    """A file's key: its folder resolved, then its own name, case folded.
+
+    The file's own name is not followed, so a symbolic link is a file of its own
+    and never stands in for its target.
+    """
+    return str(path.parent.resolve() / path.name).casefold()
 
 
 def planning_order_key(source: Path) -> str:
-    """The source-path order of a Plan's entries: the resolved path, case folded."""
+    """The source-path order of a Plan's entries: the file's key, case folded."""
     return _normalized_source_key(source)
 
 
