@@ -225,9 +225,13 @@ class PosterStore:
         return self._folder / (hashlib.sha256(address.encode("utf-8")).hexdigest() + _SUFFIX)
 
     def _fresh(self, path: Path) -> bool:
-        """Whether ``path`` is a file younger than 30 days; ``False`` when unreachable."""
+        """Whether ``path`` is a file younger than 30 days; ``False`` when unreachable.
+
+        A link is never fresh, whatever it points to: a stored Poster is only ever a
+        file the store wrote inside its folder, so a link at its name is downloaded
+        over, never read or drawn."""
         try:
-            status = path.stat()
+            status = path.lstat()
         except OSError:
             return False
         return stat.S_ISREG(status.st_mode) and self._young(status)

@@ -27,7 +27,7 @@ from termrenamer.tui.widgets.footer import AppFooter
 from termrenamer.tui.widgets.poster_panel import PosterPanel
 from termrenamer.tui.widgets.title_details import TitleDetails
 
-from .links import point_folder_at
+from .links import needs_symlinks, point_folder_at
 from .screen_driver import (
     FERRY,
     POSTERS_AVAILABLE,
@@ -449,6 +449,40 @@ async def test_a_poster_folder_that_is_a_link_shows_no_poster_and_logs_one_line(
     assert host.requests == []
     assert list(elsewhere.iterdir()) == []
     assert len(logs) == 1 and "poster folder" in logs[0]
+
+
+async def test_a_stored_poster_that_is_a_link_is_not_drawn_and_is_downloaded_again(
+    tmp_path: Path,
+) -> None:
+    """A link at a stored Poster's name, pointing outside the poster folder, is never
+    taken for the Poster: it is downloaded again into the folder, and the file the link
+    pointed to is left as it was."""
+    needs_symlinks(tmp_path)
+    store = tmp_path / "posters"
+    first = ImageHost()
+    app = poster_app(tmp_path, first)
+    async with app.run_test(size=SIZE) as pilot:
+        await built(pilot, tmp_path)
+    (stored,) = [path for path in store.iterdir() if path.is_file()]
+    outside = tmp_path / "outside.jpg"
+    outside.write_bytes(b"not the poster")
+    stored.unlink()
+    stored.symlink_to(outside)
+
+    again = ImageHost()
+    app = poster_app(tmp_path, again)
+    later = tmp_path / "later"
+    later.mkdir()
+    async with app.run_test(size=SIZE) as pilot:
+        await built(pilot, later)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        drawn = [image.image for image in images(app)]
+
+    assert again.urls == [HARBOUR_LIGHTS_POSTER]
+    assert drawn == [stored]
+    assert not stored.is_symlink()
+    assert outside.read_bytes() == b"not the poster"
 
 
 # ------------------------------------------------------------ hiding them
