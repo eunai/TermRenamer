@@ -22,7 +22,7 @@ import contextlib
 import logging
 from dataclasses import dataclass
 
-from textual.app import ComposeResult
+from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.content import Content
 from textual.widget import Widget
@@ -127,8 +127,14 @@ class PosterView(Vertical):
     }}
     """
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(
+        self, *, cells: tuple[int, int] = (POSTER_WIDTH, POSTER_HEIGHT), **kwargs: object
+    ) -> None:
+        """``cells`` is the Poster's width and height in cells."""
         super().__init__(**kwargs)  # type: ignore[arg-type]
+        self._cells = cells
+        if cells != (POSTER_WIDTH, POSTER_HEIGHT):
+            self.styles.width, self.styles.height = cells
         self._source: PosterSource | None = None
         self._wanted: _Wanted | None = None
         self._image: Widget | None = None
@@ -137,7 +143,9 @@ class PosterView(Vertical):
         self._fetches: dict[Worker[_Fetched], tuple[PosterRequest, PosterSource]] = {}
 
     def compose(self) -> ComposeResult:
-        yield Static("", classes="poster-text")
+        text = Static("", classes="poster-text")
+        text.styles.width, text.styles.height = self._cells
+        yield text
 
     @property
     def text(self) -> Static:
@@ -208,6 +216,7 @@ class PosterView(Vertical):
             self.text.display = False
             image = source.image(path, lambda exc: self._unreadable(source, request, wanted, exc))
             image.add_class("poster-image")
+            image.styles.height = self._cells[1]
             self._image, self._image_request = image, request
             self.mount(image)
             return
@@ -233,7 +242,7 @@ class PosterView(Vertical):
     def _words(self, name: str, label: str) -> None:
         self._drop_image()
         self.text.display = True
-        self.text.update(placeholder(name, label))
+        self.text.update(placeholder(name, label, *self._cells))
 
     def _drop_image(self) -> None:
         image, self._image, self._image_request = self._image, None, None
@@ -327,15 +336,27 @@ class PosterPanel(Vertical):
         self.view.show(name, request, label=label, download=download)
 
 
+def _panel_shows(app: App[object]) -> bool:
+    """Whether a poster panel shows on the main screen, on the Stage shown there."""
+    panels = app.screen_stack[0].query(PosterPanel)
+    return any(all(node.display for node in panel.ancestors_with_self) for panel in panels)
+
+
+def room_beside_posters(app: App[object]) -> int:
+    """The columns a dialog has: those right of the poster panel while it shows on the
+    main screen, else the whole screen's width."""
+    width = app.size.width
+    return width - PANEL_RIGHT if _panel_shows(app) else width
+
+
 def keep_clear_of_posters(dialog: Widget) -> None:
     """Keep ``dialog`` right of the poster panel while the panel shows on the main screen
     below it (on the Stage shown there), or let it take its stylesheet's place while it
     does not. A dialog calls this when it mounts and on every resize; its stylesheet
     gives it no left margin."""
     app = dialog.app
-    panels = app.screen_stack[0].query(PosterPanel)
     dialog.styles.clear_rule("margin")
-    if any(all(node.display for node in panel.ancestors_with_self) for panel in panels):
+    if _panel_shows(app):
         margin = dialog.styles.margin
         dialog.styles.margin = (margin.top, margin.right, margin.bottom, PANEL_RIGHT)
         room = app.size.width - PANEL_RIGHT - margin.right

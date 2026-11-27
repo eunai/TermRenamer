@@ -5,9 +5,16 @@ that is not the current Match, then the "type a title" row, as a plain list. Wit
 no current Match it lists the first two Candidates found. ``↑`` ``↓`` move, ``1`` to ``3`` or
 ``enter`` choose, ``/`` goes to typing, and Escape closes it with nothing picked.
 
+With Posters shown it draws the same three as picture tiles side by side, as in the
+mockup: each Candidate's Poster, or "no poster", with its name, year and key under it,
+and the typing field in the third tile. ``←`` ``→`` then move as ``↑`` ``↓`` do. Posters
+come from the poster store, drawn at once when stored and otherwise downloaded off
+the screen's thread. With Posters hidden or unavailable, or the screen below their
+size, it is the plain list; it changes between the two while it is open.
+
 Typing a title and pressing ``enter`` searches the Provider again, off the screen's
-thread; the Candidates it finds replace the ones listed. The picker returns a
-:class:`Picked` or ``None``; it never changes the Plan itself.
+thread; the Candidates it finds replace the ones listed, and their Posters. The picker
+returns a :class:`Picked` or ``None``; it never changes the Plan itself.
 """
 
 from __future__ import annotations
@@ -26,13 +33,50 @@ from textual.widgets import Input, Static
 from textual.worker import Worker, WorkerState
 
 from termrenamer.core.models import Candidate
-from termrenamer.tui.widgets.poster_panel import keep_clear_of_posters
+from termrenamer.persistence.posters import PosterRequest
+from termrenamer.tui.poster_support import PosterSource
+from termrenamer.tui.widgets.poster_panel import (
+    PosterView,
+    keep_clear_of_posters,
+    room_beside_posters,
+)
 from termrenamer.util.errors import ProviderError
 
 _LOG = logging.getLogger("termrenamer.tui")
 
 _CANDIDATE_ROWS = 2
 """At most two Candidates are listed at once; typing a more exact title reaches others."""
+
+
+@dataclass(frozen=True, slots=True)
+class TileSize:
+    """The tiles' size: the Poster's cells, each tile's columns, and the columns of
+    padding on each side of the row of tiles."""
+
+    name: str
+    poster: tuple[int, int]
+    tile: int
+    padding: int
+
+    @property
+    def dialog_width(self) -> int:
+        """The dialog's columns with three tiles, one column apart, and its frame."""
+        return 3 * self.tile + 2 * _TILE_GAP + 2 * self.padding + 2
+
+
+_TILE_GAP = 1
+
+TILE_SIZES = (
+    TileSize("large", poster=(20, 15), tile=26, padding=2),
+    TileSize("small", poster=(19, 14), tile=21, padding=1),
+)
+"""The mockup's tiles, and smaller ones that fit beside the poster panel on a screen of
+100 columns; the largest that fits is used."""
+
+
+def tile_size(room: int) -> TileSize | None:
+    """The largest tiles whose dialog fits in ``room`` columns, or ``None``."""
+    return next((size for size in TILE_SIZES if size.dialog_width <= room), None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +99,15 @@ def picker_choices(current: Candidate | None, found: Sequence[Candidate]) -> tup
 def candidate_text(candidate: Candidate) -> str:
     """A Candidate as the picker writes it: its name, and its year when known."""
     return f"{candidate.name} ({candidate.year})" if candidate.year is not None else candidate.name
+
+
+def _year_text(candidate: Candidate, *, current: bool) -> str:
+    """The line under a tile's name: the year when known, and "(current)" for the
+    current Match."""
+    parts = [f"({candidate.year})"] if candidate.year is not None else []
+    if current:
+        parts.append("(current)")
+    return " ".join(parts)
 
 
 class ChoiceRow(Horizontal):
@@ -110,6 +163,50 @@ class ChoiceRow(Horizontal):
         self.set_class(selected, "-selected")
 
 
+class CandidateTile(Vertical):
+    """One tile of the picker with Posters shown: a framed picture, then the name, the
+    year and the tile's key under it.
+
+    A Candidate's tile frames its Poster; the "type a title" tile frames ``typed``, the
+    typing field, in its place.
+    """
+
+    def __init__(
+        self, key: str, size: TileSize, *, typed: Input | None = None, **kwargs: object
+    ) -> None:
+        super().__init__(classes="picker-tile", **kwargs)  # type: ignore[arg-type]
+        self._key = key
+        self._tile_size = size
+        self._typed = typed
+        self.styles.width = size.tile
+
+    def compose(self) -> ComposeResult:
+        width, height = self._tile_size.poster
+        frame = Vertical(classes="tile-frame")
+        frame.styles.width, frame.styles.height = width + 2, height + 2
+        frame.styles.margin = (0, 0, 0, (self._tile_size.tile - width - 2) // 2)
+        with frame:
+            if self._typed is None:
+                yield PosterView(cells=self._tile_size.poster)
+            else:
+                yield self._typed
+                yield Static("type, then enter", classes="tile-help")
+        yield Static("", classes="tile-name")
+        yield Static("", classes="tile-year")
+        yield Static(Content(self._key), classes="tile-key")
+
+    @property
+    def view(self) -> PosterView:
+        """The tile's Poster (a Candidate's tile only)."""
+        return self.query_one(PosterView)
+
+    def show(self, name: str, year: str, *, selected: bool) -> None:
+        """Show ``name`` and ``year`` under the picture, marked when it is selected."""
+        self.query_one(".tile-name", Static).update(Content(name))
+        self.query_one(".tile-year", Static).update(Content(year))
+        self.set_class(selected, "-selected")
+
+
 class _TypedTitle(Input):
     """The typing field. It takes focus only while the person types, so ``1`` to ``3``
     and ``/`` choose rows the rest of the time."""
@@ -137,13 +234,18 @@ class MatchPicker(ModalScreen[Picked | None]):
     ``now`` is the line under the heading ("Now: …", "No match found." or what the
     file is). ``search`` runs a typed search; it is called off the screen's thread and
     raises :class:`~termrenamer.util.errors.ProviderError` on a failure. ``typed`` fills
-    the typing field at the start; with ``typing``, the picker opens in it.
+    the typing field at the start; with ``typing``, the picker opens in it. ``posters``
+    is where Posters come from while they are shown, and ``provider_id`` the Provider
+    whose Poster references the Candidates carry; the app gives the picker a new
+    source, or ``None``, with :meth:`use_posters` when a resize changes it.
     """
 
     AUTO_FOCUS = None
     BINDINGS = [
         Binding("up", "move(-1)", show=False),
         Binding("down", "move(1)", show=False),
+        Binding("left", "move_across(-1)", show=False),
+        Binding("right", "move_across(1)", show=False),
         Binding("enter", "choose", show=False),
         Binding("slash", "type", show=False),
         Binding("escape", "close", show=False),
@@ -195,6 +297,55 @@ class MatchPicker(ModalScreen[Picked | None]):
         color: $tr-dim;
         margin: 0 1 1 1;
     }
+    MatchPicker #picker-tiles {
+        height: auto;
+        margin-bottom: 1;
+    }
+    MatchPicker .picker-tile {
+        height: auto;
+        margin-right: 1;
+    }
+    MatchPicker #picker-tile-type {
+        margin-right: 0;
+    }
+    MatchPicker .tile-frame {
+        border: solid $tr-line;
+        align: center middle;
+    }
+    MatchPicker .picker-tile.-selected .tile-frame {
+        border: heavy $accent;
+    }
+    MatchPicker .tile-frame #picker-typed {
+        width: 1fr;
+        margin: 0 1;
+    }
+    MatchPicker .tile-help {
+        width: 100%;
+        margin-top: 1;
+        color: $tr-dim;
+        text-align: center;
+    }
+    MatchPicker .tile-name, MatchPicker .tile-year, MatchPicker .tile-key {
+        width: 100%;
+        height: 1;
+        text-align: center;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
+    MatchPicker .tile-name {
+        margin-top: 1;
+        color: $tr-dim;
+    }
+    MatchPicker .picker-tile.-selected .tile-name {
+        color: $foreground;
+        text-style: bold;
+    }
+    MatchPicker .tile-year {
+        color: $tr-dim;
+    }
+    MatchPicker .tile-key {
+        color: $accent;
+    }
     """
 
     def __init__(
@@ -207,6 +358,8 @@ class MatchPicker(ModalScreen[Picked | None]):
         search: Callable[[str], tuple[Candidate, ...]],
         typed: str = "",
         typing: bool = False,
+        posters: PosterSource | None = None,
+        provider_id: str | None = None,
     ) -> None:
         super().__init__()
         self._heading = heading
@@ -219,6 +372,11 @@ class MatchPicker(ModalScreen[Picked | None]):
         self._selected = 0
         self._searching: Worker[tuple[Candidate, ...]] | None = None
         self._searching_text = ""
+        self._source = posters
+        self._provider_id = provider_id
+        self._tile_size: TileSize | None = None
+        """The tiles' size while they are shown, or ``None`` for the plain list."""
+        self._status = ("", "$tr-dim")
 
     @property
     def choices(self) -> tuple[Candidate, ...]:
@@ -230,31 +388,99 @@ class MatchPicker(ModalScreen[Picked | None]):
         """Whether the typing field has the keys."""
         return self.query_one("#picker-typed", _TypedTitle).has_focus
 
+    @property
+    def tiles(self) -> TileSize | None:
+        """The tiles' size while the Candidates are tiles, or ``None`` for the list."""
+        return self._tile_size
+
     def compose(self) -> ComposeResult:
+        self._tile_size = self._wanted_size()
         with Vertical(id="picker-dialog"):
             yield Static(Content(self._now), id="picker-now")
-            with Vertical(id="picker-rows"):
-                for index in range(_CANDIDATE_ROWS):
-                    yield ChoiceRow(str(index + 1), "", id=f"picker-choice-{index}")
-                yield ChoiceRow("/", "Type a title", _TypedTitle(self._typed), id="picker-type")
+            if self._tile_size is None:
+                with Vertical(id="picker-rows"):
+                    for index in range(_CANDIDATE_ROWS):
+                        yield ChoiceRow(str(index + 1), "", id=f"picker-choice-{index}")
+                    yield ChoiceRow("/", "Type a title", _TypedTitle(self._typed), id="picker-type")
+            else:
+                with Horizontal(id="picker-tiles"):
+                    for index in range(_CANDIDATE_ROWS):
+                        yield CandidateTile(
+                            str(index + 1), self._tile_size, id=f"picker-tile-{index}"
+                        )
+                    yield CandidateTile(
+                        "/", self._tile_size, typed=_TypedTitle(self._typed), id="picker-tile-type"
+                    )
             yield Static("", id="picker-status")
-            yield Static("↑↓ choose · 1-3 or enter use it · / type · esc close", id="picker-hint")
+            yield Static("", id="picker-hint")
 
     def on_mount(self) -> None:
-        self.query_one("#picker-dialog").border_title = Content(f" {self._heading} ")
-        keep_clear_of_posters(self.query_one("#picker-dialog"))
-        self._say("")
-        if self._start_typing:
+        self._dress(typing=self._start_typing)
+
+    async def on_resize(self) -> None:
+        await self._lay_out()
+
+    def use_posters(self, source: PosterSource | None) -> None:
+        """Show Posters from ``source``, or the plain list for ``None``: the app calls
+        this when the screen's size changes whether Posters show."""
+        if source is self._source:
+            return
+        self._source = source
+        if self.is_mounted:
+            for view in self.query(PosterView):
+                view.use(source)
+            self.call_later(self._lay_out)
+
+    def _wanted_size(self) -> TileSize | None:
+        if self._source is None:
+            return None
+        return tile_size(room_beside_posters(self.app))
+
+    async def _lay_out(self) -> None:
+        """Change between the tiles and the list, or the tiles' size, when the screen or
+        the Posters ask for it; keep what was typed and the status line."""
+        if self._wanted_size() == self._tile_size:
+            keep_clear_of_posters(self.query_one("#picker-dialog"))
+            return
+        typed = self.query_one("#picker-typed", _TypedTitle)
+        self._typed, typing = typed.value, typed.has_focus
+        await self.recompose()
+        self._dress(typing=typing)
+
+    def _dress(self, *, typing: bool) -> None:
+        """Set up what compose left: the heading, the place, the status line, the
+        Posters, the typing field and the rows."""
+        dialog = self.query_one("#picker-dialog")
+        dialog.border_title = Content(f" {self._heading} ")
+        size = self._tile_size
+        dialog.set_class(size is not None, "-tiles")
+        if size is not None:
+            dialog.styles.width = size.dialog_width
+            dialog.styles.padding = (1, size.padding, 0, size.padding)
+        keep_clear_of_posters(dialog)
+        self._say(*self._status)
+        for view in self.query(PosterView):
+            view.use(self._source)
+        if typing:
             self.action_type()
         self._show_rows()
 
-    def on_resize(self) -> None:
-        keep_clear_of_posters(self.query_one("#picker-dialog"))
+    def _request(self, candidate: Candidate) -> PosterRequest | None:
+        if candidate.poster_ref and self._provider_id:
+            return PosterRequest(self._provider_id, candidate.poster_ref)
+        return None
 
     def _show_rows(self) -> None:
         choices = self.choices
         rows = len(choices) + 1
         self._selected = max(0, min(self._selected, rows - 1))
+        keys = f"1-{rows}" if rows > 1 else "1"
+        if self._tile_size is not None:
+            self._show_tiles(choices)
+            self.query_one("#picker-hint", Static).update(
+                f"←→ choose · {keys} or enter use it · / type a title · esc close"
+            )
+            return
         for index in range(_CANDIDATE_ROWS):
             row = self.query_one(f"#picker-choice-{index}", ChoiceRow)
             row.display = index < len(choices)
@@ -266,18 +492,40 @@ class MatchPicker(ModalScreen[Picked | None]):
         self.query_one("#picker-type", ChoiceRow).show(
             "/", "Type a title", selected=self._selected == len(choices)
         )
-        keys = f"1-{rows}" if rows > 1 else "1"
         self.query_one("#picker-hint", Static).update(
             f"↑↓ choose · {keys} or enter use it · / type · esc close"
         )
 
+    def _show_tiles(self, choices: tuple[Candidate, ...]) -> None:
+        for index in range(_CANDIDATE_ROWS):
+            tile = self.query_one(f"#picker-tile-{index}", CandidateTile)
+            tile.display = index < len(choices)
+            if index >= len(choices):
+                tile.view.clear()
+                continue
+            candidate = choices[index]
+            year = _year_text(candidate, current=candidate == self._current)
+            tile.show(candidate.name, year, selected=index == self._selected)
+            tile.view.show(candidate.name, self._request(candidate), download=True)
+        self.query_one("#picker-tile-type", CandidateTile).show(
+            "Type a title", "", selected=self._selected == len(choices)
+        )
+
     def _say(self, text: str, colour: str = "$tr-dim") -> None:
         """Show ``text`` on the picker's status line; no text hides the line."""
+        self._status = (text, colour)
         status = self.query_one("#picker-status", Static)
         status.update(Content.from_markup(f"[{colour}]$text[/]", text=text))
         status.display = bool(text)
 
     # ------------------------------------------------------------------ keys
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        # ``←`` ``→`` move between tiles; the plain list leaves them to the app.
+        return action != "move_across" or self._tile_size is not None
+
+    def action_move_across(self, step: int) -> None:
+        self.action_move(step)
 
     def action_move(self, step: int) -> None:
         self.query_one("#picker-typed", _TypedTitle).stop()
