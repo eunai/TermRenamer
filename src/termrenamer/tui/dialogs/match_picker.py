@@ -24,6 +24,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from textual.app import ComposeResult
+from textual.await_complete import AwaitComplete
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.content import Content
@@ -296,6 +297,11 @@ class MatchPicker(ModalScreen[Picked | None]):
         color: $tr-dim;
         margin: 0 1 1 1;
     }
+    MatchPicker #picker-dialog.-tiles #picker-status {
+        height: 1;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
     MatchPicker #picker-tiles {
         height: auto;
         margin-bottom: 1;
@@ -387,11 +393,6 @@ class MatchPicker(ModalScreen[Picked | None]):
         """Whether the typing field has the keys."""
         return self.query_one("#picker-typed", _TypedTitle).has_focus
 
-    @property
-    def tiles(self) -> TileSize | None:
-        """The tiles' size while the Candidates are tiles, or ``None`` for the list."""
-        return self._tile_size
-
     def compose(self) -> ComposeResult:
         self._tile_size = self._wanted_size()
         with Vertical(id="picker-dialog"):
@@ -428,6 +429,16 @@ class MatchPicker(ModalScreen[Picked | None]):
                 view.use(source)
             self.call_later(self._lay_out)
 
+    def dismiss(self, result: Picked | None = None) -> AwaitComplete:
+        self._clear_posters()
+        return super().dismiss(result)
+
+    def _clear_posters(self) -> None:
+        """Clear each tile's image before the tiles go, so the image package takes it
+        off the terminal; removing an image widget alone leaves a Kitty image behind."""
+        for view in self.query(PosterView):
+            view.use(None)
+
     def _wanted_size(self) -> TileSize | None:
         if self._source is None:
             return None
@@ -441,6 +452,7 @@ class MatchPicker(ModalScreen[Picked | None]):
             return
         typed = self.query_one("#picker-typed", _TypedTitle)
         self._typed, typing = typed.value, typed.has_focus
+        self._clear_posters()
         await self.recompose()
         self._dress(typing=typing)
 
