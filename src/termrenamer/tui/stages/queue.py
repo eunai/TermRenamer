@@ -19,7 +19,11 @@ _NEEDS_SOURCES = frozenset({"build_plan", "clear_queue", "select_previous", "sel
 
 
 class QueueTree(Tree[Path], can_focus=False):
-    """The queue as the app has always drawn it: "Queue", then one leaf per Source."""
+    """The queue as the app has always drawn it: "Queue", then one leaf per Source.
+
+    A click selects the Source on its line. "Queue" is no Source: a click on it keeps
+    the Source selected before, and the tree never folds.
+    """
 
     DEFAULT_CSS = """
     QueueTree {
@@ -88,6 +92,8 @@ class QueueStage(StageView):
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._sources: tuple[Path, ...] = ()
+        self._source_line = 1
+        """The tree line of the Source last selected (line 0 is "Queue")."""
 
     def compose(self) -> ComposeResult:
         with Vertical(id="queue-empty"), Vertical(id="queue-prompt"):
@@ -108,6 +114,7 @@ class QueueStage(StageView):
             yield Static("Nothing is looked up until you build the Plan.", id="queue-note")
 
     def on_mount(self) -> None:
+        self.query_one(QueueTree).auto_expand = False
         self.show_queue(())
 
     @property
@@ -178,5 +185,19 @@ class QueueStage(StageView):
         self.query_one(QueueTree).action_cursor_down()
         self.changed()
 
-    def on_tree_node_highlighted(self) -> None:
+    def on_tree_node_highlighted(self, event: Tree.NodeHighlighted[Path]) -> None:
+        """A Source was highlighted, by a key or by a click. "Queue" (line 0) is no
+        Source: the selection goes back to the Source selected before."""
+        event.stop()
+        tree = self.query_one(QueueTree)
+        if tree.cursor_line == 0 and tree.root.children:
+            tree.cursor_line = min(self._source_line, len(tree.root.children))
+            return
+        if tree.cursor_line > 0:
+            self._source_line = tree.cursor_line
         self.changed()
+
+    def on_tree_node_collapsed(self, event: Tree.NodeCollapsed[Path]) -> None:
+        """The tree never folds: its toggle on "Queue" opens it again."""
+        event.stop()
+        self.query_one(QueueTree).root.expand()

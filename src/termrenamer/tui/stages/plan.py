@@ -339,6 +339,10 @@ class PlanStage(TitleListStage):
 
     # ------------------------------------------------------------ the keys
 
+    def row_highlighted(self) -> None:
+        self._draw_details()
+        self.changed()
+
     def action_select_previous(self) -> None:
         super().action_select_previous()
         self._draw_details()

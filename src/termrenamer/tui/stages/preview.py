@@ -150,6 +150,9 @@ class PreviewStage(TitleListStage):
         self._plan: Plan | None = None
         self._rows: tuple[TitleRow, ...] = ()
         self._file = 0
+        self._shown_row: int | None = None
+        """The row the details, the footer and the Poster show; a click that highlights
+        another row selects that row's first file."""
         self._looking_up = False
 
     def compose(self) -> ComposeResult:
@@ -271,7 +274,13 @@ class PreviewStage(TitleListStage):
         super().redraw()
         self._show_details()
 
+    def row_highlighted(self) -> None:
+        if self.title_list.highlighted != self._shown_row:
+            self._file = 0
+            self._show_details()
+
     def _show_details(self) -> None:
+        self._shown_row = self.title_list.highlighted
         if self._plan is not None:
             self.query_one(TitleDetails).show(
                 self.selected_row, self._plan.mode, self._file, compact=self.posters_shown
