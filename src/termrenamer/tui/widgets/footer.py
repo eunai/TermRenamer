@@ -52,20 +52,25 @@ def hints_markup(hints: Sequence[tuple[str, str]], width: int | None = None) -> 
     return "  ".join(out)
 
 
-FOOTER_FIXED_ROWS = 3
-"""The footer's rows besides the Stage's lines: the message with its rule (2), the keys (1)."""
+_MESSAGE_ROWS = 2
+"""The message line and the rule above it."""
+_KEY_ROWS = 1
+"""The key hints."""
+
+FOOTER_FIXED_ROWS = _MESSAGE_ROWS + _KEY_ROWS
+"""The footer's rows besides the Stage's lines."""
 
 
 class AppFooter(Vertical):
     """The message line, up to two lines from the current Stage, and the key hints."""
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS = (
+        """
     AppFooter {
         dock: bottom;
         height: auto;
     }
     AppFooter #message {
-        height: 2;
         padding: 0 2;
         border-top: solid $tr-line;
     }
@@ -75,11 +80,19 @@ class AppFooter(Vertical):
         background: $tr-footer;
     }
     AppFooter #key-hints {
-        height: 1;
         padding: 0 1;
         background: $panel;
     }
     """
+        + f"""
+    AppFooter #message {{
+        height: {_MESSAGE_ROWS};
+    }}
+    AppFooter #key-hints {{
+        height: {_KEY_ROWS};
+    }}
+    """
+    )
 
     def compose(self) -> ComposeResult:
         yield Static(id="message")

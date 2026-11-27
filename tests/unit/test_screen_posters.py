@@ -16,6 +16,7 @@ from textual.widgets import Switch
 from termrenamer.persistence.posters import PosterRequest
 from termrenamer.tui.app import MIN_POSTER_SIZE, TermRenamerApp
 from termrenamer.tui.dialogs import ApplyConfirm
+from termrenamer.tui.dialogs.match_picker import MatchPicker
 from termrenamer.tui.poster_support import NO_IMAGES, NOT_INSTALLED, PosterSupport
 from termrenamer.tui.stage import Stage
 from termrenamer.tui.stages.preview import ROWS_FOR_POSTERS
@@ -229,6 +230,37 @@ async def test_the_poster_is_fixed_outside_the_scrolling_details(tmp_path: Path)
         under_panel = details.region.y > frame.region.bottom
     assert scroll not in ancestors
     assert under_panel
+
+
+@pytest.mark.parametrize("size", [SIZE, (100, ROWS_FOR_POSTERS)])
+async def test_the_match_picker_does_not_cover_the_poster(
+    tmp_path: Path, size: tuple[int, int]
+) -> None:
+    app = poster_app(tmp_path, ImageHost())
+    async with app.run_test(size=size) as pilot:
+        await built(pilot, tmp_path)
+        frame: Region = panel(app).region
+        drawn_before = frame_column(app)
+        await press(pilot, "t")
+        await pilot.pause()
+        assert isinstance(app.screen, MatchPicker)
+        dialog = app.screen.query_one("#picker-dialog").region
+        drawn_under = frame_column(app)
+        words = panel_text(app)
+    assert dialog.area > 0
+    assert not frame.overlaps(dialog)
+    assert drawn_before == drawn_under == frame.x
+    assert "Harbour Lights" in words  # the name, in place of the image
+
+
+async def test_without_the_panel_the_match_picker_is_centred(tmp_path: Path) -> None:
+    app = poster_app(tmp_path, ImageHost(), show_posters=False)
+    async with app.run_test(size=SMALLEST) as pilot:
+        await built(pilot, tmp_path)
+        await press(pilot, "t")
+        await pilot.pause()
+        dialog = app.screen.query_one("#picker-dialog").region
+    assert abs(dialog.x - (SMALLEST[0] - dialog.right)) <= 1
 
 
 @pytest.mark.parametrize("size", [SIZE, (100, ROWS_FOR_POSTERS)])
@@ -461,16 +493,15 @@ async def test_at_the_smallest_size_the_details_and_actions_fit_under_the_panel(
     assert [r for r in apply if r.area > 0 and r.bottom <= footer.y]
 
 
-async def test_at_the_smallest_size_a_second_action_fits_too(tmp_path: Path) -> None:
-    # #28 shows Change match beside Leave out; the threshold counts both.
+async def test_at_the_smallest_size_change_match_and_leave_out_both_fit(tmp_path: Path) -> None:
     app = poster_app(tmp_path, ImageHost())
     async with app.run_test(size=SMALLEST) as pilot:
         await built(pilot, tmp_path)
-        app.query_one("#change-match").display = True
-        await pilot.pause()
+        both = [app.query_one(f"#{name}").display for name in ("change-match", "leave-out")]
         overflow = app.query_one("#details-scroll").max_scroll_y
         footer = app.query_one(AppFooter).region
         buttons = [app.query_one(f"#{name}").region for name in ("change-match", "leave-out")]
+    assert both == [True, True]
     assert overflow == 0
     assert all(b.height == 1 and b.bottom <= footer.y for b in buttons)
     assert buttons[0].bottom <= buttons[1].y
@@ -645,3 +676,18 @@ async def test_help_shows_the_provider_credits() -> None:
     assert "This product uses the TMDB API but is not endorsed or certified by TMDB." in text
     assert "Metadata provided by TheTVDB." in text
     assert "https://thetvdb.com/" in text
+
+
+@pytest.mark.parametrize("name", ["C:\\Films\\", "[b]Bold[/b] \\", "A name [/]"])
+async def test_the_panel_draws_a_name_as_written(tmp_path: Path, name: str) -> None:
+    # A Windows folder ends in a backslash, which would escape a closing tag after it.
+    app = poster_app(tmp_path, ImageHost())
+    async with app.run_test(size=SIZE) as pilot:
+        await built(pilot, tmp_path)
+        panel(app).show(name, provider_id="tmdb", ref=None, download=False)
+        await pilot.pause()
+        words = panel_text(app)
+        title = panel(app).border_title
+    assert name.strip() in words
+    assert "no poster" in words
+    assert title == "TMDB"

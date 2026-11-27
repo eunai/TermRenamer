@@ -19,9 +19,9 @@ HEADER_ROWS = 1
 class AppHeader(Horizontal):
     """One line: ``TermRenamer  Mode  TV  Film    Provider  TMDB ▾ … Destination root  <path>``."""
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS = (
+        """
     AppHeader {
-        height: 1;
         background: $panel;
         padding: 0 2;
     }
@@ -38,6 +38,12 @@ class AppHeader(Horizontal):
         text-overflow: ellipsis;
     }
     """
+        + f"""
+    AppHeader {{
+        height: {HEADER_ROWS};
+    }}
+    """
+    )
 
     def compose(self) -> ComposeResult:
         yield Static(id="header-left")

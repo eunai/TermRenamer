@@ -18,8 +18,8 @@ from textual.widgets import Static
 from termrenamer.core.models import EntryStatus, Plan
 from termrenamer.core.paths import claim_key
 from termrenamer.core.title_rows import PlanCounts, sidecars_skipped_alone
-from termrenamer.tui.stages.title_list_stage import PANEL_RIGHT, TitleListStage
 from termrenamer.tui.widgets.action_button import ActionButton
+from termrenamer.tui.widgets.poster_panel import keep_clear_of_posters
 from termrenamer.tui.words import (
     agree,
     folder_text,
@@ -148,20 +148,10 @@ class ApplyConfirm(ModalScreen[bool]):
 
     def on_mount(self) -> None:
         self.query_one("#confirm-dialog").border_title = " Apply the Plan? "
-        self._fit()
+        keep_clear_of_posters(self.query_one("#confirm-dialog"))
 
     def on_resize(self) -> None:
-        self._fit()
-
-    def _fit(self) -> None:
-        """While the poster panel shows on the screen below, keep to the right of it."""
-        dialog = self.query_one("#confirm-dialog")
-        stages = self.app.screen_stack[0].query(TitleListStage)
-        if any(stage.posters_shown for stage in stages):
-            room = self.app.size.width - PANEL_RIGHT - dialog.styles.margin.right
-            dialog.styles.max_width = max(room, 20)
-        else:
-            dialog.styles.max_width = None  # back to the stylesheet's 100%
+        keep_clear_of_posters(self.query_one("#confirm-dialog"))
 
     def on_action_button_clicked(self, event: ActionButton.Clicked) -> None:
         event.stop()

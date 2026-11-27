@@ -12,7 +12,8 @@ it then draws nothing, removes its image and starts no download (one already run
 finishes and is stored). While it is paused (its Stage is not shown, or a dialog covers
 it) it draws the Title's name in place of the image and starts no download; a dialog's
 backdrop would otherwise tint the image's cells, which breaks a Kitty image.
-:class:`PosterPanel` frames one view at the mockup's 24 by 17 cells.
+:class:`PosterPanel` frames one view at the mockup's 24 by 17 cells, and
+:func:`keep_clear_of_posters` keeps a dialog to its right.
 """
 
 from __future__ import annotations
@@ -41,6 +42,14 @@ POSTER_HEIGHT = 17
 PANEL_WIDTH = POSTER_WIDTH + 2
 PANEL_HEIGHT = POSTER_HEIGHT + 2
 """The panel's columns and rows, its frame included."""
+
+PANEL_LEFT = 3
+"""The columns left of the panel."""
+
+PANEL_RIGHT = PANEL_LEFT + PANEL_WIDTH
+"""The first column right of the panel."""
+
+_NARROWEST_DIALOG = 20
 
 NO_POSTER = "no poster"
 
@@ -274,6 +283,7 @@ class PosterPanel(Vertical):
     PosterPanel {{
         width: {PANEL_WIDTH};
         height: {PANEL_HEIGHT};
+        margin: 0 0 0 {PANEL_LEFT};
         border: solid $tr-line;
         border-title-color: $tr-dim;
         border-title-align: left;
@@ -313,3 +323,19 @@ class PosterPanel(Vertical):
         self.border_title = escape(provider_name(provider_id))
         request = PosterRequest(provider_id, ref) if ref else None
         self.view.show(name, request, label=label, download=download)
+
+
+def keep_clear_of_posters(dialog: Widget) -> None:
+    """Keep ``dialog`` right of the poster panel while the panel shows on the main screen
+    below it, or let it take its stylesheet's place while it does not. A dialog calls
+    this when it mounts and on every resize; its stylesheet gives it no left margin."""
+    app = dialog.app
+    panels = app.screen_stack[0].query(PosterPanel)
+    dialog.styles.clear_rule("margin")
+    if any(panel.display for panel in panels):
+        margin = dialog.styles.margin
+        dialog.styles.margin = (margin.top, margin.right, margin.bottom, PANEL_RIGHT)
+        room = app.size.width - PANEL_RIGHT - margin.right
+        dialog.styles.max_width = max(room, _NARROWEST_DIALOG)
+    else:
+        dialog.styles.max_width = None  # back to the stylesheet's

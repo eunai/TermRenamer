@@ -9,21 +9,14 @@ from textual.widgets import Static
 
 from termrenamer.tui.poster_support import PosterSource
 from termrenamer.tui.stages.base import StageView
-from termrenamer.tui.widgets.poster_panel import PANEL_WIDTH, PosterPanel
+from termrenamer.tui.widgets.poster_panel import PosterPanel
 from termrenamer.tui.widgets.title_list import TitleList
-
-PANEL_LEFT = 3
-"""The columns left of the poster panel."""
-
-PANEL_RIGHT = PANEL_LEFT + PANEL_WIDTH
-"""The first column right of the poster panel."""
 
 
 class TitleListStage(StageView):
     """A Stage whose body is the Title list; ``↑`` ``↓`` select a row."""
 
-    DEFAULT_CSS = (
-        """
+    DEFAULT_CSS = """
     TitleListStage .stage-body {
         height: 1fr;
         padding: 1 2 0 2;
@@ -49,12 +42,6 @@ class TitleListStage(StageView):
         display: block;
     }
     """
-        + f"""
-    TitleListStage PosterPanel {{
-        margin: 0 0 0 {PANEL_LEFT};
-    }}
-    """
-    )
 
     @property
     def posters_shown(self) -> bool:
