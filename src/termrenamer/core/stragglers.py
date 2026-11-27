@@ -3,14 +3,14 @@
 :func:`plan_stragglers` is the one rule (spec #16, section C). Building a Plan and
 deriving one both call it; it never lists a folder, so a derived Plan lists Stragglers
 from the children recorded when the first Plan was built. The disk is read only to
-test whether a name is taken and where a target folder leads: each Straggler's wanted path is claimed as an entry's is
+test whether a name is taken and where a target folder leads: each Straggler's wanted
+path is claimed as an entry's is
 (:func:`~termrenamer.core.collisions.allocate_destination`), a target folder whose
 name differs from its source folder's only in letter case or Unicode form is tested for
 being that folder (:func:`~termrenamer.core.collisions.is_same_folder`), and the folder
 each target folder reaches through the links on its way is read, as a claimed name's
-folder is (:func:`_reached_keys`). A source
-folder, an entry and a child are told apart by their recorded paths as text; names
-being claimed and target folders are compared by
+folder is (:func:`_reached_keys`). A source folder, an entry and a child are told apart
+by their recorded paths as text; names being claimed and target folders are compared by
 :func:`~termrenamer.core.paths.claim_key`.
 """
 
