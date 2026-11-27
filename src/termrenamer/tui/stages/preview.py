@@ -8,12 +8,15 @@ The column stays left of the Title list, where the Poster panel goes (#29).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.markup import escape
 from textual.widgets import Static
 
 from termrenamer.core.models import EntryStatus, Plan, PlanEntry
+from termrenamer.core.planning import PutBack, derive_plan
 from termrenamer.core.title_rows import PlanCounts, TitleRow, title_rows
 from termrenamer.tui.stages.title_list_stage import TitleListStage
 from termrenamer.tui.widgets.action_button import ActionButton
@@ -46,7 +49,7 @@ class PreviewStage(TitleListStage):
     }
     PreviewStage #details-actions {
         height: auto;
-        margin-top: 1;
+        padding: 0 1 0 3;
     }
     PreviewStage #details-actions ActionButton {
         margin: 0 0 1 0;
@@ -76,13 +79,14 @@ class PreviewStage(TitleListStage):
             with Vertical(id="details"):
                 with _DetailsScroll(id="details-scroll"):
                     yield TitleDetails()
-                    with Vertical(id="details-actions"):
-                        yield ActionButton(
-                            "t", "Change match", press_key="t", id="change-match", classes="-plain"
-                        )
-                        yield ActionButton(
-                            "x", "Leave out", press_key="x", id="leave-out", classes="-plain"
-                        )
+                # Under the scroll, so the actions stay on screen however long the Title.
+                with Vertical(id="details-actions"):
+                    yield ActionButton(
+                        "t", "Change match", press_key="t", id="change-match", classes="-plain"
+                    )
+                    yield ActionButton(
+                        "x", "Leave out", press_key="x", id="leave-out", classes="-plain"
+                    )
                 with Vertical(id="preview-summary"):
                     yield Static("", id="summary-counts")
                     yield ActionButton("enter", "Apply…", press_key="enter", classes="-strong")
@@ -120,20 +124,20 @@ class PreviewStage(TitleListStage):
     def show_plan(self, plan: Plan, *, keep_selection: bool = False) -> None:
         """Show ``plan``'s Titles, and each not recognised video as a row of its own.
 
-        A new Plan starts at its first row. With ``keep_selection``, as for a Plan
-        derived from the one shown, the selection stays on the same file (by its
-        source), in whichever row now holds it.
+        A new Plan starts at its first row. With ``keep_selection``, for a Plan
+        derived from the one shown, the selection stays on the same file, in whichever
+        row now holds it: a derived Plan has the same entries in the same order, so
+        the file is found by its place among them.
         """
-        kept = self.selected_file if keep_selection else None
+        kept = self._kept_entry(plan) if keep_selection else None
         self._plan = plan
         self._rows = title_rows(plan)
         self._file = 0
         row_index = 0
         if kept is not None:
             for index, row in enumerate(self._rows):
-                sources = [entry.source for entry in row.files]
-                if kept.source in sources:
-                    row_index, self._file = index, sources.index(kept.source)
+                if kept in row.files:
+                    row_index, self._file = index, row.files.index(kept)
                     break
         rows = [
             ListRow(
@@ -152,6 +156,13 @@ class PreviewStage(TitleListStage):
         self.show_heading_count(len(rows))
         self.query_one("#summary-counts", Static).update(_summary(PlanCounts.of(plan)))
         self._show_details()
+
+    def _kept_entry(self, plan: Plan) -> PlanEntry | None:
+        """The entry of ``plan``, derived from the Plan shown, at the selected file's place."""
+        shown, selected = self._plan, self.selected_file
+        if shown is None or selected is None or len(shown.entries) != len(plan.entries):
+            return None
+        return plan.entries[shown.entries.index(selected)]
 
     def redraw(self) -> None:
         super().redraw()
@@ -209,8 +220,8 @@ class PreviewStage(TitleListStage):
         notes.extend(_sidecar_notes(row.sidecars_of(video), moves=why is None))
         note = "".join(f" · {n}" for n in notes)
         to = str(video.destination) if video.destination is not None else "not renamed"
-        if video.status is EntryStatus.LEFT_OUT and video.wanted is not None:
-            to = str(video.wanted)
+        if video.status is EntryStatus.LEFT_OUT and self._plan is not None:
+            to = str(_name_if_put_back(self._plan, video))
         if why is None:
             colour = "$warning" if video.status is EntryStatus.NAME_TAKEN else "$accent"
         elif video.status is EntryStatus.READY:
@@ -224,6 +235,16 @@ class PreviewStage(TitleListStage):
             f"[$tr-dim]to[/]    [{colour}]{escape(fit_path(to, width - len(note)))}[/]"
             f"[$tr-dim]{escape(note)}[/]",
         )
+
+
+def _name_if_put_back(plan: Plan, video: PlanEntry) -> Path | None:
+    """The name the left out ``video`` would get if it were put back now, or its wanted
+    name when it would get none (Name taken ``skip``) or the disk cannot be tested."""
+    try:
+        back = derive_plan(plan, PutBack(video))
+    except OSError:
+        return video.wanted
+    return back.entries[plan.entries.index(video)].destination or video.wanted
 
 
 def fit_path(text: str, width: int) -> str:

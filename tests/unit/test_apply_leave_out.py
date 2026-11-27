@@ -63,7 +63,7 @@ def _contents(folder: Path) -> dict[str, bytes]:
 
 def _left_out_pilot(plan: Plan) -> Plan:
     pilot = next(v for v in plan.videos if v.episode == 1)
-    return derive_plan(plan, LeaveOut(pilot.source))
+    return derive_plan(plan, LeaveOut(pilot))
 
 
 def test_apply_never_touches_a_left_out_video_or_its_two_sidecars(tmp_path: Path) -> None:
@@ -121,7 +121,7 @@ def test_a_title_is_left_out_only_when_every_file_of_it_is(tmp_path: Path) -> No
     plan = _plan(_show(tmp_path))
     one_out = _left_out_pilot(plan)
     second = next(v for v in plan.videos if v.episode == 2)
-    both_out = derive_plan(one_out, LeaveOut(second.source))
+    both_out = derive_plan(one_out, LeaveOut(second))
 
     assert [row.status for row in title_rows(one_out)] == [EntryStatus.READY]
     assert [row.status for row in title_rows(both_out)] == [EntryStatus.LEFT_OUT]
@@ -133,6 +133,6 @@ def test_a_title_with_a_file_of_no_match_says_no_match_before_left_out(tmp_path:
     plan = _plan(folder)
     for episode in (1, 2):
         video = next(v for v in plan.videos if v.episode == episode)
-        plan = derive_plan(plan, LeaveOut(video.source))
+        plan = derive_plan(plan, LeaveOut(video))
 
     assert [row.status for row in title_rows(plan)] == [EntryStatus.NO_MATCH]

@@ -458,6 +458,8 @@ def _claim_names(entries: Sequence[PlanEntry], options: PlanOptions) -> tuple[Pl
         if not entry.is_sidecar:
             continue
         assert entry.video is not None
+        # A Sidecar's ``video`` is its video entry's own ``source``, copied when the
+        # Plan was built, so the key is the Plan's record, not a file on disk.
         owner = named[entry.video]
         if owner.destination is None:
             named[entry.source] = replace(entry, destination=None, status=owner.status)
@@ -490,16 +492,16 @@ def _plan_of(
 
 @dataclass(frozen=True, slots=True)
 class LeaveOut:
-    """Leave the video at ``video`` out of the Plan; its Sidecars follow."""
+    """Leave ``video``, a video entry of the Plan, out of it; its Sidecars follow."""
 
-    video: Path
+    video: PlanEntry
 
 
 @dataclass(frozen=True, slots=True)
 class PutBack:
-    """Put the left out video at ``video`` back in the Plan, with its Sidecars."""
+    """Put ``video``, a left out video entry of the Plan, back in it, with its Sidecars."""
 
-    video: Path
+    video: PlanEntry
 
 
 PlanChange = LeaveOut | PutBack
@@ -513,38 +515,32 @@ def derive_plan(plan: Plan, change: PlanChange) -> Plan:
     source-path order, as a fresh build would: each wanted path is tested on disk
     again, a name that only a left out file had claimed is free for the next entry,
     and a video put back gets the status a fresh Plan gives it. No Provider is asked.
+    The change names its entry of ``plan`` itself, so no path is resolved to find it.
 
     Raises:
-        ValueError: ``change`` names a file that is not a video of ``plan``, a video
-            that cannot be left out (no match, not recognised, already left out), or
-            for :class:`PutBack` a video that is not left out.
+        ValueError: ``change`` names an entry that is not in ``plan``, a Sidecar, a
+            video that cannot be left out (no match, not recognised, already left
+            out), or for :class:`PutBack` a video that is not left out.
+        OSError: testing a wanted path on disk failed.
     """
-    video = _video_of(plan, change.video)
+    video = change.video
+    if video not in plan.entries:
+        msg = f"{video.source} is not in the Plan."
+        raise ValueError(msg)
+    if video.is_sidecar:
+        msg = f"{video.source} cannot be left out: it is a Sidecar, which follows its video."
+        raise ValueError(msg)
     if isinstance(change, LeaveOut):
         if video.wanted is None or video.status is EntryStatus.LEFT_OUT:
-            msg = f"{change.video} cannot be left out: it has the status {video.status.value}."
+            msg = f"{video.source} cannot be left out: it has the status {video.status.value}."
             raise ValueError(msg)
         status = EntryStatus.LEFT_OUT
     else:
         if video.status is not EntryStatus.LEFT_OUT:
-            msg = f"{change.video} is not left out."
+            msg = f"{video.source} is not left out."
             raise ValueError(msg)
         status = EntryStatus.READY  # worked out again when the names are claimed
     entries = tuple(
-        replace(entry, status=status) if entry.source == video.source else entry
-        for entry in plan.entries
+        replace(entry, status=status) if entry == video else entry for entry in plan.entries
     )
     return _plan_of(plan.options, plan.titles, _claim_names(entries, plan.options))
-
-
-def _video_of(plan: Plan, source: Path) -> PlanEntry:
-    """The video of ``plan`` at ``source``."""
-    key = path_key(source)
-    for entry in plan.entries:
-        if path_key(entry.source) == key:
-            if entry.is_sidecar:
-                msg = f"{source} cannot be left out: it is a Sidecar, which follows its video."
-                raise ValueError(msg)
-            return entry
-    msg = f"{source} is not in the Plan."
-    raise ValueError(msg)

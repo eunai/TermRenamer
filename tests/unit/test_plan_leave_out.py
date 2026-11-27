@@ -6,7 +6,8 @@ Real temporary folders and a stand-in Provider, through :func:`plan_queue` and
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import sys
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import pytest
@@ -86,7 +87,7 @@ def test_a_video_left_out_has_no_destination_and_its_sidecars_follow(tmp_path: P
     plan = plan_queue([tmp_path], _options(NameTakenPolicy.SUFFIX), _show_name()).plan
     pilot = next(v for v in plan.videos if v.episode == 1)
 
-    derived = derive_plan(plan, LeaveOut(pilot.source))
+    derived = derive_plan(plan, LeaveOut(pilot))
 
     second = "Show Name - S01E02 - Second.mkv"
     assert _summary(derived) == [
@@ -108,7 +109,8 @@ def test_deriving_a_plan_makes_no_provider_lookup(tmp_path: Path) -> None:
     lookups = list(provider.lookups)
     [video] = plan.videos
 
-    derive_plan(derive_plan(plan, LeaveOut(video.source)), PutBack(video.source))
+    left_out = derive_plan(plan, LeaveOut(video))
+    derive_plan(left_out, PutBack(left_out.videos[0]))
 
     assert provider.lookups == lookups
 
@@ -125,7 +127,7 @@ def test_under_suffix_a_name_only_the_left_out_file_had_claimed_is_free_for_the_
         ("Disc B", "Show.Name.S01E01.srt", f"{PILOT} (1).srt", EntryStatus.READY),
     ]
 
-    derived = derive_plan(plan, LeaveOut(_video(plan, "Disc A").source))
+    derived = derive_plan(plan, LeaveOut(_video(plan, "Disc A")))
 
     assert _summary(derived) == [
         ("Disc A", "Show.Name.S01E01.mkv", None, EntryStatus.LEFT_OUT),
@@ -147,7 +149,7 @@ def test_under_skip_a_name_only_the_left_out_file_had_claimed_is_free_for_the_ne
         ("Disc B", "Show.Name.S01E01.srt", None, EntryStatus.NAME_TAKEN),
     ]
 
-    derived = derive_plan(plan, LeaveOut(_video(plan, "Disc A").source))
+    derived = derive_plan(plan, LeaveOut(_video(plan, "Disc A")))
 
     assert _summary(derived)[2:] == [
         ("Disc B", "Show.Name.S01E01.mkv", f"{PILOT}.mkv", EntryStatus.READY),
@@ -163,10 +165,8 @@ def test_a_video_put_back_has_the_statuses_a_fresh_plan_gives(
     library = tmp_path / "Library"
     queue = _two_discs(tmp_path)
     plan = plan_queue(queue, _options(policy, library=library), _show_name()).plan
-    video = _video(plan, disc).source
-
-    left_out = derive_plan(plan, LeaveOut(video))
-    put_back = derive_plan(left_out, PutBack(video))
+    left_out = derive_plan(plan, LeaveOut(_video(plan, disc)))
+    put_back = derive_plan(left_out, PutBack(_video(left_out, disc)))
 
     fresh = plan_queue(queue, _options(policy, library=library), _show_name()).plan
     assert put_back.entries == fresh.entries
@@ -182,7 +182,7 @@ def test_deriving_tests_each_wanted_path_on_disk_again(tmp_path: Path) -> None:
     (library / "Show Name").mkdir(parents=True)
     (library / "Show Name" / f"{PILOT}.mkv").write_bytes(b"arrived")
 
-    derived = derive_plan(plan, LeaveOut(_video(plan, "Disc B").source))
+    derived = derive_plan(plan, LeaveOut(_video(plan, "Disc B")))
 
     assert _summary(derived)[:2] == [
         ("Disc A", "Show.Name.S01E01.mkv", f"{PILOT} (1).mkv", EntryStatus.NAME_TAKEN),
@@ -197,10 +197,10 @@ def test_a_video_skipped_for_a_taken_name_can_be_left_out_and_put_back(tmp_path:
     skipped = _video(plan, "Disc B")
     assert skipped.skipped_for_name_taken
 
-    left_out = derive_plan(plan, LeaveOut(skipped.source))
+    left_out = derive_plan(plan, LeaveOut(skipped))
     assert _video(left_out, "Disc B").status is EntryStatus.LEFT_OUT
 
-    assert derive_plan(left_out, PutBack(skipped.source)) == plan
+    assert derive_plan(left_out, PutBack(_video(left_out, "Disc B"))) == plan
 
 
 def test_no_match_and_not_recognised_files_cannot_be_left_out(tmp_path: Path) -> None:
@@ -213,7 +213,7 @@ def test_no_match_and_not_recognised_files_cannot_be_left_out(tmp_path: Path) ->
 
     for video in plan.videos:
         with pytest.raises(ValueError, match="cannot be left out"):
-            derive_plan(plan, LeaveOut(video.source))
+            derive_plan(plan, LeaveOut(video))
 
 
 def test_a_sidecar_cannot_be_left_out_on_its_own_and_only_a_left_out_video_is_put_back(
@@ -226,8 +226,28 @@ def test_a_sidecar_cannot_be_left_out_on_its_own_and_only_a_left_out_video_is_pu
     assert sidecar.is_sidecar
 
     with pytest.raises(ValueError, match="cannot be left out"):
-        derive_plan(plan, LeaveOut(sidecar.source))
+        derive_plan(plan, LeaveOut(sidecar))
     with pytest.raises(ValueError, match="is not left out"):
-        derive_plan(plan, PutBack(video.source))
+        derive_plan(plan, PutBack(video))
     with pytest.raises(ValueError, match="not in the Plan"):
-        derive_plan(plan, LeaveOut(tmp_path / "elsewhere.mkv"))
+        derive_plan(plan, LeaveOut(replace(video, source=tmp_path / "elsewhere.mkv")))
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symbolic links need privileges on Windows")
+def test_leave_out_changes_the_entry_named_even_when_its_folder_now_points_elsewhere(
+    tmp_path: Path,
+) -> None:
+    library = tmp_path / "Library"
+    plan = plan_queue(
+        _two_discs(tmp_path), _options(NameTakenPolicy.SUFFIX, library=library), _show_name()
+    ).plan
+    # After planning, Disc B is swapped for a link to Disc A.
+    (tmp_path / "Disc B").rename(tmp_path / "Disc B moved")
+    (tmp_path / "Disc B").symlink_to(tmp_path / "Disc A", target_is_directory=True)
+
+    derived = derive_plan(plan, LeaveOut(_video(plan, "Disc B")))
+
+    assert [(e.source.parent.name, e.status) for e in derived.videos] == [
+        ("Disc A", EntryStatus.READY),
+        ("Disc B", EntryStatus.LEFT_OUT),
+    ]

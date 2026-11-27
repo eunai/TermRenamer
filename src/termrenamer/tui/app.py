@@ -370,7 +370,8 @@ class TermRenamerApp(App[None]):
         """Leave the selected video out of the Plan with its Sidecars, or put it back.
 
         Either change derives a new Plan, which the Preview shows with the same file
-        selected. A file Apply does not rename anyway changes nothing.
+        selected. A file Apply does not rename anyway changes nothing, and so does a
+        failure to test the new names on disk: the Plan shown stays.
         """
         plan = self.plan
         preview = self.query_one(PreviewStage)
@@ -386,11 +387,16 @@ class TermRenamerApp(App[None]):
             return
         change: PlanChange
         if video.status is EntryStatus.LEFT_OUT:
-            change, said = PutBack(video.source), "Put back in the Plan."
+            change, said = PutBack(video), "Put back in the Plan."
         else:
-            change = LeaveOut(video.source)
+            change = LeaveOut(video)
             said = "Left out of the Plan: Apply does not touch this file."
-        self.plan = derive_plan(plan, change)
+        try:
+            derived = derive_plan(plan, change)
+        except OSError as exc:
+            self.say(f"The new names could not be checked on disk: {exc}", MessageKind.ERROR)
+            return
+        self.plan = derived
         preview.show_plan(self.plan, keep_selection=True)
         self.say(said)
 

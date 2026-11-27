@@ -5,8 +5,13 @@ Driven by keys, read off the screen and the disk.
 
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
 
+import pytest
+
+from termrenamer.core.models import EntryStatus
 from termrenamer.tui.dialogs import ApplyConfirm
 from termrenamer.tui.stage import Stage
 
@@ -19,6 +24,7 @@ from .screen_driver import (
     press,
     queue,
     screen_text,
+    settings,
     text_of,
     tv_backups,
 )
@@ -181,3 +187,63 @@ async def test_at_90_by_28_the_arrows_still_select_when_the_details_scroll(tmp_p
 
     assert second_file.endswith("Harbour Lights S01E02.mkv")
     assert heading[0] == "Night Ferry"
+
+
+async def test_at_90_by_28_the_put_back_button_stays_on_screen_and_works(tmp_path: Path) -> None:
+    app = make_app()
+    async with app.run_test(size=(90, 28)) as pilot:
+        await queue(pilot, tv_backups(tmp_path))
+        await build(pilot)
+        await press(pilot, "x")
+        built_status = app.plan.videos[0].status if app.plan else None
+        await pilot.click("#leave-out")
+        await pilot.pause()
+        text = screen_text(app)
+
+    assert built_status is EntryStatus.LEFT_OUT
+    assert "Put back in the Plan." in text
+    assert app.plan is not None and app.plan.videos[0].status is EntryStatus.READY
+
+
+async def test_the_footer_strikes_the_name_the_file_would_get_if_put_back(tmp_path: Path) -> None:
+    folder = (tmp_path / "Film Backups").resolve()
+    folder.mkdir()
+    # The file already at the name sorts first, so the other gets the number.
+    (folder / "Metropolis (1927).mkv").write_bytes(b"x")
+    (folder / "Metropolis 1927.mkv").write_bytes(b"y")
+    app = make_app()
+    async with app.run_test(size=WIDE) as pilot:
+        await press(pilot, "m")
+        await queue(pilot, folder)
+        await build(pilot)
+        await press(pilot, "right")
+        before = text_of(app, "#stage-lines").splitlines()[1]
+        await press(pilot, "x")
+        after = text_of(app, "#stage-lines").splitlines()[1]
+
+    numbered = str(folder / "Metropolis (1927) (1).mkv")
+    assert before.split(maxsplit=1)[1].startswith(numbered)
+    assert after.split(maxsplit=1) == ["to", f"{numbered} · left out, so Apply does not touch it"]
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32" or os.geteuid() == 0,
+    reason="needs a folder the test cannot enter (POSIX permissions, not root)",
+)
+async def test_x_keeps_the_plan_when_the_disk_cannot_be_checked(tmp_path: Path) -> None:
+    library = tmp_path / "Library"
+    library.mkdir()
+    app = make_app(loaded=settings(folder_rename=True, tv_root=library))
+    async with app.run_test(size=SIZE) as pilot:
+        await queue(pilot, tv_backups(tmp_path))
+        await build(pilot)
+        built = app.plan
+        library.chmod(0)
+        try:
+            await press(pilot, "x")
+            text = screen_text(app)
+        finally:
+            library.chmod(0o755)
+
+    assert app.plan is built
+    assert "The new names could not be checked on disk:" in text
