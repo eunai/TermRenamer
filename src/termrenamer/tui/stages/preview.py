@@ -19,7 +19,7 @@ from termrenamer.tui.stages.title_list_stage import TitleListStage
 from termrenamer.tui.widgets.action_button import ActionButton
 from termrenamer.tui.widgets.title_details import TitleDetails
 from termrenamer.tui.widgets.title_list import ListRow, StatusWord, TitleList
-from termrenamer.tui.words import match_name, plural, why_not_renamed
+from termrenamer.tui.words import agree, match_name, plural, why_not_renamed
 
 _LABEL_WIDTH = 6
 """``from`` and ``to`` and the spaces after them, in the footer."""
@@ -160,7 +160,7 @@ class PreviewStage(TitleListStage):
     def action_next_file(self) -> None:
         row = self.selected_row
         if row is not None:
-            self._file = min(self._file + 1, len(row.files) - 1)
+            self._file = max(0, min(self._file + 1, len(row.files) - 1))
         self._show_details()
 
     # --------------------------------------------------------------- footer
@@ -188,7 +188,7 @@ class PreviewStage(TitleListStage):
         elif video.status is EntryStatus.READY:
             colour = "$tr-dim"
         else:
-            colour = f"${StatusWord(video.status.value).colour}"
+            colour = StatusWord(video.status).style
         return (
             f"[$tr-dim]from[/]  [$foreground]{escape(fit_path(str(video.source), width))}[/]",
             f"[$tr-dim]to[/]    [{colour}]{escape(fit_path(to, width - len(note)))}[/]"
@@ -210,27 +210,28 @@ def _sidecar_notes(sidecars: tuple[PlanEntry, ...], *, moves: bool) -> list[str]
     notes = []
     if moving:
         n = len(moving)
-        notes.append(f"{plural(n, 'Sidecar')} {'moves' if n == 1 else 'move'} with it")
+        notes.append(f"{plural(n, 'Sidecar')} {agree(n, 'moves', 'move')} with it")
     if staying:
-        notes.append(f"{plural(staying, 'Sidecar')} {'stays' if staying == 1 else 'stay'}")
+        notes.append(f"{plural(staying, 'Sidecar')} {agree(staying, 'stays', 'stay')}")
     return notes
 
 
 def _summary(counts: PlanCounts) -> str:
-    """The Plan's videos counted by status, on three lines to fit the column."""
+    """The Plan's videos counted by status, on three lines to fit the column. Left out
+    is dim until it has a status word of its own (#27)."""
 
-    def part(n: int, word: str, colour: str) -> str:
-        return f"[{colour}]{n} {word}[/]"
+    def part(n: int, word: StatusWord) -> str:
+        return f"[{word.style}]{n} {word.value}[/]"
 
     dot = " [$tr-dim]·[/] "
     return "\n".join(
         (
-            part(counts.ready, "ready", "$success")
+            part(counts.ready, StatusWord.READY)
             + dot
-            + part(counts.name_taken, "name taken", "$warning"),
-            part(counts.no_match, "no match", "$error")
+            + part(counts.name_taken, StatusWord.NAME_TAKEN),
+            part(counts.no_match, StatusWord.NO_MATCH)
             + dot
-            + part(counts.not_recognised, "not recognised", "$error"),
-            part(counts.left_out, "left out", "$tr-dim"),
+            + part(counts.not_recognised, StatusWord.NOT_RECOGNISED),
+            f"[$tr-dim]{counts.left_out} left out[/]",
         )
     )

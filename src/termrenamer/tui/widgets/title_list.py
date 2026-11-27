@@ -29,6 +29,11 @@ class StatusWord(StrEnum):
         """The theme variable the word is written in."""
         return _COLOURS[self]
 
+    @property
+    def style(self) -> str:
+        """The word's colour as Textual markup writes it, such as ``$success``."""
+        return f"${self.colour}"
+
 
 _COLOURS = {
     StatusWord.READY: "success",

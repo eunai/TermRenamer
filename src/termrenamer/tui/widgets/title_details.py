@@ -19,15 +19,12 @@ from termrenamer.tui.widgets.title_list import StatusWord
 from termrenamer.tui.words import match_name, plural
 
 CELLS_WIDTH = 34
-"""The columns the cells may take before they wrap: the details column's inner width."""
+"""The columns the cells may take before they wrap: the inner width of the Preview's
+details column (its CSS width 39, less its border and padding, in `stages/preview.py`)."""
 
 _CELL = "██"
 _MARK = "▔▔"
 _GROUP_GAP = 2
-
-
-def _style(status_value: str) -> str:
-    return f"${StatusWord(status_value).colour}"
 
 
 class TitleDetails(Vertical):
@@ -62,12 +59,12 @@ class TitleDetails(Vertical):
         name = row.name if row.title is None else match_name(row.title, mode)
         heading.update(
             f"[b $foreground]{escape(name)}[/]\n"
-            f"[b {_style(row.status.value)}]{row.status.value}[/] "
+            f"[b {StatusWord(row.status).style}]{row.status.value}[/] "
             f"[$tr-dim]· {escape(_counts(row, mode))}[/]"
         )
-        statuses = Counter(entry.status.value for entry in row.files)
+        statuses = Counter(StatusWord(entry.status) for entry in row.files)
         tally.update(
-            " [$tr-dim]·[/] ".join(f"[{_style(s)}]{n} {s}[/]" for s, n in statuses.items())
+            " [$tr-dim]·[/] ".join(f"[{s.style}]{n} {s.value}[/]" for s, n in statuses.items())
             if len(statuses) > 1
             else ""
         )
@@ -122,7 +119,7 @@ def _cells(row: TitleRow, mode: ScanMode, selected: int) -> str:
             put(" " * width, f"[$tr-dim]{label}[/] ", " " * width, width)
         elif x + len(_CELL) > CELLS_WIDTH:
             new_line(4 if mode is ScanMode.TV else 0)
-        style = _style(entry.status.value)
+        style = StatusWord(entry.status).style
         cell = f"[{style}]{_CELL}[/] "
         put(cell, cell, f"[$accent]{_MARK}[/] " if index == selected else blank, len(blank))
     lines.extend(current)

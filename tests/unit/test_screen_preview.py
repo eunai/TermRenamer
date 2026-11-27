@@ -272,3 +272,22 @@ async def test_the_apply_confirm_says_when_nothing_is_skipped(tmp_path: Path) ->
         "",
         "Nothing has been renamed yet.",
     ]
+
+
+async def test_a_rename_that_changes_only_letter_case_is_counted_as_a_rename(
+    tmp_path: Path,
+) -> None:
+    folder = tmp_path / "Backups"
+    folder.mkdir()
+    folder = folder.resolve()
+    (folder / "harbour lights - S01E01 - The Tide Comes In.mkv").write_bytes(b"x")
+    app = make_app()
+    async with app.run_test(size=WIDE) as pilot:
+        await queue(pilot, folder)
+        await build(pilot)
+        footer = lines_of(app, "#stage-lines")
+        await press(pilot, "enter")
+        lines = lines_of(app, "#confirm-lines")
+        await press(pilot, "n")
+    assert footer[1] == f"to {folder / 'Harbour Lights - S01E01 - The Tide Comes In.mkv'}"
+    assert lines[:2] == ["Rename 1 video in its own folder.", "Skip none."]

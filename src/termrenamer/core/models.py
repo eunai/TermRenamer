@@ -192,6 +192,12 @@ class PlanEntry:
     def is_sidecar(self) -> bool:
         return self.video is not None
 
+    @property
+    def has_its_name(self) -> bool:
+        """Whether the destination is the source, letter case included: Apply leaves
+        the file where it is and reports it as unchanged."""
+        return self.destination is not None and str(self.destination) == str(self.source)
+
 
 @dataclass(frozen=True, slots=True)
 class Plan:

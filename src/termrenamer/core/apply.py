@@ -142,7 +142,7 @@ def _apply_entry(entry: PlanEntry) -> ApplyResult:
         or current_fp.mtime_ns != entry.fingerprint.mtime_ns
     ):
         return result(ApplyStatus.SKIP, "stale: source changed since plan")
-    if str(dest) == str(source):
+    if entry.has_its_name:
         return result(ApplyStatus.UNCHANGED, "already has its name")
     if name_is_taken(dest, source=source):
         return result(ApplyStatus.SKIP, "destination exists at apply time")

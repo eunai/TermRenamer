@@ -20,6 +20,11 @@ def noun(n: int, word: str) -> str:
     return word if n == 1 else f"{word}s"
 
 
+def agree(n: int, one: str, many: str) -> str:
+    """``one`` when ``n`` is 1, else ``many``: ``moves`` or ``move``, ``its`` or ``their``."""
+    return one if n == 1 else many
+
+
 def plural(n: int, word: str) -> str:
     """``n`` and ``word``, with an ``s`` unless ``n`` is 1: ``1 Title``, ``2 Titles``."""
     return f"{n} {noun(n, word)}"
@@ -63,7 +68,7 @@ def why_not_renamed(entry: PlanEntry) -> str | None:
         if entry.title is not None and entry.title.match is not None:
             return "no match: the episode was not found"
         return f"no match: the {'film' if entry.season is None else 'show'} was not found"
-    if entry.destination == entry.source:
+    if entry.has_its_name:
         return "already has its name"
     return None
 

@@ -19,7 +19,7 @@ from termrenamer.core.models import ApplyResult, ApplyStatus, Plan, PlanEntry
 from termrenamer.core.title_rows import AppliedCounts
 from termrenamer.tui.stages.base import StageView
 from termrenamer.tui.widgets.action_button import ActionButton
-from termrenamer.tui.words import folder_text, why_not_renamed
+from termrenamer.tui.words import agree, folder_text, why_not_renamed
 
 _APPLIED = frozenset({ApplyStatus.RENAMED, ApplyStatus.UNCHANGED})
 
@@ -100,7 +100,7 @@ class AppliedStage(StageView):
             f"[{'$error' if counts.failed else '$tr-dim'}]{counts.failed} failed[/]"
         )
         if counts.unchanged:
-            had = "had its name" if counts.unchanged == 1 else "had their names"
+            had = agree(counts.unchanged, "had its name", "had their names")
             line += f"\n[$tr-dim]{counts.unchanged} already {had}[/]"
         self.query_one("#applied-counts", Static).update(line)
         self.query_one("#applied-title", Static).update(
@@ -145,7 +145,7 @@ def _lines_for(entry: PlanEntry, result: ApplyResult) -> str:
         # A skip for the entry's status gives the Preview's reason; a check at Apply
         # time (a changed source, a taken destination) gives Apply's.
         why = why_not_renamed(entry)
-        planned = entry.destination != entry.source
+        planned = not entry.has_its_name
         reason = why if why is not None and planned else result.reason
         colour = "$warning"
     if entry.is_sidecar:

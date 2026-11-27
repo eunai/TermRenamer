@@ -77,7 +77,9 @@ class PlanCounts:
             titles=len(plan.titles),
             videos=len(videos),
             to_rename=sum(
-                1 for v in videos if v.status in _RENAMED and v.destination not in (None, v.source)
+                1
+                for v in videos
+                if v.status in _RENAMED and v.destination is not None and not v.has_its_name
             ),
             ready=sum(1 for v in videos if v.status is EntryStatus.READY),
             name_taken=sum(1 for v in videos if v.status is EntryStatus.NAME_TAKEN),

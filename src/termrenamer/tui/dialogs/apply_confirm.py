@@ -18,7 +18,7 @@ from textual.widgets import Static
 from termrenamer.core.models import EntryStatus, Plan
 from termrenamer.core.title_rows import PlanCounts
 from termrenamer.tui.widgets.action_button import ActionButton
-from termrenamer.tui.words import folder_text, plural, why_not_renamed
+from termrenamer.tui.words import agree, folder_text, plural, why_not_renamed
 
 
 def confirm_lines(plan: Plan) -> tuple[str, ...]:
@@ -30,10 +30,10 @@ def confirm_lines(plan: Plan) -> tuple[str, ...]:
     if root is not None:
         where = f"under {folder_text(root)}"
     else:
-        where = "in its own folder" if counts.to_rename == 1 else "in their own folders"
+        where = agree(counts.to_rename, "in its own folder", "in their own folders")
     staying = [v for v in plan.videos if why_not_renamed(v) is not None]
-    named = [v for v in staying if v.destination == v.source]
-    skipped = Counter(v.status for v in staying if v.destination != v.source)
+    named = [v for v in staying if v.has_its_name]
+    skipped = Counter(v.status for v in staying if not v.has_its_name)
     if skipped:
         reasons = " · ".join(f"{skipped[s]} {s.value}" for s in EntryStatus if skipped[s])
         skip = f"Skip {plural(skipped.total(), 'video')}: {reasons}"
@@ -44,7 +44,7 @@ def confirm_lines(plan: Plan) -> tuple[str, ...]:
         f"[$foreground]{skip}[/]",
     ]
     if named:
-        that = "that already has its name" if len(named) == 1 else "that already have their names"
+        that = agree(len(named), "that already has its name", "that already have their names")
         lines.append(f"[$tr-dim]Leave {plural(len(named), 'video')} {that}.[/]")
     lines += ["", "[$warning]Nothing has been renamed yet.[/]"]
     return tuple(lines)
