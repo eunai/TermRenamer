@@ -53,6 +53,11 @@ class FolderMoveFailed(OSError):
     rest stays in the source folder."""
 
 
+class NotAsRecorded(OSError):
+    """The file at the source is not the one recorded: its size or modification time
+    differs, or it is a folder; nothing was changed."""
+
+
 @dataclass
 class Changes:
     """Every change one Apply made, each recorded when the call that made it succeeded."""
@@ -94,7 +99,9 @@ class Changes:
         self.moves[-1] = Move(source=source, destination=dest, fingerprint=after)
 
 
-def move_no_replace(source: Path, dest: Path, changes: Changes) -> None:
+def move_no_replace(
+    source: Path, dest: Path, changes: Changes, *, expected: PlanFingerprint | None = None
+) -> None:
     """Move ``source`` (a file, a symbolic link moved as itself, or a folder) to ``dest``
     without ever replacing anything there, and record each change in ``changes``.
 
@@ -109,21 +116,30 @@ def move_no_replace(source: Path, dest: Path, changes: Changes) -> None:
     - A folder, on every system: ``dest`` is made, then each child is moved by these
       rules in name order, then the emptied source folder is removed.
 
+    With ``expected`` (Undo's moves, each of a file or a link), the source must be no
+    folder and have the recorded size and modification time, read with ``lstat`` as the
+    last call before the rename or the hard link.
+
     Apply cannot defend a name it has claimed against another program that deletes or
     writes over it during the same Apply.
 
     Raises:
         FileExistsError: something is at ``dest``; nothing was changed.
+        NotAsRecorded: the source is not as ``expected``; nothing was changed.
         FolderMoveFailed: a child of a folder could not be moved.
         OSError: the move failed; the source is where it was.
     """
     before = _fingerprint(source)
-    if is_case_only_rename(source, dest):  # the last call before the rename
+    if is_case_only_rename(source, dest):
+        if expected is not None:
+            _check(source, os.lstat(source), expected)  # the last call before the rename
         _rename_case(source, dest, before, changes)
-    elif is_folder(source, os.lstat(source)):
+    elif is_folder(source, st := os.lstat(source)):
+        if expected is not None:
+            _check(source, st, expected)
         _move_folder(source, dest, changes)
     else:
-        _move_file(source, dest, changes)
+        _move_file(source, dest, changes, expected)
 
 
 def is_link(path: Path, st: os.stat_result) -> bool:
@@ -155,6 +171,16 @@ def leave_folder(folder: Path) -> None:
             os.chdir(folder.parent)
         except OSError as exc:
             _LOG.warning("Could not leave %s before removing it: %s", folder, exc)
+
+
+def _check(source: Path, st: os.stat_result, expected: PlanFingerprint) -> None:
+    """Raise :class:`NotAsRecorded` unless ``st`` (the source's ``lstat``) is no folder and
+    has ``expected``'s size and modification time."""
+    if is_folder(source, st):
+        raise NotAsRecorded(errno.EISDIR, "a folder is there now", str(source))
+    if (st.st_size, st.st_mtime_ns) != (expected.size, expected.mtime_ns):
+        msg = "its size or modification time changed"
+        raise NotAsRecorded(errno.EIO, msg, str(source))
 
 
 def _fingerprint(path: Path, st: os.stat_result | None = None) -> PlanFingerprint:
@@ -202,9 +228,14 @@ def _move_folder(source: Path, dest: Path, changes: Changes) -> None:
     changes.folders_removed.append(source)
 
 
-def _move_file(source: Path, dest: Path, changes: Changes) -> None:
-    """Move a file, a symbolic link or a junction as itself."""
+def _move_file(
+    source: Path, dest: Path, changes: Changes, expected: PlanFingerprint | None = None
+) -> None:
+    """Move a file, a symbolic link or a junction as itself; with ``expected``, only while
+    it is as recorded (:func:`_check`, the last call before the rename or hard link)."""
     st = os.lstat(source)
+    if expected is not None:
+        _check(source, st, expected)
     before = _fingerprint(source, st)
     if os.name == "nt":
         try:

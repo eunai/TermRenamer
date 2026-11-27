@@ -327,12 +327,13 @@ class PosterPanel(Vertical):
 
 def keep_clear_of_posters(dialog: Widget) -> None:
     """Keep ``dialog`` right of the poster panel while the panel shows on the main screen
-    below it, or let it take its stylesheet's place while it does not. A dialog calls
-    this when it mounts and on every resize; its stylesheet gives it no left margin."""
+    below it (on the Stage shown there), or let it take its stylesheet's place while it
+    does not. A dialog calls this when it mounts and on every resize; its stylesheet
+    gives it no left margin."""
     app = dialog.app
     panels = app.screen_stack[0].query(PosterPanel)
     dialog.styles.clear_rule("margin")
-    if any(panel.display for panel in panels):
+    if any(all(node.display for node in panel.ancestors_with_self) for panel in panels):
         margin = dialog.styles.margin
         dialog.styles.margin = (margin.top, margin.right, margin.bottom, PANEL_RIGHT)
         room = app.size.width - PANEL_RIGHT - margin.right

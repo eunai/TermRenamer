@@ -15,7 +15,7 @@ from textual.widgets import Switch
 
 from termrenamer.persistence.posters import PosterRequest
 from termrenamer.tui.app import MIN_POSTER_SIZE, TermRenamerApp
-from termrenamer.tui.dialogs import ApplyConfirm
+from termrenamer.tui.dialogs import ApplyConfirm, UndoConfirm
 from termrenamer.tui.dialogs.match_picker import MatchPicker
 from termrenamer.tui.poster_support import NO_IMAGES, NOT_INSTALLED, PosterSupport
 from termrenamer.tui.stage import Stage
@@ -691,3 +691,27 @@ async def test_the_panel_draws_a_name_as_written(tmp_path: Path, name: str) -> N
     assert name.strip() in words
     assert "no poster" in words
     assert title == "TMDB"
+
+
+async def test_on_the_applied_stage_the_undo_confirm_keeps_its_own_place(tmp_path: Path) -> None:
+    # No panel shows on the Applied Stage, so a confirm there is not moved right of one.
+    places = []
+    for show in (True, False):
+        parent = tmp_path / str(show)
+        parent.mkdir()
+        folder = tv_backups(parent)
+        app = make_app(
+            wiring(tv=tv_stand_in(), posters=ImageHost().store(tmp_path / f"p{show}")),
+            settings(show_posters=show, folder_rename=True, season_folders=True),
+            posters=POSTERS_AVAILABLE,
+        )
+        async with app.run_test(size=SMALLEST) as pilot:
+            await queue(pilot, folder)
+            await build(pilot)
+            await press(pilot, "enter", "y")
+            await app.workers.wait_for_complete()
+            await press(pilot, "u")
+            await pilot.pause()
+            assert isinstance(app.screen, UndoConfirm)
+            places.append(app.screen.query_one("#confirm-dialog").region)
+    assert places[0] == places[1]

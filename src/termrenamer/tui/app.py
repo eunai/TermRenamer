@@ -1,11 +1,11 @@
 """The Spotlight screen: a header, the Stages row, the current Stage's view and the footer.
 
 The app owns the batch's flow: the queue, the session's settings owner, the Plan and
-the Apply outcome. It builds the Plan and applies it off the screen's thread, and it
-moves between the four Stages. Each Stage's view lives in its own module under
-:mod:`termrenamer.tui.stages`, each dialog under :mod:`termrenamer.tui.dialogs` and
-each view under :mod:`termrenamer.tui.views`. Every key goes through the key table in
-:mod:`termrenamer.tui.keys`.
+the Apply outcome, which it keeps in memory only. It builds the Plan, applies it and
+undoes the Apply off the screen's thread, and it moves between the four Stages. Each
+Stage's view lives in its own module under :mod:`termrenamer.tui.stages`, each dialog
+under :mod:`termrenamer.tui.dialogs` and each view under :mod:`termrenamer.tui.views`.
+Every key goes through the key table in :mod:`termrenamer.tui.keys`.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ from termrenamer.app_bootstrap import Settings, ThemeName
 from termrenamer.core.apply import apply_plan
 from termrenamer.core.models import (
     ApplyOutcome,
+    ApplyStatus,
     Candidate,
     EntryStatus,
     Plan,
@@ -37,6 +38,7 @@ from termrenamer.core.models import (
     PlanOptions,
     ScanMode,
     Title,
+    UndoOutcome,
 )
 from termrenamer.core.planning import (
     NO_TV_MATCH_BY_HAND,
@@ -51,9 +53,10 @@ from termrenamer.core.planning import (
 )
 from termrenamer.core.progress import PlanEvent
 from termrenamer.core.queue import SourceQueue
+from termrenamer.core.undo import undo_apply
 from termrenamer.session_settings import SessionSettings, locked_message
 from termrenamer.tui import keys
-from termrenamer.tui.dialogs import ApplyConfirm, FilePicker, FolderPicker
+from termrenamer.tui.dialogs import ApplyConfirm, FilePicker, FolderPicker, UndoConfirm
 from termrenamer.tui.dialogs.match_picker import MatchPicker, Picked, candidate_text, picker_choices
 from termrenamer.tui.log_book import LogBook, LogBookHandler
 from termrenamer.tui.poster_support import PosterSource, PosterSupport
@@ -67,7 +70,7 @@ from termrenamer.tui.widgets.action_button import ActionButton
 from termrenamer.tui.widgets.footer import AppFooter, MessageKind
 from termrenamer.tui.widgets.header import AppHeader
 from termrenamer.tui.widgets.stages_row import StagesRow
-from termrenamer.tui.words import and_list, match_name, mode_label, noun, provider_name
+from termrenamer.tui.words import and_list, match_name, mode_label, noun, plural, provider_name
 from termrenamer.util.errors import ProviderError, ValidationError
 from termrenamer.wiring import PlanningWiring
 
@@ -88,6 +91,8 @@ _APPLY = "apply"
 """The worker that applies the Plan."""
 _PICK = "pick"
 """The worker that looks up a picked TV Match's episodes."""
+_UNDO = "undo"
+"""The worker that undoes the last Apply."""
 
 
 def _start_folder() -> Path:
@@ -187,8 +192,10 @@ class TermRenamerApp(App[None]):
         self.plan: Plan | None = None
         """The Plan the Preview shows, or ``None``."""
         self.outcome: ApplyOutcome | None = None
-        """What the last Apply did, while the Applied Stage shows it."""
+        """What the last Apply did, while the Applied Stage shows it and Undo has not
+        run; kept in memory only."""
         self._applying = False
+        self._undoing = False
         self._cancel: threading.Event | None = None
         self._build_worker: Worker[_BuildOutcome] | None = None
         """The running build's cancel signal and worker, or ``None`` while no build runs.
@@ -705,6 +712,9 @@ class TermRenamerApp(App[None]):
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         worker = event.worker
+        if worker.name == _UNDO:
+            self._undo_state_changed(event)
+            return
         if worker.name == _PICK:
             self._pick_worker_changed(event)
             return
@@ -743,11 +753,93 @@ class TermRenamerApp(App[None]):
     # -------------------------------------------------------------- Applied
 
     def action_new_batch(self) -> None:
+        if self._undoing:
+            self.say("Undo is putting the files back; wait for it to finish.", MessageKind.WARNING)
+            return
         self.queue.clear()
         self.outcome = None
         self.query_one(QueueStage).show_queue(())
         self._show_stage(Stage.QUEUE)
         self.say("Ready for a new batch.")
+
+    def on_applied_stage_undo_requested(self, _message: AppliedStage.UndoRequested) -> None:
+        """``u``: open the Undo confirm, when the last Apply has anything to put back."""
+        applied = self.query_one(AppliedStage)
+        if self._undoing or self.stage is not Stage.APPLIED:
+            return
+        if self.outcome is None or not applied.undo_offered:
+            self.say("Apply moved nothing, so there is nothing to undo.", MessageKind.DIM)
+            return
+        self.push_screen(UndoConfirm(self.outcome), self._undo_answered)
+
+    def _undo_answered(self, yes: bool | None) -> None:
+        outcome = self.outcome
+        if not yes or outcome is None or self.stage is not Stage.APPLIED:
+            self.say("The Apply is kept.", MessageKind.DIM)
+            return
+        # Offered once: from here this outcome is never undone again.
+        self.outcome = None
+        self.query_one(AppliedStage).offer_undo(False)
+        self._undoing = True
+        self.session_settings.lock()
+        self.say("Putting the files back…")
+        self._undo(outcome)
+
+    @work(thread=True, exclusive=True, group="batch", exit_on_error=False, name=_UNDO)
+    def _undo(self, outcome: ApplyOutcome) -> tuple[ApplyOutcome, UndoOutcome]:
+        return outcome, undo_apply(outcome)
+
+    def _undo_state_changed(self, event: Worker.StateChanged) -> None:
+        if event.state is WorkerState.SUCCESS and isinstance(event.worker.result, tuple):
+            self._undo_finished(*event.worker.result)
+        elif event.state in (WorkerState.ERROR, WorkerState.CANCELLED):
+            self._undoing = False
+            self.session_settings.unlock()
+            self.say(
+                f"Undo stopped: {event.worker.error}. Some files may be back already.",
+                MessageKind.ERROR,
+            )
+            self._refresh_chrome()
+
+    def _undo_finished(self, applied: ApplyOutcome, undone: UndoOutcome) -> None:
+        """Log each file put back and each left with its reason, then show the queue."""
+        self._undoing = False
+        self.session_settings.unlock()
+        for result in undone.results:
+            if result.status is ApplyStatus.RENAMED:
+                self._messages.info("Put back %s → %s", result.source, result.destination)
+            else:
+                self._messages.warning(
+                    "Left %s (its old place %s): %s",
+                    result.source,
+                    result.destination,
+                    result.reason,
+                )
+        for folder in undone.folders_made_again:
+            self._messages.info("Made again: %s", folder)
+        for folder in undone.emptied_folders_removed:
+            self._messages.info("Removed, as Undo left it empty: %s", folder)
+        for path in applied.files_left_behind:
+            self._messages.warning(
+                "Left to you: %s, a copy Apply made and could not remove; its source is "
+                "still at its old place",
+                path,
+            )
+        for path in undone.files_left_behind:
+            self._messages.warning(
+                "Left to you: %s, a copy Undo made and could not remove; the file is still "
+                "at its new place",
+                path,
+            )
+        self.query_one(QueueStage).show_queue(self.queue.sources)
+        self._show_stage(Stage.QUEUE)
+        put_back = f"Undo put {plural(undone.put_back, 'file')} back"
+        if undone.not_put_back:
+            self.say(
+                f"{put_back} and left {undone.not_put_back}: l shows why.", MessageKind.WARNING
+            )
+        else:
+            self.say(f"{put_back}. Nothing was left.")
 
     # ----------------------------------------------------- Mode and Provider
 
