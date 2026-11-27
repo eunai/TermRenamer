@@ -8,6 +8,7 @@ folders, to stat their files and to test the wanted names; nothing is renamed.
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -461,7 +462,11 @@ def _source_folders(folders: Iterable[Path]) -> tuple[SourceFolder, ...]:
         except OSError as exc:
             _LOG.warning("Cannot list %s for Stragglers: %s", folder, exc)
             children = []
-        is_folder = {child: child.is_dir(follow_symlinks=False) for child in children}
+        # A symbolic link or a junction is one child, a file: it is never looked inside.
+        is_folder = {
+            child: child.is_dir(follow_symlinks=False) and not os.path.isjunction(child)
+            for child in children
+        }
         recorded.append(
             SourceFolder(
                 path=folder,

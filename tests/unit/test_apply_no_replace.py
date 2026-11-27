@@ -265,20 +265,21 @@ def test_a_failed_copy_that_cannot_be_removed_is_listed_as_left_behind(
 def test_a_move_whose_new_place_cannot_be_read_is_still_recorded(
     show: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from termrenamer.core import moving
+
     plan = _plan(show)
     notes = show / "Disc 1" / "notes.txt"
     [dest] = [s.destination for s in plan.stragglers if s.source == notes]
     size = notes.stat().st_size
-    real_lstat = os.lstat
+    real = moving._fingerprint
 
-    def lstat(path: object, *args: object, **kwargs: object) -> os.stat_result:
-        if isinstance(path, (str, os.PathLike)) and os.fspath(path) == str(dest):
+    def fingerprint(path: Path, st: os.stat_result | None = None) -> object:
+        if path == dest and st is None:
             raise PermissionError(errno.EACCES, "Permission denied", str(dest))
-        return real_lstat(path, *args, **kwargs)  # type: ignore[arg-type]
+        return real(path, st)
 
-    with monkeypatch.context() as patch:
-        patch.setattr(os, "lstat", lstat)
-        outcome = apply_plan(plan, confirmed=True)
+    monkeypatch.setattr(moving, "_fingerprint", fingerprint)
+    outcome = apply_plan(plan, confirmed=True)
 
     assert _by_source(outcome.stragglers)[notes] == (ApplyStatus.RENAMED, "ok")
     [move] = [m for m in outcome.moves if m.source == notes]
@@ -384,3 +385,226 @@ def test_an_unexpected_error_stops_apply_and_the_outcome_so_far_is_returned(
     assert [m.source for m in outcome.moves] == [_video(show)]
     assert outcome.folders_removed == ()
     assert (show / "Disc 1" / "notes.txt").exists()
+
+
+def test_a_hard_link_in_the_same_folder_under_another_exact_name_is_taken(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _write(tmp_path / "show name.mkv", b"v")
+    dest = tmp_path / "Show Name.mkv"
+    real_listdir = os.listdir
+
+    def listdir(path: object = ".") -> list[str]:
+        names = real_listdir(path)  # type: ignore[arg-type]
+        if os.fspath(path) == str(tmp_path):  # type: ignore[call-overload]
+            # Two exact names in one folder: a separate hard link, as a case-sensitive
+            # filesystem can hold it.
+            return sorted({*names, source.name, dest.name})
+        return names
+
+    monkeypatch.setattr(os, "listdir", listdir)
+    changes = Changes()
+    with pytest.raises(FileExistsError):
+        move_no_replace(source, dest, changes)
+    monkeypatch.undo()
+
+    assert source.read_bytes() == b"v"
+    assert changes.moves == []
+
+
+def test_a_case_only_rename_whose_new_name_cannot_be_confirmed_fails_and_is_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _write(tmp_path / "show name.mkv", b"v")
+    dest = tmp_path / "Show Name.mkv"
+    real_listdir, real_rename = os.listdir, os.rename
+    renamed: list[bool] = []
+
+    def rename(src: object, dst: object) -> None:
+        real_rename(src, dst)  # type: ignore[arg-type]
+        renamed.append(True)
+
+    def listdir(path: object = ".") -> list[str]:
+        if renamed:
+            raise PermissionError(errno.EACCES, "Permission denied", os.fspath(path))  # type: ignore[call-overload]
+        return real_listdir(path)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(os, "rename", rename)
+    monkeypatch.setattr(os, "listdir", listdir)
+    changes = Changes()
+    with pytest.raises(OSError, match="could not be confirmed"):
+        move_no_replace(source, dest, changes)
+    monkeypatch.undo()
+
+    assert [(m.source, m.destination) for m in changes.moves] == [(source, dest)]
+
+
+@pytest.mark.skipif(WINDOWS, reason="Windows copies only across drives")
+def test_a_copy_whose_source_changes_just_before_its_removal_keeps_the_source(
+    show: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    notes = _write(show / "Disc 1" / "notes.txt", b"my notes")
+    plan = _plan(show)
+    [dest] = [s.destination for s in plan.stragglers if s.source == notes]
+    real_open, real_close = os.open, os.close
+    copies: list[int] = []
+
+    def no_link(*args: object, **kwargs: object) -> None:
+        raise OSError(errno.EXDEV, "Invalid cross-device link")
+
+    def open_(path: object, flags: int, *args: object, **kwargs: object) -> int:
+        fd = real_open(path, flags, *args, **kwargs)  # type: ignore[arg-type]
+        if flags & os.O_EXCL and os.fspath(path) == str(dest):  # type: ignore[call-overload]
+            copies.append(fd)
+        return fd
+
+    def close(fd: int) -> None:
+        real_close(fd)
+        if fd in copies:  # the copy is done and checked; the source changes now
+            copies.remove(fd)
+            notes.write_bytes(b"my notes, newer")
+
+    monkeypatch.setattr(os, "link", no_link)
+    monkeypatch.setattr(os, "open", open_)
+    monkeypatch.setattr(os, "close", close)
+    outcome = apply_plan(plan, confirmed=True)
+    monkeypatch.undo()
+
+    status, reason = _by_source(outcome.stragglers)[notes]
+    assert status is ApplyStatus.FAIL
+    assert "the source changed during its move" in reason
+    assert notes.read_bytes() == b"my notes, newer"
+    assert not dest.exists(follow_symlinks=False)
+    assert outcome.files_left_behind == ()
+
+
+@pytest.mark.skipif(WINDOWS, reason="Windows copies only across drives")
+def test_a_new_name_made_by_exclusive_create_is_listed_until_its_copy_is_removed(
+    show: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    notes = _write(show / "Disc 1" / "notes.txt", b"my notes")
+    plan = _plan(show)
+    [dest] = [s.destination for s in plan.stragglers if s.source == notes]
+    real_open, real_fstat, real_close = os.open, os.fstat, os.close
+    made: list[int] = []
+    raised: list[int] = []
+    closed: list[int] = []
+
+    def no_link(*args: object, **kwargs: object) -> None:
+        raise OSError(errno.EXDEV, "Invalid cross-device link")
+
+    def open_(path: object, flags: int, *args: object, **kwargs: object) -> int:
+        fd = real_open(path, flags, *args, **kwargs)  # type: ignore[arg-type]
+        if flags & os.O_EXCL and os.fspath(path) == str(dest):  # type: ignore[call-overload]
+            made.append(fd)
+        return fd
+
+    def fstat(fd: int) -> os.stat_result:
+        if made and fd == made[0] and not raised:
+            raised.append(fd)
+            raise OSError(errno.EIO, "Input/output error")
+        return real_fstat(fd)
+
+    def close(fd: int) -> None:
+        closed.append(fd)
+        real_close(fd)
+
+    monkeypatch.setattr(os, "link", no_link)
+    monkeypatch.setattr(os, "open", open_)
+    monkeypatch.setattr(os, "fstat", fstat)
+    monkeypatch.setattr(os, "close", close)
+    outcome = apply_plan(plan, confirmed=True)
+    monkeypatch.undo()
+
+    assert _by_source(outcome.stragglers)[notes][0] is ApplyStatus.FAIL
+    assert notes.read_bytes() == b"my notes"
+    assert outcome.files_left_behind == (dest,)
+    assert made and made[0] in closed
+
+
+def test_a_move_is_kept_whatever_reading_its_new_place_raises(
+    show: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from termrenamer.core import moving
+
+    plan = _plan(show)
+    notes = show / "Disc 1" / "notes.txt"
+    [dest] = [s.destination for s in plan.stragglers if s.source == notes]
+    real = moving._fingerprint
+
+    def fingerprint(path: Path, st: os.stat_result | None = None) -> object:
+        if path == dest and st is None:
+            raise RuntimeError("unexpected")
+        return real(path, st)
+
+    monkeypatch.setattr(moving, "_fingerprint", fingerprint)
+    outcome = apply_plan(plan, confirmed=True)
+
+    assert _by_source(outcome.stragglers)[notes] == (ApplyStatus.RENAMED, "ok")
+    assert (notes, dest) in [(m.source, m.destination) for m in outcome.moves]
+
+
+@pytest.mark.skipif(WINDOWS, reason="symbolic links need a privilege on Windows")
+def test_a_link_to_a_folder_is_moved_as_itself_and_never_entered(
+    show: Path, tmp_path: Path
+) -> None:
+    elsewhere = tmp_path / "Elsewhere"
+    _write(elsewhere / "bonus.txt", b"bonus")
+    (show / "Disc 1" / "Extras").symlink_to(elsewhere, target_is_directory=True)
+    (show / "Disc 1" / "Subs" / "Linked").symlink_to(elsewhere, target_is_directory=True)
+    plan = _plan(show)
+
+    disc_1 = next(f for f in plan.source_folders if f.path == show / "Disc 1")
+    assert show / "Disc 1" / "Extras" in disc_1.files
+    outcome = apply_plan(plan, confirmed=True)
+
+    season = show / "Show Name" / "Season 01"
+    for moved in (season / "Extras", season / "Subs" / "Linked"):
+        assert moved.is_symlink()
+        assert os.readlink(moved) == str(elsewhere)
+    assert _by_source(outcome.stragglers)[show / "Disc 1" / "Extras"] == (ApplyStatus.RENAMED, "ok")
+    assert (elsewhere / "bonus.txt").read_bytes() == b"bonus"
+    assert all(elsewhere not in m.source.parents for m in outcome.moves)
+
+
+def test_a_junction_is_never_entered(
+    show: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No real junction outside Windows: a folder stands in, and isjunction says so.
+    extras = show / "Disc 1" / "Extras"
+    inner = show / "Disc 1" / "Subs" / "Junction"
+    _write(extras / "behind.txt", b"behind")
+    _write(inner / "behind.txt", b"behind")
+    real = os.path.isjunction
+    monkeypatch.setattr(os.path, "isjunction", lambda p: p in (extras, inner) or real(p))
+    plan = _plan(show)
+
+    disc_1 = next(f for f in plan.source_folders if f.path == show / "Disc 1")
+    assert extras in disc_1.files
+    outcome = apply_plan(plan, confirmed=True)
+
+    # Moved as itself where the system can (Windows renames it), else it fails and stays.
+    for junction in (extras, inner):
+        assert all(junction not in m.source.parents for m in outcome.moves)
+    if WINDOWS:
+        assert _by_source(outcome.stragglers)[extras] == (ApplyStatus.RENAMED, "ok")
+    else:
+        status, reason = _by_source(outcome.stragglers)[extras]
+        assert status is ApplyStatus.FAIL
+        assert "junction" in reason
+        assert (extras / "behind.txt").read_bytes() == b"behind"
+        assert (inner / "behind.txt").read_bytes() == b"behind"
+
+
+def test_apply_returns_its_outcome_with_the_working_folder_inside_a_folder_straggler(
+    show: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan = _plan(show)
+    subs = show / "Disc 1" / "Subs"
+    monkeypatch.chdir(subs)  # changed back after the test
+
+    outcome = apply_plan(plan, confirmed=True)
+
+    assert _by_source(outcome.stragglers)[subs] == (ApplyStatus.RENAMED, "ok")
+    assert subs in outcome.folders_removed
+    assert (show / "Show Name" / "Season 01" / "Subs" / "English.srt").read_bytes() == b"x"

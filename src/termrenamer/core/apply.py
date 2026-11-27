@@ -15,7 +15,7 @@ from termrenamer.core.models import (
     PlanEntry,
     Straggler,
 )
-from termrenamer.core.moving import Changes, move_no_replace
+from termrenamer.core.moving import Changes, is_folder, leave_folder, move_no_replace
 from termrenamer.core.paths import path_key
 from termrenamer.core.planning import fingerprint
 from termrenamer.util.errors import ValidationError
@@ -46,37 +46,15 @@ def _remove_empty_source_dirs(applied_source_parents: set[Path], changes: Change
     """Remove source directories that are empty after moves (deepest first).
 
     Never deletes non-empty directories or files. Failures are logged, not raised.
-    If the process cwd is inside a directory being removed, chdir to the parent first
-    (same idea as anipyrenamer). Each folder removed is recorded in ``changes``.
+    When the working folder is a directory being removed or inside it, it moves to the
+    parent first (same idea as anipyrenamer). Each folder removed is recorded in
+    ``changes``.
     """
-    cwd = Path.cwd().resolve()
     for dir_path in sorted(applied_source_parents, key=lambda p: (-len(p.parts), path_key(p))):
-        if not dir_path.exists() or not dir_path.is_dir():
-            continue
         try:
-            if any(dir_path.iterdir()):
+            if not is_folder(dir_path, os.lstat(dir_path)) or any(dir_path.iterdir()):
                 continue
-        except OSError as exc:
-            _LOG.warning("Skipping source directory cleanup for %s: %s", dir_path, exc)
-            continue
-
-        try:
-            resolved_dir = dir_path.resolve()
-        except OSError:
-            resolved_dir = dir_path
-        if resolved_dir == cwd:
-            try:
-                os.chdir(str(dir_path.parent))
-                cwd = Path.cwd().resolve()
-            except OSError as exc:
-                _LOG.warning(
-                    "Could not leave source directory %s before cleanup: %s",
-                    dir_path,
-                    exc,
-                )
-                continue
-
-        try:
+            leave_folder(dir_path)
             dir_path.rmdir()
         except OSError as exc:
             _LOG.warning("Skipping source directory cleanup for %s: %s", dir_path, exc)
@@ -227,7 +205,11 @@ def apply_plan(plan: Plan, *, confirmed: bool) -> ApplyOutcome:
             emptied.add(straggler.source.parent)
 
     if not stopped:
-        _remove_empty_source_dirs(emptied, changes)
+        try:
+            _remove_empty_source_dirs(emptied, changes)
+        except Exception:
+            # The outcome is returned whatever the clean-up does.
+            _LOG.exception("Removing the emptied source folders stopped")
 
     return ApplyOutcome(
         results=tuple(results),
