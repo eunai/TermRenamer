@@ -227,7 +227,9 @@ Apply and Undo confirms, the Match picker, the file and folder dialogs).
   once. A queued file or folder that has gone is reported in the Logs and the
   rest of the queue is planned. The search never enters a symbolic link or a
   Windows junction to a folder, so no video behind one is planned; a video that
-  is a symbolic link is planned and renamed as the link.
+  is a symbolic link is planned and renamed as the link. If a dialog cannot
+  read a folder, or the file dialog cannot look at a path you typed, it stays
+  open and says why.
 - **A Plan you can watch and cancel.** While the Plan is built, each Title is
   listed as waiting, looking up, found or no match, and a strip shows how many
   files are looked up, the matched and unmatched counts and the lookups per
@@ -292,12 +294,12 @@ Apply and Undo confirms, the Match picker, the file and folder dialogs).
   through a folder that was a symbolic link or junction when the Plan was built
   only while it is that same link, leading to the same folder; a folder that
   became a link after the Plan was built is not entered, and its files are
-  skipped or fail with that reason. Where a file cannot be moved by a rename
-  or a hard link (another drive, a filesystem with no hard links such as many
-  network shares), Apply copies it, checks the copy against the original and
-  then removes the original, which takes as long as a copy. On Windows that copy
-  is written as `.termrenamer-<16 hex>.part` in the new folder and then renamed.
-  A junction cannot be moved to another drive.
+  skipped or fail with that reason. Where a file cannot be moved by a rename or
+  a hard link (another drive, or a filesystem with no hard links, such as exFAT
+  and many network shares), Apply copies it, checks the copy against the
+  original and then removes the original, which takes as long as a copy. On
+  Windows that copy is written as `.termrenamer-<16 hex>.part` in the new folder
+  and then renamed. A junction cannot be moved to another drive.
 - **Two themes.** Dark and light teal, chosen with `TERMRENAMER_THEME` or on
   the Settings screen.
 - **Posters.** With the `posters` extra installed and a terminal that draws
