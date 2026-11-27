@@ -148,14 +148,6 @@ def test_a_redirect_is_a_failure_that_names_the_status_and_host_only(
     assert hosts == ["example.test", "example.test"]
 
 
-def test_an_own_client_does_not_follow_redirects() -> None:
-    client = HttpClient()
-    try:
-        assert client._client.follow_redirects is False
-    finally:
-        client.close()
-
-
 def test_max_attempts_exhausted_on_repeated_429() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(429)

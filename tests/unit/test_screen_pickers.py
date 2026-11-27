@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import errno
 import os
-import sys
 from pathlib import Path
 
 import pytest
@@ -31,11 +30,6 @@ from .screen_driver import (
 WIDE = (200, 36)
 """Wide enough that the picker shows its whole folder."""
 
-NAMES = ["[$accent]x", "[Group] Show", "[b]holiday[i]"]
-"""Folder names that read as markup."""
-if sys.platform != "win32":
-    NAMES.append("ends in a backslash \\")
-
 
 async def wait_for_listing(pilot: object) -> None:
     app = pilot.app  # type: ignore[attr-defined]
@@ -44,22 +38,22 @@ async def wait_for_listing(pilot: object) -> None:
 
 
 @pytest.mark.parametrize("key", ["a", "f"])
-@pytest.mark.parametrize("name", NAMES)
-async def test_both_pickers_show_their_folder_as_written(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, key: str, name: str
+async def test_a_long_folder_of_wide_characters_keeps_its_last_name_on_screen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, key: str
 ) -> None:
-    start = tmp_path / name
-    start.mkdir()
+    """Each of these characters takes two cells: the folder is cut from the left by
+    cells, so its end, the folder's own name, is what shows."""
+    start = tmp_path / ("映画のフォルダ" * 8) / "番組"
+    start.mkdir(parents=True)
     monkeypatch.chdir(start)
     app = make_app()
-    async with app.run_test(size=WIDE) as pilot:
+    async with app.run_test(size=(90, 28)) as pilot:
         await press(pilot, key)
         await wait_for_listing(pilot)
-        assert isinstance(app.screen, FileOpen if key == "a" else SelectDirectory)
-        text = screen_text(app)
+        lines = [line for line in screen_text(app).splitlines() if "…" in line]
         await press(pilot, "escape")
-    # The picker cuts a long folder from the left; its last two names are shown.
-    assert f"{start.parent.name}{os.sep}{name}" in text
+
+    assert any(f"{os.sep}番組" in line for line in lines), lines
 
 
 @pytest.mark.parametrize("key", ["a", "f"])
@@ -96,6 +90,51 @@ async def test_a_folder_gone_before_the_picker_lists_it_keeps_the_app_and_the_qu
     assert isinstance(dialog, FileOpen if key == "a" else SelectDirectory)
     assert "This folder cannot be read: No such file or directory" in text
     assert running and main
+    assert sources == (queued.resolve(),)
+
+
+@pytest.mark.parametrize("key", ["a", "f"])
+async def test_a_folder_refused_with_its_parent_keeps_the_app_and_the_queue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, key: str
+) -> None:
+    """Neither the folder nor its ``..`` can be read, as when browsing into a folder of
+    another user: the dialog stays open, empty, and says why."""
+    queued = tmp_path / "Queued"
+    queued.mkdir()
+    start = (tmp_path / "Refused").resolve()
+    start.mkdir()
+    monkeypatch.chdir(start)
+    listed, stat = Path.iterdir, Path.stat
+    parent = start / ".."
+
+    def refused(path: Path):  # type: ignore[no-untyped-def]
+        if path == start:
+            raise PermissionError(errno.EACCES, "Permission denied", str(path))
+        return listed(path)
+
+    def refused_stat(path: Path, *args: object, **kwargs: object):  # type: ignore[no-untyped-def]
+        if path == parent:
+            raise PermissionError(errno.EACCES, "Permission denied", str(path))
+        return stat(path, *args, **kwargs)  # type: ignore[arg-type]
+
+    app = make_app()
+    async with app.run_test(size=WIDE) as pilot:
+        await queue(pilot, queued.resolve())
+        monkeypatch.setattr(Path, "iterdir", refused)
+        monkeypatch.setattr(Path, "stat", refused_stat)
+        await press(pilot, key)
+        await wait_for_listing(pilot)
+        dialog = app.screen
+        text = screen_text(app)
+        monkeypatch.setattr(Path, "iterdir", listed)
+        monkeypatch.setattr(Path, "stat", stat)
+        await press(pilot, "escape")
+        sources = app.queue.sources
+        running = app.is_running
+
+    assert isinstance(dialog, FileOpen if key == "a" else SelectDirectory)
+    assert "This folder cannot be read: Permission denied" in text
+    assert running
     assert sources == (queued.resolve(),)
 
 

@@ -83,17 +83,17 @@ NEVER_DROPPED = "open_help"
 """Help's action: its hint stays however narrow the footer is."""
 
 
-def drop_rank(key: Key, position: int) -> int | None:
-    """When a narrow footer drops ``key``, the ``position``-th hint it lists: lower goes
-    first, and ``None`` is never."""
+def drop_rank(key: Key, position: int) -> tuple[int, int] | None:
+    """When a narrow footer drops ``key``, the ``position``-th hint it lists: the lower
+    rank goes first, and ``None`` is never."""
     action = key.bindings[0][1] if key.bindings else ""
     if action == NEVER_DROPPED:
         return None
     if action in DROPPED_FIRST:
-        return DROPPED_FIRST.index(action)
+        return (0, DROPPED_FIRST.index(action))
     if action in SELECTION:
-        return len(DROPPED_FIRST) + SELECTION.index(action)
-    return len(DROPPED_FIRST) + len(SELECTION) + 1000 - position
+        return (1, SELECTION.index(action))
+    return (2, -position)  # the Stage's own keys, the last listed first
 
 
 def _bound(key: str, action: str) -> tuple[tuple[str, str], ...]:

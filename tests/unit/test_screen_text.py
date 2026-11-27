@@ -260,3 +260,41 @@ async def test_the_match_picker_tiles_show_candidates_names_as_they_are(tmp_path
     # In place of each Poster: the name, then "no poster".
     assert "┃ [$accent]Heat \\ ┃" in text
     assert "│ [Group] Heat[i] │" in text
+
+
+@pytest.mark.parametrize("key", ["a", "f"])
+@pytest.mark.parametrize("name", FOLDER_NAMES)
+async def test_both_source_pickers_show_their_folder_as_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, key: str, name: str
+) -> None:
+    start = tmp_path / name
+    start.mkdir()
+    monkeypatch.chdir(start)
+    app = make_app()
+    async with app.run_test(size=(200, 36)) as pilot:
+        await press(pilot, key)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        text = screen_text(app)
+        await press(pilot, "escape")
+
+    # The picker cuts a long folder from the left; its last two names are shown.
+    assert f"{start.parent.name}{os.sep}{name}" in text
+
+
+@pytest.mark.parametrize("name", FOLDER_NAMES)
+async def test_a_refused_destination_root_is_shown_in_settings_as_typed(
+    tmp_path: Path, name: str
+) -> None:
+    """A root for a user the system does not know is refused; the message shows the
+    typed text as it is."""
+    typed = f"~{name}{os.sep}TV"
+    app = make_app(loaded=settings(folder_rename=True, tv_root=tmp_path / "TV"))
+    async with app.run_test(size=SIZE) as pilot:
+        await press(pilot, "s")
+        await pilot.press("end", "ctrl+u", *typed, "enter")
+        await pilot.pause()
+        message = text_of(app, "#settings-message")
+        await press(pilot, "escape")
+
+    assert message.startswith(f"The TV Destination root {typed} cannot be used (")

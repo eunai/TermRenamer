@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from termrenamer.core.models import Candidate
+from termrenamer.util.text import plain_digits
 
 
 @runtime_checkable
@@ -47,15 +48,6 @@ class BuildScopedTvProvider(Protocol):
     def for_build(self) -> TvMetadataProvider:
         """Return a Provider view whose state lasts for one build."""
         ...
-
-
-def plain_digits(text: str) -> bool:
-    """Return whether ``text`` is one or more of the digits ``0`` to ``9`` and nothing else.
-
-    ``str.isdigit`` also accepts digits such as ``"²"`` or ``"٢"``, which ``int`` reads
-    wrongly or refuses with an error.
-    """
-    return text.isascii() and text.isdigit()
 
 
 def leading_year(value: object) -> int | None:

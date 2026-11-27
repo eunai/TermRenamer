@@ -220,3 +220,22 @@ async def test_while_undo_runs_the_footer_lists_no_key_that_refuses(
     for refused in ("u Undo", "n New batch", "s Settings"):
         assert refused not in during, (refused, during)
     assert "? Help" in during
+
+
+@pytest.mark.parametrize(("first", "then"), [(120, 90), (120, 100), (90, 120), (100, 120)])
+async def test_after_a_resize_the_footer_fits_the_new_width(
+    tmp_path: Path, first: int, then: int
+) -> None:
+    folder = tv_backups(tmp_path).resolve()
+    app = make_app()
+    async with app.run_test(size=(first, 36)) as pilot:
+        await queue(pilot, folder)
+        await build(pilot)
+        await pilot.resize_terminal(then, 36)
+        await pilot.pause()
+        await pilot.pause()
+        row = hints(app)
+        listed = shown(app, WIDE_PREVIEW)
+
+    assert listed == PREVIEW_HINTS[then]
+    assert row.rstrip().endswith(PREVIEW_HINTS[then][-1])

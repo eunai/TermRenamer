@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 
 from termrenamer.util.errors import ProviderError
+from termrenamer.util.text import plain_digits
 
 _LOG = logging.getLogger(__name__)
 
@@ -110,7 +111,7 @@ class HttpClient:
                 if response.status_code != 200:
                     return response
                 declared = response.headers.get("Content-Length", "")
-                if _plain_digits(declared) and int(declared) > max_bytes:
+                if plain_digits(declared) and int(declared) > max_bytes:
                     raise ProviderError(too_large)
                 for chunk in response.iter_bytes():
                     body.extend(chunk)
@@ -214,17 +215,12 @@ def _log_answer(method: str, url: str, response: httpx.Response) -> None:
     )
 
 
-def _plain_digits(text: str) -> bool:
-    """Whether ``text`` is only the digits 0 to 9: ``isdigit`` alone accepts ``"²"``."""
-    return text.isascii() and text.isdigit()
-
-
 def _parse_retry_after(response: httpx.Response) -> float | None:
     raw = response.headers.get("Retry-After")
     if raw is None:
         return None
     raw = raw.strip()
-    if _plain_digits(raw):
+    if plain_digits(raw):
         return float(raw)
     try:
         dt = parsedate_to_datetime(raw)

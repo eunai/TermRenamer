@@ -63,11 +63,12 @@ def fitting(shown: Sequence[Key], width: int) -> list[Key]:
         return cell_len(key.display) + 1 + cell_len(key.hint)
 
     kept = list(shown)
-    ranks = {id(key): drop_rank(key, position) for position, key in enumerate(shown)}
-    droppable = sorted(
-        (key for key in kept if ranks[id(key)] is not None), key=lambda k: ranks[id(k)] or 0
-    )
-    for key in droppable:
+    ranked = [
+        (rank, key)
+        for position, key in enumerate(shown)
+        if (rank := drop_rank(key, position)) is not None
+    ]
+    for _rank, key in sorted(ranked, key=lambda pair: pair[0]):
         if sum(cells(k) for k in kept) + _GAP * (len(kept) - 1) <= width:
             break
         kept.remove(key)
@@ -118,6 +119,9 @@ class AppFooter(Vertical):
     """
     )
 
+    _keys: tuple[Key, ...] = ()
+    """The keys of the last :meth:`show_keys`, fitted again on a resize."""
+
     def compose(self) -> ComposeResult:
         yield Static(id="message")
         yield Static(id="stage-lines")
@@ -136,7 +140,18 @@ class AppFooter(Vertical):
         area.display = bool(lines)
 
     def show_keys(self, keys: Sequence[Key]) -> None:
-        """Show the hints of ``keys`` that fit, by the key table's rule for a narrow footer."""
+        """Show the hints of ``keys`` that fit, by the key table's rule for a narrow footer.
+
+        The footer keeps ``keys`` and fits them again whenever its width changes.
+        """
+        self._keys = tuple(keys)
+        self._fit_keys()
+
+    def on_resize(self) -> None:
+        self._fit_keys()
+
+    def _fit_keys(self) -> None:
         hints = self.query_one("#key-hints", Static)
         width = (self.size.width or self.app.size.width) - _HINTS_PADDING
-        hints.update(hints_markup([(key.display, key.hint) for key in fitting(keys, width)]))
+        shown = fitting(self._keys, width)
+        hints.update(hints_markup([(key.display, key.hint) for key in shown]))

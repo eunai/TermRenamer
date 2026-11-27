@@ -21,6 +21,7 @@ from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import cast
 
+from rich.cells import cell_len
 from textual import on, work
 from textual.content import Content
 from textual.message import Message
@@ -77,22 +78,46 @@ class _Listing(DirectoryNavigation):
         self._repopulate_display()
         self.post_message(self.Unreadable(error.strerror or str(error)))
 
+    def _repopulate_display(self) -> None:
+        """List the entries read, with ``..`` first. When even ``..`` cannot be read (a
+        folder inside one of another user), the listing is left with no entry; the
+        dialog has said why already."""
+        try:
+            super()._repopulate_display()
+        except OSError:
+            self.clear_options()
+
 
 class _Folder(CurrentDirectory):
     """The current folder, shown as written."""
 
     def _watch_current_directory(self) -> None:
         folder = "" if self.current_directory is None else str(self.current_directory)
-        width = self.size.width
-        shown = folder[-width:] if width else folder
-        if width and len(shown) >= width:
-            shown = f"…{shown[1:]}"
-        self.update(Content(shown))
+        self.update(Content(_tail(folder, self.size.width)))
 
 
-def _show_unreadable(dialog: FileOpen | SelectDirectory, reason: str) -> None:
+def _tail(text: str, width: int) -> str:
+    """``text`` when it fits in ``width`` cells, else its end after "…", in ``width``
+    cells at most; a wide character counts as two."""
+    if not width or cell_len(text) <= width:
+        return text
+    kept, used = [], 1
+    for character in reversed(text):
+        used += cell_len(character)
+        if used > width:
+            break
+        kept.append(character)
+    return "…" + "".join(reversed(kept))
+
+
+_CANNOT_READ = "This folder cannot be read: {reason}"
+"""What the dialogs' error line says when a folder cannot be listed."""
+
+
+def _say_unreadable(dialog: FileOpen | SelectDirectory, reason: str) -> None:
     """Say on ``dialog``'s error line, as plain text, why its folder cannot be listed."""
-    dialog._set_error(Content(f"This folder cannot be read: {reason}"))  # type: ignore[arg-type]  # noqa: SLF001
+    text = Content(_CANNOT_READ.format(reason=reason))
+    dialog._set_error(text)  # type: ignore[arg-type]  # noqa: SLF001
 
 
 def _safe(widgets: Iterable[Widget], location: Path) -> Iterator[Widget]:
@@ -117,10 +142,12 @@ class FilePicker(FileOpen):
     def compose(self) -> Iterator[Widget]:
         return _safe(super().compose(), self._start)
 
+    ERROR_PERMISSION_ERROR = _CANNOT_READ.format(reason="Permission denied")
+
     @on(_Listing.Unreadable)
-    def _show_unreadable(self, event: _Listing.Unreadable) -> None:
+    def _on_unreadable(self, event: _Listing.Unreadable) -> None:
         event.stop()
-        _show_unreadable(self, event.reason)
+        _say_unreadable(self, event.reason)
 
 
 class FolderPicker(SelectDirectory):
@@ -133,7 +160,9 @@ class FolderPicker(SelectDirectory):
     def compose(self) -> Iterator[Widget]:
         return _safe(super().compose(), self._start)
 
+    ERROR_PERMISSION_ERROR = _CANNOT_READ.format(reason="Permission denied")
+
     @on(_Listing.Unreadable)
-    def _show_unreadable(self, event: _Listing.Unreadable) -> None:
+    def _on_unreadable(self, event: _Listing.Unreadable) -> None:
         event.stop()
-        _show_unreadable(self, event.reason)
+        _say_unreadable(self, event.reason)

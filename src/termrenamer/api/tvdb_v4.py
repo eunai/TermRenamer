@@ -9,11 +9,12 @@ from typing import Any
 
 import httpx
 
-from termrenamer.api.base import TvMetadataProvider, leading_year, plain_digits, text_field
+from termrenamer.api.base import TvMetadataProvider, leading_year, text_field
 from termrenamer.core.models import Candidate
 from termrenamer.util.errors import ProviderError
 from termrenamer.util.http import HttpClient
 from termrenamer.util.logging import keep_out_of_logs
+from termrenamer.util.text import plain_digits
 
 _LOG = logging.getLogger(__name__)
 
