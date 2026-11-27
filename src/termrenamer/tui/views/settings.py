@@ -15,7 +15,7 @@ from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Center, Horizontal, Vertical
-from textual.markup import escape
+from textual.content import Content
 from textual.message import Message
 from textual.screen import Screen
 from textual.widgets import Input, Static, Switch
@@ -280,7 +280,7 @@ class SettingsView(Screen[None]):
                 value.set_class(is_on, "-on")
 
     def _say(self, text: str) -> None:
-        self.query_one("#settings-message", Static).update(escape(text))
+        self.query_one("#settings-message", Static).update(Content(text))
 
     # ---------------------------------------------------------------- writing
 

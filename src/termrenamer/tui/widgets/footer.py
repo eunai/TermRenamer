@@ -8,6 +8,7 @@ from enum import StrEnum
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
+from textual.content import Content
 from textual.markup import escape
 from textual.widgets import Static
 
@@ -85,12 +86,13 @@ class AppFooter(Vertical):
     def show_message(self, text: str, kind: MessageKind = MessageKind.INFO) -> None:
         """Show ``text`` (plain) on the message line, coloured by ``kind``."""
         style = kind.style
-        self.query_one("#message", Static).update(f"[{style}]{escape(text)}[/]" if text else "")
+        shown = Content.from_markup(f"[{style}]$text[/]", text=text) if text else Content()
+        self.query_one("#message", Static).update(shown)
 
-    def show_lines(self, lines: Sequence[str]) -> None:
-        """Show the current Stage's lines (Textual markup), or hide the area when none."""
+    def show_lines(self, lines: Sequence[Content]) -> None:
+        """Show the current Stage's lines, or hide the area when none."""
         area = self.query_one("#stage-lines", Static)
-        area.update("\n".join(lines))
+        area.update(Content("\n").join(lines))
         area.display = bool(lines)
 
     def show_keys(self, keys: Sequence[Key]) -> None:

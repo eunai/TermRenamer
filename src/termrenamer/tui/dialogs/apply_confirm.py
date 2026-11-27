@@ -11,7 +11,7 @@ from collections import Counter
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.markup import escape
+from textual.content import Content
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
@@ -29,8 +29,8 @@ from termrenamer.tui.words import (
 )
 
 
-def confirm_lines(plan: Plan) -> tuple[str, ...]:
-    """What the confirm says (Textual markup): the videos renamed and where, the videos
+def confirm_lines(plan: Plan) -> tuple[Content, ...]:
+    """What the confirm says: the videos renamed and where, the videos
     skipped counted by status, the videos left out, each Sidecar skipped while its
     video moves, those that already have their names, with Folder rename on the
     Stragglers to merge and the Titles they go with, and that nothing has been renamed
@@ -53,24 +53,31 @@ def confirm_lines(plan: Plan) -> tuple[str, ...]:
     else:
         skip = "Skip none."
     lines = [
-        f"[$foreground]Rename {plural(counts.to_rename, 'video')} {escape(where)}.[/]",
-        f"[$foreground]{skip}[/]",
+        Content.from_markup(
+            f"[$foreground]Rename {plural(counts.to_rename, 'video')} $where.[/]", where=where
+        ),
+        Content.from_markup(f"[$foreground]{skip}[/]"),
     ]
     if counts.left_out:
         them = agree(counts.left_out, "it", "them")
         lines.append(
-            f"[$foreground]Leave out {plural(counts.left_out, 'video')}: "
-            f"Apply does not touch {them}.[/]"
+            Content.from_markup(
+                f"[$foreground]Leave out {plural(counts.left_out, 'video')}: "
+                f"Apply does not touch {them}.[/]"
+            )
         )
     for sidecar in sidecars_skipped_alone(plan):
         reason = why_not_renamed(sidecar) or sidecar.status.value
-        lines.append(f"[$tr-dim]{escape(sidecar_skipped(sidecar.source, reason))}[/]")
+        line = sidecar_skipped(sidecar.source, reason)
+        lines.append(Content.from_markup("[$tr-dim]$line[/]", line=line))
     if named:
         that = agree(len(named), "that already has its name", "that already have their names")
-        lines.append(f"[$tr-dim]Leave {plural(len(named), 'video')} {that}.[/]")
+        lines.append(
+            Content.from_markup(f"[$tr-dim]Leave {plural(len(named), 'video')} {that}.[/]")
+        )
     if plan.options.folder_rename:
-        lines.append(f"[$tr-dim]{escape(_merge_line(plan))}[/]")
-    lines += ["", "[$warning]Nothing has been renamed yet.[/]"]
+        lines.append(Content.from_markup("[$tr-dim]$line[/]", line=_merge_line(plan)))
+    lines += [Content(), Content.from_markup("[$warning]Nothing has been renamed yet.[/]")]
     return tuple(lines)
 
 
@@ -140,7 +147,7 @@ class ApplyConfirm(ModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="confirm-dialog"):
-            yield Static("\n".join(self._lines), id="confirm-lines")
+            yield Static(Content("\n").join(self._lines), id="confirm-lines")
             with Horizontal(classes="buttons"):
                 yield ActionButton("y", "Apply", press_key="y", id="confirm-yes", classes="-strong")
                 yield ActionButton("n", "Back", press_key="n", id="confirm-no", classes="-plain")

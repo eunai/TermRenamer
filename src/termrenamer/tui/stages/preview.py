@@ -12,7 +12,7 @@ from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.markup import escape
+from textual.content import Content
 from textual.widgets import Static
 
 from termrenamer.core.models import EntryStatus, Plan, PlanEntry
@@ -207,7 +207,7 @@ class PreviewStage(TitleListStage):
         counts = PlanCounts.of(self._plan)
         return f"{plural(counts.titles, 'Title')} · {plural(counts.videos, 'video')}"
 
-    def footer_lines(self) -> tuple[str, ...]:
+    def footer_lines(self) -> tuple[Content, ...]:
         row, video = self.selected_row, self.selected_file
         if row is None or video is None:
             return ()
@@ -230,9 +230,15 @@ class PreviewStage(TitleListStage):
         else:
             colour = StatusWord(video.status).style
         return (
-            f"[$tr-dim]from[/]  [$foreground]{escape(fit_path(str(video.source), width))}[/]",
-            f"[$tr-dim]to[/]    [{colour}]{escape(fit_path(to, width - len(note)))}[/]"
-            f"[$tr-dim]{escape(note)}[/]",
+            Content.from_markup(
+                "[$tr-dim]from[/]  [$foreground]$source[/]",
+                source=fit_path(str(video.source), width),
+            ),
+            Content.from_markup(
+                f"[$tr-dim]to[/]    [{colour}]$to[/][$tr-dim]$note[/]",
+                to=fit_path(to, width - len(note)),
+                note=note,
+            ),
         )
 
 

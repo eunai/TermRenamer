@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.markup import escape
+from textual.content import Content
 from textual.message import Message
 from textual.timer import Timer
 from textual.widgets import Static
@@ -248,7 +248,9 @@ class PlanStage(TitleListStage):
         self.query_one("#plan-progress", Static).update(
             f"{self._looked_up} of {plural(self._total, 'file')} looked up"
         )
-        self.query_one("#plan-provider", Static).update(f"on {escape(self._provider)}…")
+        self.query_one("#plan-provider", Static).update(
+            Content.from_markup("on $provider…", provider=self._provider)
+        )
         self._draw_strip()
         self.changed()
 
@@ -266,8 +268,11 @@ class PlanStage(TitleListStage):
         else:
             info = plural(row.videos, "video")
         details.update(
-            f"[b]{escape(row.name)}[/]\n"
-            f"[${row.status.colour}]{row.status}[/] [$tr-dim]· {escape(info)}[/]"
+            Content.from_markup(
+                f"[b]$name[/]\n[${row.status.colour}]{row.status}[/] [$tr-dim]· $info[/]",
+                name=row.name,
+                info=info,
+            )
         )
 
     def _draw_strip(self) -> None:

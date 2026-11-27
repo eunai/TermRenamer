@@ -7,6 +7,7 @@ A view's ``action_<name>`` methods are the actions the key table runs at that St
 from __future__ import annotations
 
 from textual.containers import Vertical
+from textual.content import Content
 from textual.message import Message
 
 
@@ -26,8 +27,8 @@ class StageView(Vertical):
         """The short count beside the Stages row, such as ``3 Sources``."""
         return ""
 
-    def footer_lines(self) -> tuple[str, ...]:
-        """This Stage's footer lines (Textual markup), such as the selected Source's path."""
+    def footer_lines(self) -> tuple[Content, ...]:
+        """This Stage's footer lines, such as the selected Source's path."""
         return ()
 
     def key_enabled(self, action: str) -> bool:

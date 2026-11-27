@@ -9,11 +9,11 @@ Every result, Sidecars and Stragglers included, is also in the Logs.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from pathlib import Path
+from pathlib import PurePath
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.markup import escape
+from textual.content import Content
 from textual.widgets import Static
 
 from termrenamer.core.models import ApplyOutcome, ApplyResult, ApplyStatus, Plan, PlanEntry
@@ -120,12 +120,12 @@ class AppliedStage(StageView):
         self.query_one("#applied-heading", Static).update(
             f"[$foreground]Not renamed[/]  [$tr-dim]{len(files) + len(stayed)}[/]"
         )
+        lines = [_lines_for(entry, result) for entry, result in files]
+        lines += [_straggler_lines(result) for result in stayed]
         self.query_one("#applied-list", Static).update(
-            "\n".join(
-                [_lines_for(entry, result) for entry, result in files]
-                + [_straggler_lines(result) for result in stayed]
-            )
-            or "[$tr-dim]Every video was renamed.[/]"
+            Content("\n").join(lines)
+            if lines
+            else Content.from_markup("[$tr-dim]Every video was renamed.[/]")
         )
         self.changed()
 
@@ -150,7 +150,7 @@ def not_renamed(plan: Plan, results: Sequence[ApplyResult]) -> list[tuple[PlanEn
     return files
 
 
-def _straggler_lines(result: ApplyResult) -> str:
+def _straggler_lines(result: ApplyResult) -> Content:
     """Two lines: the Straggler's name and its folder, then why it was not merged."""
     failed = result.status is ApplyStatus.FAIL
     reason = f"failed: {result.reason}" if failed else result.reason
@@ -159,14 +159,16 @@ def _straggler_lines(result: ApplyResult) -> str:
     )
 
 
-def _two_lines(source: Path, reason: str, colour: str) -> str:
-    return (
-        f"[$foreground]{escape(source.name)}[/]  [$tr-dim]{escape(folder_text(source.parent))}[/]\n"
-        f"    [{colour}]{escape(reason)}[/]"
+def _two_lines(source: PurePath, reason: str, colour: str) -> Content:
+    return Content.from_markup(
+        f"[$foreground]$name[/]  [$tr-dim]$folder[/]\n    [{colour}]$reason[/]",
+        name=source.name,
+        folder=folder_text(source.parent),
+        reason=reason,
     )
 
 
-def _lines_for(entry: PlanEntry, result: ApplyResult) -> str:
+def _lines_for(entry: PlanEntry, result: ApplyResult) -> Content:
     """Two lines: the file's name and its folder, then why it was not renamed."""
     if result.status is ApplyStatus.FAIL:
         reason, colour = f"failed: {result.reason}", "$error"

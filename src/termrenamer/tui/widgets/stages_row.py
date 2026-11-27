@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal
-from textual.markup import escape
+from textual.content import Content
 from textual.widgets import Static
 
 from termrenamer.tui.stage import Stage
@@ -47,4 +47,4 @@ class StagesRow(Horizontal):
 
     def show(self, current: Stage, count: str) -> None:
         self.query_one("#stages", Static).update(stages_markup(current))
-        self.query_one("#stage-count", Static).update(escape(count))
+        self.query_one("#stage-count", Static).update(Content(count))

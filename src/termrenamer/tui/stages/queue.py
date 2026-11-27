@@ -8,7 +8,7 @@ from pathlib import Path
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Center, Horizontal, Vertical
-from textual.markup import escape
+from textual.content import Content
 from textual.widgets import Static, Tree
 
 from termrenamer.tui.stages.base import StageView
@@ -152,7 +152,7 @@ class QueueStage(StageView):
     def count_text(self) -> str:
         return plural(len(self._sources), "Source") if self._sources else ""
 
-    def footer_lines(self) -> tuple[str, ...]:
+    def footer_lines(self) -> tuple[Content, ...]:
         source = self.selected_source
         if source is None:
             return ()
@@ -161,8 +161,8 @@ class QueueStage(StageView):
         except OSError:
             kind = "file"
         return (
-            f"[$tr-dim]path[/]  [$foreground]{escape(str(source))}[/]",
-            f"      [$tr-dim]{kind} · queued · nothing looked up yet[/]",
+            Content.from_markup("[$tr-dim]path[/]  [$foreground]$path[/]", path=str(source)),
+            Content.from_markup(f"      [$tr-dim]{kind} · queued · nothing looked up yet[/]"),
         )
 
     def key_enabled(self, action: str) -> bool:

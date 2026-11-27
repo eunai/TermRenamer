@@ -10,7 +10,7 @@ from collections import Counter
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.markup import escape
+from textual.content import Content
 from textual.widgets import Static
 
 from termrenamer.core.models import ScanMode
@@ -58,9 +58,12 @@ class TitleDetails(Vertical):
             return
         name = row.name if row.title is None else match_name(row.title, mode)
         heading.update(
-            f"[b $foreground]{escape(name)}[/]\n"
-            f"[b {StatusWord(row.status).style}]{row.status.value}[/] "
-            f"[$tr-dim]· {escape(_counts(row, mode))}[/]"
+            Content.from_markup(
+                f"[b $foreground]$name[/]\n[b {StatusWord(row.status).style}]{row.status.value}[/] "
+                "[$tr-dim]· $counts[/]",
+                name=name,
+                counts=_counts(row, mode),
+            )
         )
         statuses = Counter(StatusWord(entry.status) for entry in row.files)
         tally.update(
