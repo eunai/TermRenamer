@@ -1,25 +1,26 @@
 """The Applied Stage: what Apply did, counted in videos, and each file it did not rename.
 
 The left column holds the counts and the actions (New batch; Undo once #26 builds
-it). The right lists each skipped, failed and left out video with its reason, and each
-Sidecar that was not renamed while its video was. Every result, Sidecars included,
-is also in the Logs.
+it). The right lists each skipped, failed and left out video with its reason, each
+Sidecar that was not renamed while its video was, and each Straggler not merged.
+Every result, Sidecars and Stragglers included, is also in the Logs.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.markup import escape
 from textual.widgets import Static
 
-from termrenamer.core.models import ApplyResult, ApplyStatus, Plan, PlanEntry
+from termrenamer.core.models import ApplyOutcome, ApplyResult, ApplyStatus, Plan, PlanEntry
 from termrenamer.core.title_rows import AppliedCounts
 from termrenamer.tui.stages.base import StageView
 from termrenamer.tui.widgets.action_button import ActionButton
-from termrenamer.tui.words import agree, folder_text, why_not_renamed
+from termrenamer.tui.words import agree, folder_text, plural, why_not_renamed
 
 _APPLIED = frozenset({ApplyStatus.RENAMED, ApplyStatus.UNCHANGED})
 
@@ -91,8 +92,9 @@ class AppliedStage(StageView):
     def counts(self) -> AppliedCounts | None:
         return self._counts
 
-    def show_results(self, plan: Plan, results: Sequence[ApplyResult]) -> None:
-        counts = AppliedCounts.of(plan, results)
+    def show_results(self, plan: Plan, outcome: ApplyOutcome) -> None:
+        counts = AppliedCounts.of(plan, outcome)
+        results = outcome.results
         self._counts = counts
         line = (
             f"[$success]{counts.renamed} renamed[/] [$tr-dim]·[/] "
@@ -104,16 +106,25 @@ class AppliedStage(StageView):
             line += f"\n[$tr-dim]{counts.unchanged} already {had}[/]"
         if counts.left_out:
             line += f"\n[$tr-dim]{counts.left_out} left out[/]"
+        if counts.stragglers_merged or counts.stragglers_not_merged:
+            merged = f"{plural(counts.stragglers_merged, 'Straggler')} merged"
+            if counts.stragglers_not_merged:
+                merged += f" · {counts.stragglers_not_merged} not merged"
+            line += f"\n[$tr-dim]{merged}[/]"
         self.query_one("#applied-counts", Static).update(line)
         self.query_one("#applied-title", Static).update(
-            "The Plan is applied." + ("" if counts.failed else "\nNothing failed.")
+            "The Plan is applied." + ("" if counts.anything_failed else "\nNothing failed.")
         )
         files = not_renamed(plan, results)
+        stayed = [r for r in outcome.stragglers if r.status is not ApplyStatus.RENAMED]
         self.query_one("#applied-heading", Static).update(
-            f"[$foreground]Not renamed[/]  [$tr-dim]{len(files)}[/]"
+            f"[$foreground]Not renamed[/]  [$tr-dim]{len(files) + len(stayed)}[/]"
         )
         self.query_one("#applied-list", Static).update(
-            "\n".join(_lines_for(entry, result) for entry, result in files)
+            "\n".join(
+                [_lines_for(entry, result) for entry, result in files]
+                + [_straggler_lines(result) for result in stayed]
+            )
             or "[$tr-dim]Every video was renamed.[/]"
         )
         self.changed()
@@ -139,6 +150,22 @@ def not_renamed(plan: Plan, results: Sequence[ApplyResult]) -> list[tuple[PlanEn
     return files
 
 
+def _straggler_lines(result: ApplyResult) -> str:
+    """Two lines: the Straggler's name and its folder, then why it was not merged."""
+    failed = result.status is ApplyStatus.FAIL
+    reason = f"failed: {result.reason}" if failed else result.reason
+    return _two_lines(
+        result.source, f"Straggler not merged: {reason}", "$error" if failed else "$warning"
+    )
+
+
+def _two_lines(source: Path, reason: str, colour: str) -> str:
+    return (
+        f"[$foreground]{escape(source.name)}[/]  [$tr-dim]{escape(folder_text(source.parent))}[/]\n"
+        f"    [{colour}]{escape(reason)}[/]"
+    )
+
+
 def _lines_for(entry: PlanEntry, result: ApplyResult) -> str:
     """Two lines: the file's name and its folder, then why it was not renamed."""
     if result.status is ApplyStatus.FAIL:
@@ -154,8 +181,4 @@ def _lines_for(entry: PlanEntry, result: ApplyResult) -> str:
         colour = "$warning"
     if entry.is_sidecar:
         reason = f"Sidecar not renamed: {reason}"
-    source = entry.source
-    return (
-        f"[$foreground]{escape(source.name)}[/]  [$tr-dim]{escape(folder_text(source.parent))}[/]\n"
-        f"    [{colour}]{escape(reason)}[/]"
-    )
+    return _two_lines(entry.source, reason, colour)

@@ -16,16 +16,25 @@ from textual.screen import ModalScreen
 from textual.widgets import Static
 
 from termrenamer.core.models import EntryStatus, Plan
+from termrenamer.core.paths import claim_key
 from termrenamer.core.title_rows import PlanCounts, sidecars_skipped_alone
 from termrenamer.tui.widgets.action_button import ActionButton
-from termrenamer.tui.words import agree, folder_text, plural, sidecar_skipped, why_not_renamed
+from termrenamer.tui.words import (
+    agree,
+    folder_text,
+    match_name,
+    plural,
+    sidecar_skipped,
+    why_not_renamed,
+)
 
 
 def confirm_lines(plan: Plan) -> tuple[str, ...]:
     """What the confirm says (Textual markup): the videos renamed and where, the videos
     skipped counted by status, the videos left out, each Sidecar skipped while its
-    video moves, those that already have their names, and that nothing has been
-    renamed yet."""
+    video moves, those that already have their names, with Folder rename on the
+    Stragglers to merge and the Titles they go with, and that nothing has been renamed
+    yet."""
     counts = PlanCounts.of(plan)
     root = plan.options.destination_root
     if root is not None:
@@ -59,8 +68,30 @@ def confirm_lines(plan: Plan) -> tuple[str, ...]:
     if named:
         that = agree(len(named), "that already has its name", "that already have their names")
         lines.append(f"[$tr-dim]Leave {plural(len(named), 'video')} {that}.[/]")
+    if plan.options.folder_rename:
+        lines.append(f"[$tr-dim]{escape(_merge_line(plan))}[/]")
     lines += ["", "[$warning]Nothing has been renamed yet.[/]"]
     return tuple(lines)
+
+
+def _merge_line(plan: Plan) -> str:
+    """``Merge 2 Stragglers (Harbour Lights)``: the Titles are those whose files go to
+    the Stragglers' target folders."""
+    if not plan.stragglers:
+        return "No Stragglers in this Plan."
+    targets = {claim_key(s.destination.parent) for s in plan.stragglers}
+    names = sorted(
+        {
+            match_name(e.title, plan.mode)
+            for e in plan.entries
+            if e.title is not None
+            and e.destination is not None
+            and claim_key(e.destination.parent) in targets
+        },
+        key=str.casefold,
+    )
+    titles = f" ({', '.join(names)})" if names else ""
+    return f"Merge {plural(len(plan.stragglers), 'Straggler')}{titles}"
 
 
 class ApplyConfirm(ModalScreen[bool]):

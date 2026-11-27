@@ -1,15 +1,16 @@
 """Plan the queued Sources: the one entry point that builds a Plan.
 
 :func:`plan_queue` takes the queue, the plan options and the build's Provider, and
-returns one Plan. It touches the filesystem only to list the Sources and to stat
-their files; nothing is renamed.
+returns one Plan. It touches the filesystem only to list the Sources and the source
+folders, to stat their files and to test the wanted names; nothing is renamed.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import overload
@@ -30,6 +31,7 @@ from termrenamer.core.models import (
     PlanFingerprint,
     PlanOptions,
     ScanMode,
+    SourceFolder,
     Title,
 )
 from termrenamer.core.parse import parse_filename, parse_film_filename
@@ -46,6 +48,7 @@ from termrenamer.core.progress import (
     TitleLookupStarted,
 )
 from termrenamer.core.scan import classify, scan
+from termrenamer.core.stragglers import plan_stragglers
 from termrenamer.core.templates import format_film_destination, format_tv_destination
 from termrenamer.util.errors import ParseError
 
@@ -76,11 +79,13 @@ class PlanBuild:
 
 @dataclass(frozen=True, slots=True)
 class _Found:
-    """A video or Sidecar of the queue, with the folder of its owning Source."""
+    """A video or Sidecar of the queue, with the folder of its owning Source, and
+    whether that Source is a folder."""
 
     path: Path
     root: Path
     kind: FileKind
+    in_folder_source: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,7 +156,8 @@ def _collect(sources: Sequence[Path]) -> tuple[list[_Found], list[str]]:
         if resolved.is_dir():
             rank = (0, len(resolved.parts))
             contributed = [
-                _Found(path=f.path, root=resolved, kind=f.kind) for f in scan(root=resolved)
+                _Found(path=f.path, root=resolved, kind=f.kind, in_folder_source=True)
+                for f in scan(root=resolved)
             ]
         elif classify(resolved.suffix) is FileKind.VIDEO:
             rank = (1, 0)
@@ -360,10 +366,12 @@ def plan_queue(
     """Plan every file of the queued ``sources`` with ``options``, in one Plan.
 
     Returns the Plan and a message for each Source that was skipped (it no longer
-    exists, or it is a file that is not a video). ``listener`` is told each event of
-    :mod:`termrenamer.core.progress` as the build runs; an exception it raises stops
-    the build. ``cancel`` is checked before each lookup: once it is set, the build
-    stops and returns ``None``.
+    exists, or it is a file that is not a video). The Plan records the children of each
+    source folder inside a folder Source and, with Folder rename on, lists its
+    Stragglers (:func:`~termrenamer.core.stragglers.plan_stragglers`). ``listener`` is
+    told each event of :mod:`termrenamer.core.progress` as the build runs; an exception
+    it raises stops the build. ``cancel`` is checked before each lookup: once it is set,
+    the build stops and returns ``None``.
     """
     lookup = _lookup(provider, options.mode)
     found, messages = _collect(sources)
@@ -476,8 +484,44 @@ def plan_queue(
     titles = sorted(set(title_of.values()), key=_title_order)
     # Source-path order is fixed here, once; a derived Plan keeps it.
     entries.sort(key=lambda e: path_key(e.source))
-    plan = _plan_of(options, tuple(titles), _claim_names(entries, options))
+    # The children of each source folder are recorded once, here; a derived Plan keeps
+    # them, so its Stragglers are worked out without listing a folder again.
+    # A folder is told apart by its path as the scan found it, so two folders whose
+    # names differ only in letter case stay two folders.
+    in_folder_source = {str(f.path) for f in found if f.in_folder_source}
+    folders = _source_folders(e.source.parent for e in entries if str(e.source) in in_folder_source)
+    plan = _plan_of(options, tuple(titles), _claim_names(entries, options), folders)
     return PlanBuild(plan=plan, messages=tuple(messages))
+
+
+def _source_folders(folders: Iterable[Path]) -> tuple[SourceFolder, ...]:
+    """Each of ``folders`` once, in source-path order, with its direct children now.
+
+    The folder that holds a file Source is never passed here, so the files beside a
+    queued file are never Stragglers. A folder that cannot be listed has no children,
+    with a logged warning.
+    """
+    unique = {str(folder): folder for folder in folders}
+    recorded = []
+    for folder in sorted(unique.values(), key=lambda f: (path_key(f), str(f))):
+        try:
+            children = sorted(folder.iterdir(), key=path_key)
+        except OSError as exc:
+            _LOG.warning("Cannot list %s for Stragglers: %s", folder, exc)
+            children = []
+        # A symbolic link or a junction is one child, a file: it is never looked inside.
+        is_folder = {
+            child: child.is_dir(follow_symlinks=False) and not os.path.isjunction(child)
+            for child in children
+        }
+        recorded.append(
+            SourceFolder(
+                path=folder,
+                files=tuple(c for c in children if not is_folder[c]),
+                folders=tuple(c for c in children if is_folder[c]),
+            )
+        )
+    return tuple(recorded)
 
 
 def _claim_names(entries: Sequence[PlanEntry], options: PlanOptions) -> tuple[PlanEntry, ...]:
@@ -492,7 +536,7 @@ def _claim_names(entries: Sequence[PlanEntry], options: PlanOptions) -> tuple[Pl
     other is tested on its own, under its video's new name.
     """
     ordered = tuple(entries)
-    occupied: set[Path] = set()
+    occupied: set[str] = set()
     named: dict[Path, PlanEntry] = {}
     for entry in ordered:
         if entry.is_sidecar:
@@ -525,15 +569,25 @@ def _claim_names(entries: Sequence[PlanEntry], options: PlanOptions) -> tuple[Pl
 
 
 def _plan_of(
-    options: PlanOptions, titles: tuple[Title, ...], entries: tuple[PlanEntry, ...]
+    options: PlanOptions,
+    titles: tuple[Title, ...],
+    entries: tuple[PlanEntry, ...],
+    source_folders: tuple[SourceFolder, ...],
 ) -> Plan:
     """The Plan of ``entries`` whose names are claimed: the one place a built or a
     derived Plan is made.
 
-    Stragglers are worked out here (#25), from the entries and the children each
-    source folder had when the Plan was first built; the folders are not read again.
+    Stragglers are worked out here, from the entries and ``source_folders``, the
+    children each source folder had when the Plan was first built; the folders are not
+    read again.
     """
-    return Plan(options=options, titles=titles, entries=entries)
+    return Plan(
+        options=options,
+        titles=titles,
+        entries=entries,
+        stragglers=plan_stragglers(options, entries, source_folders),
+        source_folders=source_folders,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -598,7 +652,9 @@ def derive_plan(plan: Plan, change: PlanChange) -> Plan:
     """
     if isinstance(change, PickMatch):
         titles, entries = _with_picked_match(plan, change)
-        return _plan_of(plan.options, titles, _claim_names(entries, plan.options))
+        return _plan_of(
+            plan.options, titles, _claim_names(entries, plan.options), plan.source_folders
+        )
     video = change.video
     if video not in plan.entries:
         msg = f"{video.source} is not in the Plan."
@@ -621,7 +677,9 @@ def derive_plan(plan: Plan, change: PlanChange) -> Plan:
     entries = tuple(
         replace(entry, status=status) if entry == video else entry for entry in plan.entries
     )
-    return _plan_of(plan.options, plan.titles, _claim_names(entries, plan.options))
+    return _plan_of(
+        plan.options, plan.titles, _claim_names(entries, plan.options), plan.source_folders
+    )
 
 
 def _with_picked_match(

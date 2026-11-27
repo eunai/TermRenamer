@@ -1,7 +1,7 @@
 """The Spotlight screen: a header, the Stages row, the current Stage's view and the footer.
 
 The app owns the batch's flow: the queue, the session's settings owner, the Plan and
-the Apply results. It builds the Plan and applies it off the screen's thread, and it
+the Apply outcome. It builds the Plan and applies it off the screen's thread, and it
 moves between the four Stages. Each Stage's view lives in its own module under
 :mod:`termrenamer.tui.stages`, each dialog under :mod:`termrenamer.tui.dialogs` and
 each view under :mod:`termrenamer.tui.views`. Every key goes through the key table in
@@ -28,7 +28,7 @@ from termrenamer.api.lookup import FilmLookup, TvLookup
 from termrenamer.app_bootstrap import Settings, ThemeName
 from termrenamer.core.apply import apply_plan
 from termrenamer.core.models import (
-    ApplyResult,
+    ApplyOutcome,
     Candidate,
     EntryStatus,
     Plan,
@@ -81,6 +81,15 @@ _APPLY = "apply"
 """The worker that applies the Plan."""
 _PICK = "pick"
 """The worker that looks up a picked TV Match's episodes."""
+
+
+def _start_folder() -> Path:
+    """The folder the file and folder dialogs open in: the working folder, or the home
+    folder when the working folder is gone (Apply may have removed it)."""
+    try:
+        return Path.cwd()
+    except OSError:
+        return Path.home()
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,7 +168,7 @@ class TermRenamerApp(App[None]):
         self.stage = Stage.QUEUE
         self.plan: Plan | None = None
         """The Plan the Preview shows, or ``None``."""
-        self.results: tuple[ApplyResult, ...] | None = None
+        self.outcome: ApplyOutcome | None = None
         """What the last Apply did, while the Applied Stage shows it."""
         self._applying = False
         self._cancel: threading.Event | None = None
@@ -309,11 +318,11 @@ class TermRenamerApp(App[None]):
 
     def action_add_file(self) -> None:
         """Open the file dialog; the picked file is queued, Escape changes nothing."""
-        self.push_screen(FilePicker(Path.cwd()), self._source_picked)
+        self.push_screen(FilePicker(_start_folder()), self._source_picked)
 
     def action_add_folder(self) -> None:
         """Open the folder dialog; the picked folder is queued, Escape changes nothing."""
-        self.push_screen(FolderPicker(Path.cwd()), self._source_picked)
+        self.push_screen(FolderPicker(_start_folder()), self._source_picked)
 
     def _source_picked(self, path: Path | None) -> None:
         if path is None or self.stage is not Stage.QUEUE:
@@ -632,24 +641,36 @@ class TermRenamerApp(App[None]):
         self._apply(plan)
 
     @work(thread=True, exclusive=True, group="batch", exit_on_error=False, name=_APPLY)
-    def _apply(self, plan: Plan) -> tuple[Plan, tuple[ApplyResult, ...]]:
-        return plan, tuple(apply_plan(plan, confirmed=True))
+    def _apply(self, plan: Plan) -> tuple[Plan, ApplyOutcome]:
+        return plan, apply_plan(plan, confirmed=True)
 
-    def _apply_finished(self, plan: Plan, results: tuple[ApplyResult, ...]) -> None:
+    def _apply_finished(self, plan: Plan, outcome: ApplyOutcome) -> None:
         self._applying = False
         self.session_settings.unlock()
         self.plan = None
-        self.results = results
-        for result in results:
+        self.outcome = outcome
+        for result in outcome.results:
             target = f" → {result.destination}" if result.destination is not None else ""
             self._messages.info(
                 "%s %s%s: %s", result.status.value, result.source, target, result.reason
             )
+        for result in outcome.stragglers:
+            self._messages.info(
+                "Straggler %s %s → %s: %s",
+                result.status.value,
+                result.source,
+                result.destination,
+                result.reason,
+            )
+        for path in outcome.files_left_behind:
+            self._messages.warning(
+                "A copy Apply made could not be removed after its move failed: %s", path
+            )
         applied = self.query_one(AppliedStage)
-        applied.show_results(plan, results)
+        applied.show_results(plan, outcome)
         self._show_stage(Stage.APPLIED)
         counts = applied.counts
-        failed = counts is not None and counts.failed
+        failed = counts is not None and counts.anything_failed
         self.say(
             "Applied." if failed else "Applied. Nothing failed.",
             MessageKind.WARNING if failed else MessageKind.INFO,
@@ -696,7 +717,7 @@ class TermRenamerApp(App[None]):
 
     def action_new_batch(self) -> None:
         self.queue.clear()
-        self.results = None
+        self.outcome = None
         self.query_one(QueueStage).show_queue(())
         self._show_stage(Stage.QUEUE)
         self.say("Ready for a new batch.")

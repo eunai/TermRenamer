@@ -558,3 +558,164 @@ def test_episodes_looked_up_for_a_pick_are_cached_by_show_not_by_title_hint(
     assert again.titles[0].match == HARBOUR
     assert cache.get_episode(provider="tmdb", show_id="40", season=1, episode=1) == "Pilot"
     cache.close()
+
+
+# ----------------------------------------------------------- Stragglers and names
+
+
+def _harbour_discs(tmp_path: Path) -> Path:
+    """Harbour Lights on two discs, each with a ``folder.jpg``; disc 1 also holds notes."""
+    show = tmp_path / "Backups" / "Harbour Lights"
+    for name in (
+        "Disc 1/Harbour.Lights.S01E01.mkv",
+        "Disc 1/folder.jpg",
+        "Disc 1/notes.txt",
+        "Disc 2/Harbour.Lights.S01E02.mkv",
+        "Disc 2/folder.jpg",
+    ):
+        path = show.joinpath(*name.split("/"))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x")
+    return show
+
+
+def _picked_show(plan: Plan, show: Candidate, provider: TvStandIn) -> Plan:
+    [title] = plan.titles
+    episodes = look_up_episodes(plan, title, show, TvLookup(provider))
+    assert episodes is not None
+    return derive_plan(plan, PickMatch(title, show, found=(show,), episodes=episodes))
+
+
+def test_a_pick_that_sends_a_folders_only_video_to_no_match_turns_its_stragglers_off(
+    tmp_path: Path,
+) -> None:
+    library = tmp_path / "Library"
+    provider = _harbour()
+    plan = plan_queue([_harbour_discs(tmp_path)], _tv_options(library=library), provider).plan
+    assert {s.source.parent.name for s in plan.stragglers} == {"Disc 1", "Disc 2"}
+
+    derived = _picked_show(plan, HARBOUR_US, provider)  # it has no episode 2
+
+    disc_2 = next(e for e in derived.videos if e.source.parent.name == "Disc 2")
+    assert disc_2.status is EntryStatus.NO_MATCH
+    assert sorted(s.source.name for s in derived.stragglers) == ["folder.jpg", "notes.txt"]
+    assert {s.source.parent.name for s in derived.stragglers} == {"Disc 1"}
+    assert derived.source_folders == plan.source_folders
+
+
+def test_a_pick_that_changes_a_videos_target_folder_moves_its_stragglers_there(
+    tmp_path: Path,
+) -> None:
+    library = tmp_path / "Library"
+    show = _harbour_discs(tmp_path)
+    provider = _harbour()
+    provider.episodes[("40", 1, 2)] = "Second"
+    plan = plan_queue([show], _tv_options(library=library), provider).plan
+
+    derived = _picked_show(plan, HARBOUR_US, provider)
+
+    target = library / "Harbour Lights (US)"
+    assert [(s.source, s.destination) for s in derived.stragglers] == [
+        (show / "Disc 1" / "folder.jpg", target / "folder.jpg"),
+        (show / "Disc 1" / "notes.txt", target / "notes.txt"),
+        (show / "Disc 2" / "folder.jpg", target / "folder (1).jpg"),
+    ]
+    assert {e.destination.parent for e in derived.videos if e.destination} == {target}
+
+
+def test_a_not_recognised_film_given_a_match_takes_its_folders_stragglers_along(
+    tmp_path: Path,
+) -> None:
+    library = tmp_path / "Library"
+    rip = tmp_path / "Films" / "1080p"
+    rip.mkdir(parents=True)
+    (rip / "1080p.mkv").write_bytes(b"?")
+    (rip / "poster.jpg").write_bytes(b"p")
+    plan = plan_queue([tmp_path / "Films"], _film_options(library=library), _heat()).plan
+    assert plan.stragglers == ()
+
+    derived = derive_plan(plan, PickMatch(plan.entries[0], HEAT_WAVE, found=(HEAT_WAVE,)))
+
+    target = library / "Heat Wave (1990)"
+    assert derived.entries[0].destination == target / "Heat Wave (1990).mkv"
+    assert [(s.source, s.destination) for s in derived.stragglers] == [
+        (rip / "poster.jpg", target / "poster.jpg")
+    ]
+
+
+def test_a_not_recognised_film_joining_a_title_takes_its_folders_stragglers_along(
+    tmp_path: Path,
+) -> None:
+    library = tmp_path / "Library"
+    films = tmp_path / "Films"
+    for name in ("1080p/1080p.mkv", "1080p/poster.jpg", "Heat.1995/Heat.1995.mkv"):
+        path = films.joinpath(*name.split("/"))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x")
+    plan = plan_queue([films], _film_options(library=library), _heat()).plan
+    unread = next(e for e in plan.entries if e.status is EntryStatus.NOT_RECOGNISED)
+
+    derived = derive_plan(plan, PickMatch(unread, HEAT, found=(HEAT,)))
+
+    [heat] = derived.titles
+    assert all(e.title == heat for e in derived.entries)
+    assert [(s.source, s.destination) for s in derived.stragglers] == [
+        (films / "1080p" / "poster.jpg", library / "Heat (1995)" / "poster.jpg")
+    ]
+
+
+BLAZE = Candidate(id="88", name="Blaze", year=2001)
+
+
+@pytest.mark.parametrize(
+    ("first", "picked"),
+    [
+        (Candidate(id="5", name="Café", year=2001), Candidate(id="6", name="CAFÉ", year=2001)),
+        (
+            Candidate(id="5", name="Café", year=2001),
+            Candidate(id="6", name="Café", year=2001),
+        ),
+    ],
+    ids=["letter case", "unicode form"],
+)
+def test_a_picked_name_that_differs_only_in_case_or_unicode_form_is_name_taken(
+    tmp_path: Path, first: Candidate, picked: Candidate
+) -> None:
+    (tmp_path / "Blaze.2001.mkv").write_bytes(b"b")
+    (tmp_path / "Cafe.2001.mkv").write_bytes(b"c")
+    provider = FilmStandIn(films={("blaze", 2001): (BLAZE,), ("cafe", 2001): (first,)})
+    plan = plan_queue([tmp_path], _film_options(), provider).plan
+
+    derived = derive_plan(plan, PickMatch(_title(plan, "Blaze"), picked, found=(picked,)))
+
+    [blaze, cafe] = derived.videos
+    assert (blaze.source.name, blaze.status) == ("Blaze.2001.mkv", EntryStatus.READY)
+    assert blaze.destination == tmp_path / f"{picked.name} (2001).mkv"
+    assert (cafe.source.name, cafe.status) == ("Cafe.2001.mkv", EntryStatus.NAME_TAKEN)
+    assert cafe.destination == tmp_path / f"{first.name} (2001) (1).mkv"
+
+
+def test_picking_works_out_the_stragglers_without_reading_a_folder_or_resolving_a_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    library = tmp_path / "Library"
+    provider = _harbour()
+    plan = plan_queue([_harbour_discs(tmp_path)], _tv_options(library=library), provider).plan
+    [title] = plan.titles
+    episodes = look_up_episodes(plan, title, HARBOUR_US, TvLookup(provider))
+    assert episodes is not None
+
+    def no_resolve(self: Path, strict: bool = False) -> Path:
+        raise AssertionError(f"resolved {self} while deriving")
+
+    def no_listing(self: Path) -> object:
+        raise AssertionError(f"listed {self} while deriving")
+
+    monkeypatch.setattr(Path, "resolve", no_resolve)
+    monkeypatch.setattr(Path, "iterdir", no_listing)
+    derived = derive_plan(
+        plan, PickMatch(title, HARBOUR_US, found=(HARBOUR_US,), episodes=episodes)
+    )
+    monkeypatch.undo()
+
+    assert {s.source.parent.name for s in derived.stragglers} == {"Disc 1"}

@@ -57,7 +57,7 @@ def test_apply_skips_entry_when_broken_link_appears_at_destination(media: Path) 
     dest = plan.entries[0].destination
     _plant_broken_link(dest)
 
-    results = apply_plan(plan, confirmed=True)
+    results = apply_plan(plan, confirmed=True).results
 
     assert [(r.status, r.reason) for r in results] == [
         (ApplyStatus.SKIP, "destination exists at apply time"),
@@ -77,21 +77,43 @@ def test_plan_numbers_an_entry_whose_wanted_name_is_a_broken_link(media: Path) -
     assert planned == wanted.with_name("Show - S01E01 - Pilot (1).mkv")
 
 
-def test_straggler_whose_name_is_a_broken_link_gets_the_numbered_name(media: Path) -> None:
+def _straggler_backups(media: Path) -> Path:
     season = media / "in" / "The Show" / "Season1"
     season.mkdir(parents=True)
     (season / "Show.S01E01.mkv").write_bytes(b"v")
     (season / "extra.nfo").write_text("nfo", encoding="utf-8")
-    plan = _plan(media / "in", folder_rename=True, season_folders=True)
-    dest_folder = plan.entries[0].destination.parent
+    return season
+
+
+def test_straggler_whose_name_is_a_broken_link_gets_the_numbered_name(media: Path) -> None:
+    season = _straggler_backups(media)
+    first = _plan(media / "in", folder_rename=True, season_folders=True)
+    dest_folder = first.entries[0].destination.parent
     _plant_broken_link(dest_folder / "extra.nfo")
 
-    results = apply_plan(plan, confirmed=True)
+    plan = _plan(media / "in", folder_rename=True, season_folders=True)
+    outcome = apply_plan(plan, confirmed=True)
 
-    assert [r.status for r in results] == [ApplyStatus.RENAMED]
+    assert [s.destination for s in plan.stragglers] == [dest_folder / "extra (1).nfo"]
+    assert [r.status for r in outcome.results] == [ApplyStatus.RENAMED]
     assert (dest_folder / "extra (1).nfo").read_text(encoding="utf-8") == "nfo"
     assert (dest_folder / "extra.nfo").is_symlink()
     assert not (season / "extra.nfo").exists()
+
+
+def test_straggler_skipped_when_broken_link_appears_at_its_path(media: Path) -> None:
+    season = _straggler_backups(media)
+    plan = _plan(media / "in", folder_rename=True, season_folders=True)
+    [straggler] = plan.stragglers
+    _plant_broken_link(straggler.destination)
+
+    outcome = apply_plan(plan, confirmed=True)
+
+    assert [(r.status, r.reason) for r in outcome.stragglers] == [
+        (ApplyStatus.SKIP, "destination exists at apply time"),
+    ]
+    assert (season / "extra.nfo").read_text(encoding="utf-8") == "nfo"
+    assert straggler.destination.is_symlink()
 
 
 def test_apply_skips_entry_when_link_to_an_existing_file_appears_at_destination(
@@ -106,7 +128,7 @@ def test_apply_skips_entry_when_link_to_an_existing_file_appears_at_destination(
     dest.parent.mkdir(parents=True)
     dest.symlink_to(other)
 
-    results = apply_plan(plan, confirmed=True)
+    results = apply_plan(plan, confirmed=True).results
 
     assert [(r.status, r.reason) for r in results] == [
         (ApplyStatus.SKIP, "destination exists at apply time"),
@@ -139,7 +161,7 @@ def test_case_only_rename_keeps_the_wanted_name_and_applies(tmp_path: Path) -> N
     dest = plan.entries[0].destination
     assert dest == folder / "Show - S01E01 - Pilot.mkv"
 
-    results = apply_plan(plan, confirmed=True)
+    results = apply_plan(plan, confirmed=True).results
 
     assert [r.status for r in results] == [ApplyStatus.RENAMED]
     assert [p.name for p in folder.iterdir()] == ["Show - S01E01 - Pilot.mkv"]

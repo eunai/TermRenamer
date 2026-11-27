@@ -313,7 +313,8 @@ def _sidecar_notes(sidecars: tuple[PlanEntry, ...], *, moves: bool) -> list[str]
 
 
 def _summary(counts: PlanCounts) -> str:
-    """The Plan's videos counted by status, on three lines to fit the column."""
+    """The Plan's videos counted by status, on three lines to fit the column, and the
+    Stragglers to merge when there are any."""
 
     def part(n: int, word: StatusWord) -> str:
         return f"[{word.style}]{n} {word.value}[/]"
@@ -327,6 +328,13 @@ def _summary(counts: PlanCounts) -> str:
             part(counts.no_match, StatusWord.NO_MATCH)
             + dot
             + part(counts.not_recognised, StatusWord.NOT_RECOGNISED),
-            part(counts.left_out, StatusWord.LEFT_OUT),
+            part(counts.left_out, StatusWord.LEFT_OUT) + _stragglers_part(counts.stragglers),
         )
     )
+
+
+def _stragglers_part(n: int) -> str:
+    """`` · 2 Stragglers merge`` (Textual markup), or nothing for none."""
+    if not n:
+        return ""
+    return f" [$tr-dim]· {plural(n, 'Straggler')} {agree(n, 'merges', 'merge')}[/]"

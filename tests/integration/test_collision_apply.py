@@ -21,5 +21,5 @@ def test_apply_skips_when_destination_appeared(tmp_path: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(b"blocker")
 
-    results = apply_plan(plan, confirmed=True)
+    results = apply_plan(plan, confirmed=True).results
     assert any(r.status is ApplyStatus.SKIP for r in results)
