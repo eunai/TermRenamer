@@ -431,10 +431,10 @@ def test_an_unexpected_error_stops_apply_and_the_outcome_so_far_is_returned(
     second = show / "Disc 2" / "Show.Name.S01E02.mkv"
     real = apply_module.move_no_replace
 
-    def move(source: Path, dest: Path, changes: Changes) -> None:
+    def move(source: Path, dest: Path, changes: Changes, **kwargs: object) -> None:
         if source == second:
             raise RuntimeError("boom")
-        real(source, dest, changes)
+        real(source, dest, changes, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr(apply_module, "move_no_replace", move)
     outcome = apply_plan(plan, confirmed=True)
@@ -448,6 +448,30 @@ def test_an_unexpected_error_stops_apply_and_the_outcome_so_far_is_returned(
     assert [m.source for m in outcome.moves] == [_video(show)]
     assert outcome.folders_removed == ()
     assert (show / "Disc 1" / "notes.txt").exists()
+
+
+def test_an_error_outside_any_item_stops_apply_and_an_outcome_is_returned(
+    show: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan = _plan(show)
+
+    def source_roots(entries: object) -> dict[str, Path]:
+        raise RuntimeError("boom")  # before the first item, outside any of them
+
+    monkeypatch.setattr(apply_module, "source_roots", source_roots)
+    outcome = apply_plan(plan, confirmed=True)
+    monkeypatch.undo()
+
+    stopped = (ApplyStatus.SKIP, "not applied: Apply stopped after an unexpected error")
+    assert [r.source for r in outcome.results] == [
+        *(e.source for e in plan.entries if not e.is_sidecar),
+        *(e.source for e in plan.entries if e.is_sidecar),
+    ]
+    assert set(_by_source(outcome.results).values()) == {stopped}
+    assert set(_by_source(outcome.stragglers).values()) == {stopped}
+    assert len(outcome.stragglers) == len(plan.stragglers)
+    assert outcome.moves == () and outcome.folders_created == ()
+    assert all(e.source.exists() for e in plan.entries)
 
 
 def test_a_hard_link_in_the_same_folder_under_another_exact_name_is_taken(
@@ -686,20 +710,22 @@ def test_a_link_moved_across_drives_is_made_again_with_its_target(
 @pytest.mark.skipif(not WINDOWS, reason="a junction exists only on Windows")
 def test_a_real_junction_is_moved_as_itself_and_never_entered(show: Path, tmp_path: Path) -> None:
     elsewhere = tmp_path / "Elsewhere"
-    _write(elsewhere / "bonus.txt", b"bonus")
+    # A video, which planning would list as an entry if the scan went into the junction.
+    _write(elsewhere / "Show.Name.S01E03.mkv", b"behind")
     extras = show / "Disc 1" / "Extras"
     point_folder_at(extras, elsewhere)
     plan = _plan(show)
 
     disc_1 = next(f for f in plan.source_folders if f.path == show / "Disc 1")
     assert extras in disc_1.files
+    assert all(extras not in e.source.parents for e in plan.entries)
     outcome = apply_plan(plan, confirmed=True)
 
     moved = show / "Show Name" / "Season 01" / "Extras"
     assert os.path.isjunction(moved)
     assert os.path.samestat(os.stat(moved), os.stat(elsewhere))
     assert _by_source(outcome.stragglers)[extras] == (ApplyStatus.RENAMED, "ok")
-    assert (elsewhere / "bonus.txt").read_bytes() == b"bonus"
+    assert (elsewhere / "Show.Name.S01E03.mkv").read_bytes() == b"behind"
     assert all(elsewhere not in m.source.parents for m in outcome.moves)
 
 
@@ -791,3 +817,196 @@ def test_the_working_folder_is_left_when_its_folder_is_queued_in_another_case(
     assert os.path.samestat(os.stat(os.getcwd()), os.stat(show))
     # The Plan spells the queued folder as the disk lists it.
     assert str(show / "Disc 1" / "Subs") in {str(f) for f in outcome.folders_removed}
+
+
+def _after_the_claim(
+    monkeypatch: pytest.MonkeyPatch,
+    source: Path,
+    dest: Path,
+    path_name: str,
+    then: Callable[[], None],
+) -> None:
+    """Run ``then`` once, just after the new name ``dest`` holds the file and before the
+    source's name is removed: after the hard link, or after the copy is closed."""
+    if path_name == "link":
+        real_link = os.link
+
+        def link(src: object, dst: object, *args: object, **kwargs: object) -> None:
+            real_link(src, dst, *args, **kwargs)  # type: ignore[arg-type]
+            if os.fspath(dst) == str(dest):  # type: ignore[call-overload]
+                then()
+
+        monkeypatch.setattr(os, "link", link)
+        return
+    real_open, real_close = os.open, os.close
+    copies: list[int] = []
+
+    def open_(path: object, flags: int, *args: object, **kwargs: object) -> int:
+        fd = real_open(path, flags, *args, **kwargs)  # type: ignore[arg-type]
+        if flags & os.O_EXCL and _in_folder_of(path, dest):
+            copies.append(fd)
+        return fd
+
+    def close(fd: int) -> None:
+        real_close(fd)
+        if fd in copies:
+            copies.remove(fd)
+            then()
+
+    _across_drives(monkeypatch, only=source)
+    monkeypatch.setattr(os, "open", open_)
+    monkeypatch.setattr(os, "close", close)
+
+
+def _skip_the_hard_link_on_windows(path_name: str) -> None:
+    if WINDOWS and path_name == "link":
+        pytest.skip("a Windows move makes no hard link: its rename leaves no second name")
+
+
+@pytest.mark.parametrize("path_name", ["link", "copy EXDEV"])
+def test_a_source_whose_old_name_goes_once_its_new_name_holds_it_stays_at_its_new_name(
+    show: Path, monkeypatch: pytest.MonkeyPatch, path_name: str
+) -> None:
+    _skip_the_hard_link_on_windows(path_name)
+    notes = _write(show / "Disc 1" / "notes.txt", b"my notes")
+    plan = _plan(show)
+    [dest] = [s.destination for s in plan.stragglers if s.source == notes]
+    real_unlink = os.unlink
+    _after_the_claim(monkeypatch, notes, dest, path_name, lambda: real_unlink(notes))
+
+    outcome = apply_plan(plan, confirmed=True)
+    monkeypatch.undo()
+
+    assert dest.read_bytes() == b"my notes"
+    assert not notes.exists(follow_symlinks=False)
+    assert (notes, dest) in [(m.source, m.destination) for m in outcome.moves]
+    assert outcome.files_left_behind == ()
+
+
+@pytest.mark.parametrize("path_name", ["link", "copy EXDEV"])
+def test_a_source_replaced_once_its_new_name_holds_it_keeps_both_files(
+    show: Path, monkeypatch: pytest.MonkeyPatch, path_name: str
+) -> None:
+    _skip_the_hard_link_on_windows(path_name)
+    notes = _write(show / "Disc 1" / "notes.txt", b"my notes")
+    plan = _plan(show)
+    [dest] = [s.destination for s in plan.stragglers if s.source == notes]
+    real_unlink = os.unlink
+
+    def replace_it() -> None:
+        real_unlink(notes)
+        notes.write_bytes(b"another program's notes")
+
+    _after_the_claim(monkeypatch, notes, dest, path_name, replace_it)
+    outcome = apply_plan(plan, confirmed=True)
+    monkeypatch.undo()
+
+    assert _by_source(outcome.stragglers)[notes][0] is ApplyStatus.FAIL
+    assert dest.read_bytes() == b"my notes"
+    assert notes.read_bytes() == b"another program's notes"
+    assert outcome.files_left_behind == (dest,)
+
+
+@pytest.mark.parametrize("path_name", ["link", "copy EXDEV"])
+def test_an_interrupt_just_after_the_old_name_is_removed_keeps_the_new_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path_name: str
+) -> None:
+    _skip_the_hard_link_on_windows(path_name)
+    source = _write(tmp_path / "old" / "notes.txt", b"my notes")
+    dest = tmp_path / "new" / "notes.txt"
+    dest.parent.mkdir()
+    real_unlink = os.unlink
+
+    def unlink(path: object, *args: object, **kwargs: object) -> None:
+        real_unlink(path, *args, **kwargs)  # type: ignore[arg-type]
+        if os.fspath(path) == str(source):  # type: ignore[call-overload]
+            raise KeyboardInterrupt
+
+    if path_name != "link":
+        _across_drives(monkeypatch, only=source)
+    monkeypatch.setattr(os, "unlink", unlink)
+    changes = Changes()
+    with pytest.raises(KeyboardInterrupt):
+        move_no_replace(source, dest, changes)
+    monkeypatch.undo()
+
+    assert dest.read_bytes() == b"my notes"
+    assert [(m.source, m.destination) for m in changes.moves] == [(source, dest)]
+    assert changes.files_left_behind == []
+
+
+def test_a_case_only_rename_the_disk_did_not_make_is_not_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if not _ignores_letter_case(tmp_path):
+        pytest.skip("on this filesystem a new letter case is a new name, not a case-only rename")
+    source = _write(tmp_path / "show name.mkv", b"v")
+    dest = tmp_path / "Show Name.mkv"
+    real_rename = os.rename
+
+    def rename(src: object, dst: object, *args: object, **kwargs: object) -> None:
+        if os.fspath(src) == str(source):  # type: ignore[call-overload]
+            return  # the call succeeds and the disk keeps the old name
+        real_rename(src, dst, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(os, "rename", rename)
+    changes = Changes()
+    with pytest.raises(OSError, match="still lists the old name"):
+        move_no_replace(source, dest, changes)
+    monkeypatch.undo()
+
+    assert changes.moves == []
+    assert os.listdir(tmp_path) == ["show name.mkv"]
+
+
+def test_a_link_to_a_file_moved_across_drives_never_becomes_a_link_to_a_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    needs_symlinks(tmp_path)
+    link = tmp_path / "old" / "notes link.txt"
+    _write(link.parent / "notes.txt", b"my notes")
+    link.symlink_to("notes.txt")
+    dest = tmp_path / "new" / "notes link.txt"
+    (dest.parent / "notes.txt").mkdir(parents=True)  # the same target text names a folder there
+
+    _across_drives(monkeypatch)
+    changes = Changes()
+    if WINDOWS:
+        # Windows makes a link to a folder whenever its target is one.
+        with pytest.raises(OSError, match="link to a folder"):
+            move_no_replace(link, dest, changes)
+        monkeypatch.undo()
+        assert os.readlink(link) == "notes.txt"
+        assert not dest.exists(follow_symlinks=False)
+        assert changes.moves == [] and changes.files_left_behind == []
+    else:
+        # A link here has no kind of its own: it is made again with its target text.
+        move_no_replace(link, dest, changes)
+        monkeypatch.undo()
+        assert os.readlink(dest) == "notes.txt"
+        assert not link.exists(follow_symlinks=False)
+
+
+@pytest.mark.skipif(not WINDOWS, reason="only Windows targets carry the \\\\?\\ prefix")
+def test_a_link_whose_target_needs_its_long_path_prefix_keeps_it_across_drives(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    needs_symlinks(tmp_path)
+    # A folder name ending in a period exists only through the \\?\ prefix, which keeps
+    # Windows from taking the period off.
+    target = "\\\\?\\" + str(tmp_path / "Shows.")
+    os.mkdir(target)
+    link = tmp_path / "old" / "Shows"
+    link.parent.mkdir()
+    os.symlink(target, link, target_is_directory=True)
+    written = os.readlink(link)
+    dest = tmp_path / "new" / "Shows"
+    dest.parent.mkdir()
+
+    _across_drives(monkeypatch)
+    changes = Changes()
+    move_no_replace(link, dest, changes)
+    monkeypatch.undo()
+
+    assert os.readlink(dest) == written
+    assert not link.exists(follow_symlinks=False)

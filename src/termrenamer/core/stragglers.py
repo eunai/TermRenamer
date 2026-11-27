@@ -73,19 +73,20 @@ def plan_stragglers(
         if not is_same_folder(source_folder, dest_folder):
             target_of.setdefault(str(source_folder), dest_folder)
 
-    wanted: list[tuple[Path, Path]] = []
+    wanted: list[tuple[Path, Path, bool]] = []
     for folder in source_folders:
         target = target_of.get(str(folder.path))
         if target is None:
             continue
-        wanted.extend((f, target) for f in folder.files if str(f) not in sources)
+        wanted.extend((f, target, False) for f in folder.files if str(f) not in sources)
         wanted.extend(
-            (f, target) for f in folder.folders if not _folder_stays(f, sources, target_keys)
+            (f, target, True) for f in folder.folders if not _folder_stays(f, sources, target_keys)
         )
     return tuple(
         Straggler(
             source=child,
             destination=allocate_destination(target / child.name, source=child, occupied=claimed),
+            is_folder=is_folder,
         )
-        for child, target in sorted(wanted, key=lambda pair: source_order(pair[0]))
+        for child, target, is_folder in sorted(wanted, key=lambda w: source_order(w[0]))
     )

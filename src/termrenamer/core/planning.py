@@ -35,8 +35,9 @@ from termrenamer.core.models import (
     SourceFolder,
     Title,
 )
+from termrenamer.core.moving import folders_between, links_among
 from termrenamer.core.parse import parse_filename, parse_film_filename
-from termrenamer.core.paths import source_order, source_place
+from termrenamer.core.paths import claim_key, source_order, source_place
 from termrenamer.core.progress import (
     BuildFinished,
     CancelSignal,
@@ -60,8 +61,9 @@ NO_TV_MATCH_BY_HAND = "Matching a not recognised TV file by hand is not availabl
 
 
 def fingerprint(path: Path) -> PlanFingerprint:
-    """The source's size and modification time, as planning records them and Apply checks."""
-    st = path.stat()
+    """The source's size and modification time, as planning records them and Apply checks;
+    a symbolic link's own, as Apply moves it as itself."""
+    st = os.lstat(path)
     return PlanFingerprint(path=path, size=st.st_size, mtime_ns=int(st.st_mtime_ns))
 
 
@@ -600,25 +602,60 @@ def _claimed_status(final: Path | None, wanted: Path) -> EntryStatus:
     return EntryStatus.NAME_TAKEN
 
 
+def folders_on_the_way(options: PlanOptions, root: Path, dest: Path) -> list[Path]:
+    """Each folder a move to ``dest`` goes through that Apply may make or must check:
+    from below the Destination root (or, with none, ``root``, the owning Source's
+    folder) to ``dest``'s folder, by the recorded text."""
+    return folders_between(options.destination_root or root, dest.parent)
+
+
+def source_roots(entries: Iterable[PlanEntry]) -> dict[str, Path]:
+    """The owning Source's folder of each source folder, by its recorded path: that of
+    the first entry from it."""
+    roots: dict[str, Path] = {}
+    for entry in entries:
+        roots.setdefault(str(entry.source.parent), entry.root)
+    return roots
+
+
 def _plan_of(
     options: PlanOptions,
     titles: tuple[Title, ...],
     entries: tuple[PlanEntry, ...],
     source_folders: tuple[SourceFolder, ...],
+    before: Plan | None = None,
 ) -> Plan:
     """The Plan of ``entries`` whose names are claimed: the one place a built or a
-    derived Plan is made.
+    derived Plan is made; ``before`` is the Plan it is derived from.
 
     Stragglers are worked out here, from the entries and ``source_folders``, the
     children each source folder had when the Plan was first built; the folders are not
-    read again.
+    read again. Each folder on the way to a new name that no Plan before went through,
+    under any letter case, is read here, as the names are claimed, for whether it is a
+    link (:attr:`Plan.linked_folders`); one read before keeps what was found then, so a
+    link made after a Preview is never taken for one the Plan found.
     """
+    stragglers = plan_stragglers(options, entries, source_folders)
+    looked_at = {claim_key(f): f for f in before.folders_looked_at} if before else {}
+    linked = {claim_key(lf.path): lf for lf in before.linked_folders} if before else {}
+    roots = source_roots(entries)
+    ways = [(e.root, e.destination) for e in entries]
+    ways += [(roots.get(str(s.source.parent), s.source.parent), s.destination) for s in stragglers]
+    for root, dest in ways:
+        if dest is None:
+            continue
+        on_the_way = folders_on_the_way(options, root, dest)
+        new = {key: f for f in on_the_way if (key := claim_key(f)) not in looked_at}
+        linked.update((claim_key(lf.path), lf) for lf in links_among(list(new.values())))
+        looked_at.update(new)
     return Plan(
         options=options,
         titles=titles,
         entries=entries,
-        stragglers=plan_stragglers(options, entries, source_folders),
+        stragglers=stragglers,
         source_folders=source_folders,
+        folders_looked_at=tuple(looked_at.values()),
+        linked_folders=tuple(linked.values()),
     )
 
 
@@ -690,7 +727,7 @@ def derive_plan(plan: Plan, change: PlanChange) -> Plan:
     if isinstance(change, PickMatch):
         titles, entries = _with_picked_match(plan, change)
         return _plan_of(
-            plan.options, titles, _claim_names(entries, plan.options), plan.source_folders
+            plan.options, titles, _claim_names(entries, plan.options), plan.source_folders, plan
         )
     video = change.video
     if video not in plan.entries:
@@ -716,7 +753,7 @@ def derive_plan(plan: Plan, change: PlanChange) -> Plan:
         replace(entry, status=status) if entry == video else entry for entry in plan.entries
     )
     return _plan_of(
-        plan.options, plan.titles, _claim_names(entries, plan.options), plan.source_folders
+        plan.options, plan.titles, _claim_names(entries, plan.options), plan.source_folders, plan
     )
 
 

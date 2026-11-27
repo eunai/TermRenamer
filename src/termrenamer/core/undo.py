@@ -60,9 +60,10 @@ def undo_apply(outcome: ApplyOutcome) -> UndoOutcome:
     """
     changes = Changes()
     results: list[ApplyResult] = []
+    taken: list[Path] = []
     stopped = False
     try:
-        _make_folders_again(outcome.folders_removed, changes)
+        taken = _make_folders_again(outcome, changes)
     except Exception:
         _LOG.exception("Undo stopped while making the removed folders again")
         stopped = True
@@ -71,7 +72,7 @@ def undo_apply(outcome: ApplyOutcome) -> UndoOutcome:
             results.append(_result(move, ApplyStatus.SKIP, _STOPPED))
             continue
         try:
-            results.append(_put_back(move, changes))
+            results.append(_put_back(move, taken, changes))
         except Exception as exc:
             _LOG.error("Undo stopped at %s by an unexpected error", move.destination, exc_info=exc)
             results.append(_result(move, ApplyStatus.FAIL, f"unexpected error: {exc!r}"))
@@ -102,29 +103,62 @@ def _behind_a_link(folder: Path) -> bool:
     return os.path.realpath(folder) != str(folder)
 
 
-def _make_folders_again(removed: tuple[Path, ...], changes: Changes) -> None:
-    """Make each folder of ``removed`` again, outer before inner; a folder that cannot be
-    made, or whose parent is now a link or behind one, is logged, and the files bound
-    for it are left where they are."""
+def _folder_stragglers(outcome: ApplyOutcome) -> list[Path]:
+    """The folder Stragglers Apply moved, from the outcome alone: those whose new folder
+    Apply made, as a folder Straggler is moved as its files into a folder made for it."""
+    made = {str(folder) for folder in outcome.folders_created}
+    return [
+        r.source
+        for r in outcome.stragglers
+        if r.destination is not None and str(r.destination) in made
+    ]
+
+
+def _within(path: Path, folders: list[Path]) -> bool:
+    """Whether ``path`` is one of ``folders`` or lies inside one, by the recorded text."""
+    return any(path == folder or folder in path.parents for folder in folders)
+
+
+def _make_folders_again(outcome: ApplyOutcome, changes: Changes) -> list[Path]:
+    """Make each folder Apply removed again, outer before inner, and return the folders
+    of folder Stragglers whose old place is taken.
+
+    A folder that cannot be made, or whose parent is now a link or behind one, is
+    logged, and the files bound for it are left where they are. A folder of a folder
+    Straggler (the Straggler itself or a folder inside it) that exists again goes back
+    only when nothing is at its old place, so when one is there, with anything or
+    nothing in it, the folder is taken and its files stay at their new place.
+    """
+    stragglers = _folder_stragglers(outcome)
+    taken: list[Path] = []
     # Apply lists each folder before its parent; the stable sort keeps that order's
     # reverse wherever the depth is the same.
-    for folder in sorted(reversed(removed), key=lambda path: len(path.parts)):
+    for folder in sorted(reversed(outcome.folders_removed), key=lambda path: len(path.parts)):
+        if _within(folder, taken):
+            continue
         if _behind_a_link(folder.parent):
             _LOG.warning("Undo did not make %s again: a link is now on its path", folder)
             continue
         try:
             os.mkdir(folder)
         except FileExistsError:
-            continue  # something is there; a file bound for it goes in only if it is a folder
+            if _within(folder, stragglers):
+                _LOG.warning("Undo left the files of %s: its old place is taken", folder)
+                taken.append(folder)
+            continue  # else a file bound for it goes in only if it is a folder
         except OSError as exc:
             _LOG.warning("Undo could not make %s again: %s", folder, exc)
             continue
         changes.folders_created.append(folder)
+    return taken
 
 
-def _put_back(move: Move, changes: Changes) -> ApplyResult:
-    """Move one file from its new place back to its old place, when the checks pass."""
+def _put_back(move: Move, taken: list[Path], changes: Changes) -> ApplyResult:
+    """Move one file from its new place back to its old place, when the checks pass;
+    ``taken`` holds the folders of folder Stragglers whose old place is taken."""
     new, old = move.destination, move.source
+    if _within(old.parent, taken):
+        return _result(move, ApplyStatus.SKIP, "its folder's old place is taken")
     if is_case_only_rename(old, new):
         # The folder lists only the old name, as when Apply could not confirm a
         # case-only rename: the file is at its old place already, if it is as recorded.
@@ -135,7 +169,7 @@ def _put_back(move: Move, changes: Changes) -> ApplyResult:
         if (st.st_size, st.st_mtime_ns) != (move.fingerprint.size, move.fingerprint.mtime_ns):
             reason = "changed since Apply: its size or modification time changed"
             return _result(move, ApplyStatus.SKIP, reason)
-        return _result(move, ApplyStatus.RENAMED, "already at its old place")
+        return _result(move, ApplyStatus.UNCHANGED, "already at its old place")
     linked = "its old folder is now a link or a file, or lies behind a link"
     if _behind_a_link(old.parent):
         return _result(move, ApplyStatus.SKIP, linked)
