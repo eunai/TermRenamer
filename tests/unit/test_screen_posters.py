@@ -9,6 +9,7 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
+import pytest
 from textual.geometry import Region
 from textual.widgets import Switch
 
@@ -24,6 +25,7 @@ from termrenamer.tui.widgets.title_details import TitleDetails
 
 from .screen_driver import (
     POSTERS_AVAILABLE,
+    POSTERS_UNREADABLE,
     SIZE,
     ImageHost,
     StandInImage,
@@ -31,6 +33,7 @@ from .screen_driver import (
     make_app,
     press,
     queue,
+    screen_lines,
     screen_text,
     settings,
     text_of,
@@ -221,15 +224,104 @@ async def test_the_poster_is_fixed_outside_the_scrolling_details(tmp_path: Path)
     assert under_panel
 
 
-async def test_the_apply_confirm_does_not_cover_the_poster(tmp_path: Path) -> None:
+@pytest.mark.parametrize("size", [SIZE, (100, 30)])
+async def test_the_apply_confirm_does_not_cover_the_poster(
+    tmp_path: Path, size: tuple[int, int]
+) -> None:
     app = poster_app(tmp_path, ImageHost())
-    async with app.run_test(size=SIZE) as pilot:
+    async with app.run_test(size=size) as pilot:
         await built(pilot, tmp_path)
         frame: Region = panel(app).region
+        drawn_before = frame_column(app)
         await press(pilot, "enter")
         assert isinstance(app.screen, ApplyConfirm)
         dialog = app.screen.query_one("#confirm-dialog").region
+        drawn_under = frame_column(app)
     assert not frame.overlaps(dialog)
+    assert drawn_before == drawn_under == frame.x
+
+
+def frame_column(app: TermRenamerApp) -> int:
+    """The column the panel's top border is drawn at."""
+    [row] = [line for line in screen_lines(app) if "┌─ TMDB" in line]
+    return row.index("┌─ TMDB")
+
+
+async def test_while_the_apply_confirm_is_open_the_panel_shows_the_name_not_the_image(
+    tmp_path: Path,
+) -> None:
+    # The confirm's backdrop tints what lies under it, which breaks a Kitty image.
+    app = poster_app(tmp_path, ImageHost())
+    async with app.run_test(size=SIZE) as pilot:
+        await built(pilot, tmp_path)
+        await press(pilot, "enter")
+        assert isinstance(app.screen, ApplyConfirm)
+        under_dialog = (images(app), panel_text(app))
+        await press(pilot, "n")
+        await pilot.pause()
+        after = len(images(app))
+    assert under_dialog[0] == []
+    assert "Harbour Lights" in under_dialog[1]
+    assert after == 1
+
+
+async def test_a_discarded_preview_downloads_nothing_when_posters_are_turned_on(
+    tmp_path: Path,
+) -> None:
+    host = ImageHost()
+    app = poster_app(tmp_path, host, show_posters=False)
+    async with app.run_test(size=SIZE) as pilot:
+        await built(pilot, tmp_path)
+        await press(pilot, "escape")
+        assert app.stage is Stage.QUEUE
+        await press(pilot, "i")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+    assert host.requests == []
+
+
+async def test_a_poster_file_the_image_widget_cannot_read_shows_no_poster(
+    tmp_path: Path,
+) -> None:
+    app = poster_app(tmp_path, ImageHost(), posters=POSTERS_UNREADABLE)
+    async with app.run_test(size=SIZE) as pilot:
+        await built(pilot, tmp_path)
+        await pilot.pause()
+        words = panel_text(app)
+        drawn = images(app)
+        logs = [line for _n, line in app.log_book.lines_after(0) if "No Poster" in line]
+    assert "Harbour Lights" in words and "no poster" in words
+    assert drawn == []
+    assert len(logs) == 1
+
+
+async def test_a_cancelled_download_is_tried_again_when_the_title_is_selected_again(
+    tmp_path: Path,
+) -> None:
+    gate = threading.Event()
+    host = ImageHost(status=404, gate=gate)
+    app = poster_app(tmp_path, host)
+    async with app.run_test(size=SIZE) as pilot:
+        await queue(pilot, tv_backups(tmp_path))
+        await press(pilot, "b")
+        for _ in range(100):  # until the Preview's download is in flight
+            if host.requests:
+                break
+            await pilot.pause(0.05)
+        assert app.stage is Stage.PREVIEW and len(host.requests) == 1
+        view = panel(app).view
+        assert app.workers.cancel_group(view, "poster")
+        gate.set()
+        await pilot.pause(0.2)  # waiting on the workers would raise for the cancelled one
+        await press(pilot, "down")
+        await press(pilot, "up")
+        for _ in range(100):
+            if len(host.requests) == 2 and "no poster" in panel_text(app):
+                break
+            await pilot.pause(0.05)
+        words = panel_text(app)
+    assert len(host.requests) == 2
+    assert "no poster" in words
 
 
 # ------------------------------------------------------------ hiding them

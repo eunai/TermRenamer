@@ -25,11 +25,11 @@ from termrenamer.persistence.posters import (
 )
 from termrenamer.util.http import HttpClient, HttpClientConfig
 
+from .poster_images import BROKEN_JPEG, JPEG, PNG, WEBP
+
 if TYPE_CHECKING:
     from conftest import IsolatedDirs
 
-JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 60
-PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 60
 DAY = 24 * 60 * 60.0
 TMDB = PosterRequest(provider_id="tmdb", ref="/harbour-lights-2011.jpg")
 TVDB = PosterRequest(
@@ -261,8 +261,7 @@ def test_a_body_that_is_not_an_image_is_refused(
 
 
 def test_png_and_webp_images_are_accepted(tmp_path: Path) -> None:
-    webp = b"RIFF\x00\x00\x00\x00WEBPVP8 " + b"\x00" * 40
-    for body, request_ in ((PNG, TMDB), (webp, TVDB)):
+    for body, request_ in ((PNG, TMDB), (WEBP, TVDB)):
         path = store_for(ImageHost(body=body), tmp_path, Clock()).fetch(request_)
         assert path.read_bytes() == body
 
@@ -378,3 +377,36 @@ def test_the_wiring_keeps_posters_in_the_per_user_folder(
     assert wired.posters is not None
     assert wired.posters.folder == poster_folder()
     assert not wired.posters.folder.exists()
+
+
+def test_with_pillow_a_body_that_cannot_be_decoded_is_refused(tmp_path: Path) -> None:
+    pytest.importorskip("PIL.Image")
+    host = ImageHost(body=BROKEN_JPEG)
+
+    with pytest.raises(PosterError, match="not an image"):
+        store_for(host, tmp_path, Clock()).fetch(TMDB)
+
+    assert files_in(tmp_path) == []
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32" or os.geteuid() == 0,
+    reason="needs POSIX folder permissions, which root ignores",
+)
+def test_a_folder_the_store_cannot_search_is_a_poster_error_never_a_crash(
+    tmp_path: Path,
+) -> None:
+    folder = tmp_path / "posters"
+    store = store_for(ImageHost(), folder, Clock())
+    store.fetch(TMDB)
+    folder.chmod(0o600)  # readable, but its files cannot be reached
+    try:
+        stored = store.stored(TMDB)
+        removed = store.remove_old()
+        with pytest.raises(PosterError):
+            store.fetch(TVDB)
+    finally:
+        folder.chmod(0o700)
+
+    assert stored is None
+    assert removed == 0

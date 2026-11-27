@@ -157,7 +157,8 @@ class TermRenamerApp(App[None]):
     def on_mount(self) -> None:
         self._install_log_handler()
         self._show_stage(Stage.QUEUE)
-        self._show_posters()
+        # A dialog or view over the main screen pauses its poster panel.
+        self.screen_change_signal.subscribe(self, lambda _screen: self._show_posters())
 
     def on_unmount(self) -> None:
         root = logging.getLogger()
@@ -179,6 +180,7 @@ class TermRenamerApp(App[None]):
     def _show_stage(self, stage: Stage) -> None:
         self.stage = stage
         self.query_one(ContentSwitcher).current = _STAGE_IDS[stage]
+        self._show_posters()
         self._refresh_chrome()
 
     def _refresh_chrome(self) -> None:
@@ -423,7 +425,10 @@ class TermRenamerApp(App[None]):
         plan = self.plan
         if plan is None or self._applying:
             return
-        self.push_screen(ApplyConfirm(plan), self._apply_answered)
+        confirm = ApplyConfirm(plan)
+        # Beside the poster panel, the confirm keeps to the right of it.
+        confirm.set_class(self._poster_source() is not None, "-beside-poster")
+        self.push_screen(confirm, self._apply_answered)
 
     def _apply_answered(self, yes: bool | None) -> None:
         plan = self.plan
@@ -553,12 +558,18 @@ class TermRenamerApp(App[None]):
         return PosterSource(store=store, image=image)
 
     def _show_posters(self, size: Size | None = None) -> None:
-        """Show or hide the poster panel on the main screen, under any open view too."""
+        """Show or hide the poster panel on the main screen, under any open view too.
+
+        Only the current Stage's panel draws Posters, and only while nothing covers the
+        main screen; the others are paused.
+        """
         if not self.screen_stack:
             return
         source = self._poster_source(size)
+        covered = not self._on_main_screen()
+        current = self.stage_view
         for view in self.screen_stack[0].query(TitleListStage):
-            view.show_posters(source)
+            view.show_posters(source, paused=covered or view is not current)
 
     def action_toggle_posters(self) -> None:
         """``i``: hide or show Posters for the session; when unavailable, say why."""

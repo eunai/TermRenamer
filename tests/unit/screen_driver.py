@@ -31,6 +31,8 @@ from termrenamer.tui.poster_support import ErrorWidget, PosterSupport
 from termrenamer.util.http import HttpClient, HttpClientConfig
 from termrenamer.wiring import PlanningWiring
 
+from .poster_images import JPEG
+
 SIZE = (120, 36)
 """The design size of the screen."""
 
@@ -153,10 +155,6 @@ def make_app(
     )
 
 
-JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 60
-"""Enough of a JPEG file for the poster store to accept it."""
-
-
 class StandInImage(Static):
     """Takes the image package's widget's place: writes ``POSTER`` and the file's name."""
 
@@ -174,6 +172,20 @@ POSTERS_AVAILABLE = PosterSupport(image=stand_in_image)
 """Posters as a terminal that draws images has them, drawn by :class:`StandInImage`."""
 
 
+class UnreadableImage(StandInImage):
+    """As the image package's widget does with a file it cannot read: shows the widget
+    ``on_error`` makes, inside itself."""
+
+    def on_mount(self) -> None:
+        self.mount(self.on_error(OSError("cannot identify image file")))
+
+
+POSTERS_UNREADABLE = PosterSupport(
+    image=lambda path, on_error: UnreadableImage(path, on_error=on_error)
+)
+"""Posters available, but every stored file fails to draw."""
+
+
 @dataclass
 class ImageHost:
     """Answers each image download with ``body`` and ``status``; records each request and
@@ -183,10 +195,14 @@ class ImageHost:
     status: int = 200
     requests: list[httpx.Request] = field(default_factory=list)
     threads: list[threading.Thread] = field(default_factory=list)
+    gate: threading.Event | None = None
+    """When set, each answer waits until the gate opens."""
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
         self.threads.append(threading.current_thread())
+        if self.gate is not None:
+            assert self.gate.wait(timeout=5)
         return httpx.Response(
             self.status, headers={"Content-Type": "image/jpeg"}, content=self.body
         )
@@ -228,6 +244,12 @@ def screen_text(app: TermRenamerApp) -> str:
 
     Each run of spaces is one space, and each line loses its ends' spaces, so tests
     read words rather than columns."""
+    lines = screen_lines(app)
+    return "\n".join(re.sub(r" {2,}", " ", line).strip() for line in lines)
+
+
+def screen_lines(app: TermRenamerApp) -> list[str]:
+    """The characters on the screen now, one string per row, columns kept."""
     width, height = app.size
     console = Console(
         width=width,
@@ -240,8 +262,7 @@ def screen_text(app: TermRenamerApp) -> str:
     console.print(
         app.screen._compositor.render_update(full=True, screen_stack=app._background_screens)
     )
-    lines = console.export_text().splitlines()
-    return "\n".join(re.sub(r" {2,}", " ", line).strip() for line in lines)
+    return console.export_text().splitlines()
 
 
 def text_of(app: TermRenamerApp, selector: str) -> str:

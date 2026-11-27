@@ -5,17 +5,22 @@ poster path or an ``https`` address on TheTVDB's image host is accepted. The ima
 downloaded from the Provider's image host, never its API host, with no key and no
 header of the app's own. Each file is named by a hash of its address and written only
 inside the store's folder; a body larger than :data:`MAX_POSTER_BYTES`, or one that is
-not a JPEG, PNG or WebP image, is refused.
+not a JPEG, PNG or WebP image, is refused. With Pillow installed (the ``posters``
+extra), a body is decoded whole before it is stored, so a stored file always draws.
 
-The store keeps no state in memory, so several threads may fetch at once.
+The store keeps no state in memory, so several threads may fetch at once. A folder or
+file the store cannot reach counts as no file, never as a crash.
 """
 
 from __future__ import annotations
 
 import contextlib
 import hashlib
+import importlib
+import io
 import os
 import re
+import stat
 import sys
 import tempfile
 import time
@@ -34,6 +39,9 @@ MAX_AGE_SECONDS = 30 * 24 * 60 * 60.0
 
 MAX_POSTER_BYTES = 5 * 1024 * 1024
 """The largest Poster file the store accepts."""
+
+MAX_POSTER_PIXELS = 25_000_000
+"""The most pixels a Poster may have; Provider posters have well under a million."""
 
 TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/w342"
 """TMDB's documented image base with a fixed poster size (342 pixels wide)."""
@@ -116,6 +124,22 @@ def _is_image(body: bytes) -> bool:
     )
 
 
+def _decodes(body: bytes) -> bool:
+    """Whether Pillow decodes ``body`` whole; ``True`` when Pillow is not installed."""
+    try:
+        pillow = importlib.import_module("PIL.Image")
+    except ImportError:
+        return True
+    try:
+        with pillow.open(io.BytesIO(body)) as image:
+            if image.width * image.height > MAX_POSTER_PIXELS:
+                return False
+            image.load()
+    except Exception:  # Pillow raises many kinds of error for a broken file
+        return False
+    return True
+
+
 class PosterStore:
     """Poster files in ``folder``, downloaded through ``http``, aged by ``clock``.
 
@@ -141,12 +165,16 @@ class PosterStore:
     def _path_for(self, address: str) -> Path:
         return self._folder / (hashlib.sha256(address.encode("utf-8")).hexdigest() + _SUFFIX)
 
-    def _young(self, path: Path) -> bool:
+    def _fresh(self, path: Path) -> bool:
+        """Whether ``path`` is a file younger than 30 days; ``False`` when unreachable."""
         try:
-            written = path.stat().st_mtime
+            status = path.stat()
         except OSError:
             return False
-        return self._clock() - written < MAX_AGE_SECONDS
+        return stat.S_ISREG(status.st_mode) and self._young(status)
+
+    def _young(self, status: os.stat_result) -> bool:
+        return self._clock() - status.st_mtime < MAX_AGE_SECONDS
 
     def stored(self, request: PosterRequest) -> Path | None:
         """The file for ``request`` when the store has one younger than 30 days.
@@ -157,7 +185,7 @@ class PosterStore:
             path = self._path_for(poster_address(request))
         except PosterError:
             return None
-        return path if path.is_file() and self._young(path) else None
+        return path if self._fresh(path) else None
 
     def fetch(self, request: PosterRequest) -> Path:
         """The file for ``request``: the stored one while young, else downloaded now.
@@ -170,17 +198,18 @@ class PosterStore:
         """
         address = poster_address(request)
         path = self._path_for(address)
-        if path.is_file() and self._young(path):
+        if self._fresh(path):
             return path
         try:
             download = self._http.download(address, max_bytes=MAX_POSTER_BYTES)
         except (ProviderError, httpx.HTTPError) as exc:
             raise PosterError(f"download failed: {exc}") from exc
         kind = download.content_type.split(";", 1)[0].strip().lower()
-        if (kind and not kind.startswith("image/")) or not _is_image(download.content):
+        body = download.content
+        if (kind and not kind.startswith("image/")) or not _is_image(body) or not _decodes(body):
             raise PosterError("the download is not an image")
         try:
-            self._write(path, download.content)
+            self._write(path, body)
         except OSError as exc:
             raise PosterError(f"cannot store the Poster: {exc}") from exc
         return path
@@ -203,7 +232,8 @@ class PosterStore:
     def remove_old(self) -> int:
         """Delete the store's files older than 30 days; return how many were deleted.
 
-        Only files the store names are touched; anything else in the folder stays.
+        Only files the store names are touched; anything else in the folder stays, and
+        so does a file whose age cannot be read.
         """
         try:
             entries = list(self._folder.iterdir())
@@ -211,9 +241,13 @@ class PosterStore:
             return 0
         removed = 0
         for entry in entries:
-            if _STORED_NAME.fullmatch(entry.name) is None or not entry.is_file():
+            if _STORED_NAME.fullmatch(entry.name) is None:
                 continue
-            if self._young(entry):
+            try:
+                status = entry.stat()
+            except OSError:
+                continue
+            if not stat.S_ISREG(status.st_mode) or self._young(status):
                 continue
             with contextlib.suppress(OSError):
                 entry.unlink()

@@ -63,6 +63,10 @@ def confirm_lines(plan: Plan) -> tuple[str, ...]:
     return tuple(lines)
 
 
+BESIDE_POSTER = 29
+"""The columns the poster panel takes from the screen's left edge, its margin included."""
+
+
 class ApplyConfirm(ModalScreen[bool]):
     """ "Apply the Plan?" with what Apply will do (:func:`confirm_lines`), and Apply or Back."""
 
@@ -116,6 +120,17 @@ class ApplyConfirm(ModalScreen[bool]):
 
     def on_mount(self) -> None:
         self.query_one("#confirm-dialog").border_title = " Apply the Plan? "
+        self._fit()
+
+    def on_resize(self) -> None:
+        self._fit()
+
+    def _fit(self) -> None:
+        """Beside the poster panel (class ``-beside-poster``), keep to the right of it."""
+        if self.has_class("-beside-poster"):
+            dialog = self.query_one("#confirm-dialog")
+            room = self.app.size.width - BESIDE_POSTER - dialog.styles.margin.right
+            dialog.styles.max_width = max(room, 20)
 
     def on_action_button_clicked(self, event: ActionButton.Clicked) -> None:
         event.stop()

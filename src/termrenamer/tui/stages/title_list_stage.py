@@ -49,13 +49,16 @@ class TitleListStage(StageView):
         """Whether the poster panel is on screen (the Stage has the class ``-posters``)."""
         return self.has_class("-posters")
 
-    def show_posters(self, source: PosterSource | None) -> None:
+    def show_posters(self, source: PosterSource | None, *, paused: bool = False) -> None:
         """Show the poster panel with Posters from ``source``, or hide it for ``None``.
 
         Hidden, the panel holds no image and downloads nothing; the details move up.
+        ``paused`` (the Stage is not shown, or something covers it), the panel shows the
+        Title's name in place of the image and downloads nothing.
         """
         self.set_class(source is not None, "-posters")
         for panel in self.query(PosterPanel):
+            panel.view.pause(paused)
             panel.view.use(source)
         self.posters_changed()
 

@@ -188,8 +188,9 @@ class PreviewStage(TitleListStage):
         if rows:
             self.title_list.highlighted = row_index
         self.show_heading_count(len(rows))
+        summary = _summary(PlanCounts.of(plan))
         for counts in self.query(".summary-counts").results(Static):
-            counts.update(_summary(PlanCounts.of(plan)))
+            counts.update(summary)
         self._show_details()
 
     def _kept_entry(self, plan: Plan) -> PlanEntry | None:

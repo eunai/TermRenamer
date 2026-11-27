@@ -152,24 +152,24 @@ releases put to work.
 
 Keys:
 
-| Key     | Where                     | Action                                |
-| ------- | ------------------------- | ------------------------------------- |
-| `a`     | Queue                     | Add a file                            |
-| `f`     | Queue                     | Add a folder                          |
-| `c`     | Queue                     | Clear the queue                       |
-| `b`     | Queue                     | Build the plan                        |
-| `↑` `↓` | Queue, Plan, Preview      | Select a source or a title            |
-| `Enter` | Preview                   | Apply, then `y` or `Enter` to confirm |
-| `Esc`   | Preview                   | Discard the plan                      |
-| `n`     | Applied                   | New batch                             |
-| `m`     | Queue, Preview            | Change mode (TV or Film)              |
-| `p`     | Queue, Preview            | Change provider                       |
-| `s`     | Queue, Preview, Applied   | Settings                              |
-| `i`     | Anywhere but a text field | Hide or show Posters                  |
-| `l`     | Anywhere but a text field | Logs                                  |
-| `?`     | Anywhere but a text field | Help                                  |
-| `q`     | Anywhere but a text field | Quit                                  |
-| `Esc`   | A dialog or view          | Close it                              |
+| Key     | Where                                          | Action                                |
+| ------- | ---------------------------------------------- | ------------------------------------- |
+| `a`     | Queue                                          | Add a file                            |
+| `f`     | Queue                                          | Add a folder                          |
+| `c`     | Queue                                          | Clear the queue                       |
+| `b`     | Queue                                          | Build the plan                        |
+| `↑` `↓` | Queue, Plan, Preview                           | Select a source or a title            |
+| `Enter` | Preview                                        | Apply, then `y` or `Enter` to confirm |
+| `Esc`   | Preview                                        | Discard the plan                      |
+| `n`     | Applied                                        | New batch                             |
+| `m`     | Queue, Preview                                 | Change mode (TV or Film)              |
+| `p`     | Queue, Preview                                 | Change provider                       |
+| `s`     | Queue, Preview, Applied                        | Settings                              |
+| `i`     | Anywhere but a text field or the Apply confirm | Hide or show Posters                  |
+| `l`     | Anywhere but a text field                      | Logs                                  |
+| `?`     | Anywhere but a text field                      | Help                                  |
+| `q`     | Anywhere but a text field                      | Quit                                  |
+| `Esc`   | A dialog or view                               | Close it                              |
 
 ## Features
 

@@ -6,8 +6,11 @@ otherwise, when downloads are allowed, the store downloads it on a thread of its
 never on the screen's. A failed download logs one line and leaves "no poster".
 
 While Posters are hidden or unavailable the view is given no :class:`PosterSource`:
-it then draws nothing, removes its image and downloads nothing. :class:`PosterPanel`
-frames one view at the mockup's 24 by 17 cells.
+it then draws nothing, removes its image and downloads nothing. While it is paused (its
+Stage is not shown, or a dialog covers it) it draws the Title's name in place of the
+image and downloads nothing; a dialog's backdrop would otherwise tint the image's cells,
+which breaks a Kitty image. :class:`PosterPanel` frames one view at the mockup's 24 by
+17 cells.
 """
 
 from __future__ import annotations
@@ -112,7 +115,8 @@ class PosterView(Vertical):
         self._wanted: _Wanted | None = None
         self._image: Widget | None = None
         self._image_request: PosterRequest | None = None
-        self._loading: set[PosterRequest] = set()
+        self._paused = False
+        self._fetches: dict[Worker[_Fetched], PosterRequest] = {}
         self._failed: set[PosterRequest] = set()
 
     def compose(self) -> ComposeResult:
@@ -153,6 +157,12 @@ class PosterView(Vertical):
         self._wanted = None
         self._draw()
 
+    def pause(self, paused: bool) -> None:
+        """While ``paused``, draw the name in place of the image and download nothing."""
+        if paused != self._paused:
+            self._paused = paused
+            self._draw()
+
     # ------------------------------------------------------------------ drawing
 
     def _draw(self) -> None:
@@ -169,13 +179,16 @@ class PosterView(Vertical):
                 wanted.name, wanted.label if request is None and wanted.label else NO_POSTER
             )
             return
+        if self._paused:
+            self._words(wanted.name, wanted.label)
+            return
         if request == self._image_request and self._image is not None:
             return
         path = source.store.stored(request)
         if path is not None:
             self._drop_image()
             self.text.display = False
-            image = source.image(path, lambda exc: self._unreadable(wanted.name, exc))
+            image = source.image(path, lambda exc: self._unreadable(request, wanted.name, exc))
             image.add_class("poster-image")
             self._image, self._image_request = image, request
             self.mount(image)
@@ -184,8 +197,7 @@ class PosterView(Vertical):
             self._words(wanted.name, wanted.label)
             return
         self._words(wanted.name, "")
-        if request not in self._loading:
-            self._loading.add(request)
+        if request not in self._fetches.values():
             store = source.store
 
             def fetch() -> _Fetched:
@@ -197,7 +209,8 @@ class PosterView(Vertical):
                     return _Fetched(request, f"{type(exc).__name__}: {exc}")
                 return _Fetched(request, None)
 
-            self.run_worker(fetch, thread=True, group="poster", exit_on_error=False)
+            worker = self.run_worker(fetch, thread=True, group="poster", exit_on_error=False)
+            self._fetches[worker] = request
 
     def _words(self, name: str, label: str) -> None:
         self._drop_image()
@@ -213,26 +226,33 @@ class PosterView(Vertical):
             image.image = None  # type: ignore[attr-defined]
         image.remove()
 
-    def _unreadable(self, name: str, exc: Exception) -> Widget:
+    def _unreadable(self, request: PosterRequest, name: str, exc: Exception) -> Widget:
+        """The image widget cannot read the stored file: the panel says "no poster"."""
         _LOG.warning("No Poster for %s: the file cannot be read (%s)", name, exc)
-        return Static(placeholder(name, NO_POSTER))
+        self._failed.add(request)
+        # Called while the image widget draws, so the panel changes once that is done.
+        self.call_later(self._draw)
+        return Static("")
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         if event.worker.group != "poster":
             return
         event.stop()
-        if event.state is not WorkerState.SUCCESS:
+        if event.state not in (WorkerState.SUCCESS, WorkerState.ERROR, WorkerState.CANCELLED):
             return
-        fetched = event.worker.result
-        if not isinstance(fetched, _Fetched):
+        request = self._fetches.pop(event.worker, None)
+        if request is None:
             return
-        self._loading.discard(fetched.request)
         wanted = self._wanted
-        name = wanted.name if wanted is not None and wanted.request == fetched.request else ""
-        if fetched.error is not None:
-            self._failed.add(fetched.request)
-            _LOG.warning("No Poster for %s: %s", name or fetched.request.ref, fetched.error)
-        if wanted is not None and wanted.request == fetched.request:
+        is_wanted = wanted is not None and wanted.request == request
+        fetched = event.worker.result if event.state is WorkerState.SUCCESS else None
+        if event.state is WorkerState.ERROR:
+            fetched = _Fetched(request, str(event.worker.error))
+        if isinstance(fetched, _Fetched) and fetched.error is not None:
+            self._failed.add(request)
+            name = wanted.name if wanted is not None and is_wanted else request.ref
+            _LOG.warning("No Poster for %s: %s", name, fetched.error)
+        if is_wanted:
             self._draw()
 
 
