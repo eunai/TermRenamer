@@ -37,6 +37,16 @@ def _folder_stays(folder: Path, sources: frozenset[str], target_keys: frozenset[
     )
 
 
+def _file_stays(path: Path, sources: frozenset[str], target_keys: frozenset[str]) -> bool:
+    """Whether a child file is never a Straggler: it is an entry of the Plan (by the
+    recorded paths as text), or a target folder's path is it or goes through it, by
+    claim key, as through a link to a folder (a link counts as a file)."""
+    if str(path) in sources:
+        return True
+    key = claim_key(path)
+    return any(t == key or t.startswith(key + os.sep) for t in target_keys)
+
+
 def plan_stragglers(
     options: PlanOptions,
     entries: Iterable[PlanEntry],
@@ -46,8 +56,8 @@ def plan_stragglers(
 
     With Folder rename off there are none. A source folder qualifies when at least one
     of its entries is applied to a different folder. Its Stragglers are its recorded
-    child files that are not entries, and its recorded child folders that
-    :func:`_folder_stays` does not keep. Each goes to the target folder that sorts
+    child files that :func:`_file_stays` does not keep, and its recorded child folders
+    that :func:`_folder_stays` does not keep. Each goes to the target folder that sorts
     first of those its folder's entries go to. After every applied entry has claimed
     its name, the Stragglers are numbered and claim theirs in source-path order, by the
     numbering rule whatever Name taken is set to, so no two share a path.
@@ -78,7 +88,9 @@ def plan_stragglers(
         target = target_of.get(str(folder.path))
         if target is None:
             continue
-        wanted.extend((f, target, False) for f in folder.files if str(f) not in sources)
+        wanted.extend(
+            (f, target, False) for f in folder.files if not _file_stays(f, sources, target_keys)
+        )
         wanted.extend(
             (f, target, True) for f in folder.folders if not _folder_stays(f, sources, target_keys)
         )

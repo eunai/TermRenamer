@@ -12,6 +12,7 @@ import pytest
 from termrenamer.core.apply import apply_plan
 from termrenamer.core.models import ApplyResult, ApplyStatus, Candidate, Plan
 from termrenamer.core.planning import LeaveOut, PickMatch, PutBack, derive_plan, plan_queue
+from termrenamer.core.undo import undo_apply
 
 from .links import needs_symlinks, point_folder_at
 from .test_apply_no_replace import _a_tick_after, _ignores_letter_case, _with_the_number_of
@@ -528,3 +529,31 @@ def test_a_destination_root_link_pointed_elsewhere_after_the_preview_is_never_en
     assert video.read_bytes() == b"x"
     assert os.listdir(disk_a) == [] and os.listdir(disk_b) == []
 
+
+def test_a_link_on_the_way_to_a_new_name_is_no_straggler_and_undo_puts_everything_back(
+    tmp_path: Path,
+) -> None:
+    backups = tmp_path / "Backups"
+    video = _write(backups / "Show.Name.S01E01.mkv")
+    elsewhere = tmp_path / "External"
+    elsewhere.mkdir()
+    link = backups / "Show Name"
+    point_folder_at(link, elsewhere)  # the new folder's path goes through it
+
+    plan = plan_queue([backups], _options(), _provider()).plan
+    [dest] = [e.destination for e in plan.entries]
+    assert dest is not None and link in dest.parents
+    assert [s.source for s in plan.stragglers] == []
+
+    outcome = apply_plan(plan, confirmed=True)
+
+    assert _by_source(outcome.results)[video] == (ApplyStatus.RENAMED, "ok")
+    assert (elsewhere / dest.relative_to(link)).read_bytes() == b"x"
+    assert os.path.realpath(link) == os.path.realpath(elsewhere)
+
+    undone = undo_apply(outcome)
+
+    assert [r.status for r in undone.results] == [ApplyStatus.RENAMED]
+    assert video.read_bytes() == b"x"
+    assert os.path.realpath(link) == os.path.realpath(elsewhere)
+    assert os.listdir(elsewhere) == []
