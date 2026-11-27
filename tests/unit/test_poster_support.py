@@ -163,7 +163,9 @@ def test_main_checks_the_terminal_once_before_the_screen_starts() -> None:
     assert order == ["check", "run"]
 
 
-def test_two_callers_of_one_poster_share_one_download_and_its_failure(tmp_path: Path) -> None:
+def test_two_callers_of_one_poster_share_one_download_and_its_failure(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     gate = threading.Event()
     host = ImageHost(status=404, gate=gate)
     source = PosterSource(store=host.store(tmp_path), image=stand_in_image)
@@ -172,7 +174,7 @@ def test_two_callers_of_one_poster_share_one_download_and_its_failure(tmp_path: 
 
     def ask() -> None:
         try:
-            source.fetch(request)
+            source.fetch(request, name="Heat", wanted=lambda: True)
         except PosterError as exc:
             errors.append(str(exc))
 
@@ -191,8 +193,17 @@ def test_two_callers_of_one_poster_share_one_download_and_its_failure(tmp_path: 
 
     assert len(host.requests) == 1
     assert len(errors) == 2 and errors[0] == errors[1]
-    # Once it has ended, a new call downloads again.
-    gate.set()
+    assert request in source.failed
+    assert [r.getMessage() for r in caplog.records if "No Poster" in r.getMessage()] == [
+        "No Poster for Heat: download failed: HTTP 404"
+    ]
+
+
+def test_a_download_nobody_wants_is_given_up_before_its_next_attempt(tmp_path: Path) -> None:
+    host = ImageHost(status=503, attempts=3)
+    source = PosterSource(store=host.store(tmp_path), image=stand_in_image)
+    request = PosterRequest("tmdb", "/heat.jpg")
     with pytest.raises(PosterError):
-        source.fetch(request)
-    assert len(host.requests) == 2
+        source.fetch(request, name="Heat", wanted=lambda: False)
+    assert len(host.requests) == 1
+    assert request not in source.failed

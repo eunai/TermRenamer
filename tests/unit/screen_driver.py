@@ -197,6 +197,8 @@ class ImageHost:
     threads: list[threading.Thread] = field(default_factory=list)
     gate: threading.Event | None = None
     """When set, each answer waits until the gate opens."""
+    attempts: int = 1
+    """How many times the store's HTTP client tries a download that gets 429 or 503."""
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
@@ -213,7 +215,7 @@ class ImageHost:
 
     def store(self, folder: Path) -> PosterStore:
         raw = httpx.Client(transport=httpx.MockTransport(self.handle))
-        config = HttpClientConfig(max_attempts=1, backoff_base_seconds=0)
+        config = HttpClientConfig(max_attempts=self.attempts, backoff_base_seconds=0, jitter=False)
         return PosterStore(folder, HttpClient(config=config, client=raw))
 
 

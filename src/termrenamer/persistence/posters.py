@@ -32,7 +32,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from termrenamer.util.errors import ProviderError, TermRenamerError
-from termrenamer.util.http import HttpClient
+from termrenamer.util.http import Abandoned, HttpClient
 
 MAX_AGE_SECONDS = 30 * 24 * 60 * 60.0
 """How long a Poster file is reused; older files are deleted at start."""
@@ -57,6 +57,11 @@ _STORED_NAME = re.compile(r"[0-9a-f]{64}(?:\.poster|\.[A-Za-z0-9_]{1,16}\.part)"
 
 class PosterError(TermRenamerError):
     """A Poster cannot be shown: its reference was refused, or its download failed."""
+
+
+class PosterAbandoned(PosterError):
+    """A download given up before it ended, because nobody wanted the Poster any more;
+    it is no failure, and may be tried again."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,12 +192,14 @@ class PosterStore:
             return None
         return path if self._fresh(path) else None
 
-    def fetch(self, request: PosterRequest) -> Path:
+    def fetch(self, request: PosterRequest, *, go_on: Callable[[], bool] | None = None) -> Path:
         """The file for ``request``: the stored one while young, else downloaded now.
 
-        Blocks while it downloads, so call it off the screen's thread.
+        Blocks while it downloads, so call it off the screen's thread. Before each new
+        attempt of the download, ``go_on`` is asked whether the Poster is still wanted.
 
         Raises:
+            PosterAbandoned: ``go_on`` said no before a new attempt.
             PosterError: The reference was refused, the download failed, or the body
                 is too large or not an image.
         """
@@ -201,7 +208,9 @@ class PosterStore:
         if self._fresh(path):
             return path
         try:
-            download = self._http.download(address, max_bytes=MAX_POSTER_BYTES)
+            download = self._http.download(address, max_bytes=MAX_POSTER_BYTES, go_on=go_on)
+        except Abandoned as exc:
+            raise PosterAbandoned(str(exc)) from exc
         except (ProviderError, httpx.HTTPError) as exc:
             raise PosterError(f"download failed: {exc}") from exc
         kind = download.content_type.split(";", 1)[0].strip().lower()

@@ -347,33 +347,86 @@ async def test_a_poster_file_the_image_widget_cannot_read_shows_no_poster(
     assert len(logs) == 1
 
 
-async def test_a_cancelled_download_is_tried_again_when_the_title_is_selected_again(
+async def until(pilot, done) -> None:  # type: ignore[no-untyped-def]
+    for _ in range(100):
+        if done():
+            return
+        await pilot.pause(0.05)
+    raise AssertionError("waited too long")
+
+
+def poster_logs(app: TermRenamerApp) -> list[str]:
+    return [line for _n, line in app.log_book.lines_after(0) if "No Poster" in line]
+
+
+async def test_a_failed_download_is_remembered_even_when_its_view_went_away(
     tmp_path: Path,
 ) -> None:
+    # The download's outcome belongs to the download: its view's worker is cancelled
+    # (as when the view is removed), and the 404 still counts once.
     gate = threading.Event()
     host = ImageHost(status=404, gate=gate)
     app = poster_app(tmp_path, host)
     async with app.run_test(size=SIZE) as pilot:
         await queue(pilot, tv_backups(tmp_path))
         await press(pilot, "b")
-        for _ in range(100):  # until the Preview's download is in flight
-            if host.requests:
-                break
-            await pilot.pause(0.05)
+        await until(pilot, lambda: bool(host.requests))
         assert app.stage is Stage.PREVIEW and len(host.requests) == 1
         view = panel(app).view
         assert app.workers.cancel_group(view, "poster")
         gate.set()
-        await pilot.pause(0.2)  # waiting on the workers would raise for the cancelled one
+        await until(pilot, lambda: bool(poster_logs(app)))
         await press(pilot, "down")
         await press(pilot, "up")
-        for _ in range(100):
-            if len(host.requests) == 2 and "no poster" in panel_text(app):
-                break
-            await pilot.pause(0.05)
+        await pilot.pause(0.2)
         words = panel_text(app)
-    assert len(host.requests) == 2
+        logs = poster_logs(app)
+    assert len(host.requests) == 1
     assert "no poster" in words
+    assert len(logs) == 1 and "HTTP 404" in logs[0]
+
+
+async def test_an_abandoned_download_is_tried_again_when_the_title_is_selected_again(
+    tmp_path: Path,
+) -> None:
+    # The first answer is a 503; nobody wants the Poster by then, so the download is
+    # given up before a second attempt, records nothing, and starts anew later.
+    gate = threading.Event()
+    host = ImageHost(status=503, gate=gate, attempts=2)
+    app = poster_app(tmp_path, host)
+    async with app.run_test(size=SIZE) as pilot:
+        await queue(pilot, tv_backups(tmp_path))
+        await press(pilot, "b")
+        await until(pilot, lambda: bool(host.requests))
+        await press(pilot, "down")  # Night Ferry, which has no Poster
+        gate.set()
+        await pilot.pause(0.3)
+        after_release = (len(host.requests), poster_logs(app))
+        await press(pilot, "up")
+        await until(pilot, lambda: "no poster" in panel_text(app))
+        logs = poster_logs(app)
+    assert after_release == (1, [])
+    assert len(host.requests) == 3  # tried again: two attempts, both 503
+    assert len(logs) == 1 and "503" in logs[0]
+
+
+async def test_hiding_posters_during_a_download_starts_no_new_attempt(tmp_path: Path) -> None:
+    gate = threading.Event()
+    host = ImageHost(status=503, gate=gate, attempts=2)
+    app = poster_app(tmp_path, host)
+    async with app.run_test(size=SIZE) as pilot:
+        await queue(pilot, tv_backups(tmp_path))
+        await press(pilot, "b")
+        await until(pilot, lambda: bool(host.requests))
+        await press(pilot, "i")
+        gate.set()
+        await pilot.pause(0.3)
+        while_hidden = len(host.requests)
+        await press(pilot, "i")
+        await until(pilot, lambda: "no poster" in panel_text(app))
+        tried_again = len(host.requests)
+    assert while_hidden == 1
+    assert tried_again == 3  # shown again: a new download, two attempts
 
 
 # ------------------------------------------------------------ hiding them

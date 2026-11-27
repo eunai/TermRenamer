@@ -556,3 +556,44 @@ async def test_a_long_status_keeps_the_key_hint_on_screen(
     assert status.startswith("Nothing found for “The Longest Film Title")
     assert Region(0, 0, *size).contains_region(dialog)
     assert hint.area > 0 and dialog.shrink((1, 1, 1, 1)).contains_region(hint)
+
+
+async def test_in_the_plain_list_left_and_right_move_between_the_choices_too(
+    tmp_path: Path,
+) -> None:
+    app = make_app(wiring(film=films()))  # Posters unavailable: the list
+    async with app.run_test(size=SIZE) as pilot:
+        await film_preview(pilot, tmp_path)
+        await press(pilot, "t")
+        await press(pilot, "right", "right", "left", "enter")
+        await settle(pilot)
+        plan = app.plan
+    assert plan is not None and plan.titles[0].match == HEAT_1986
+
+
+async def test_a_tile_download_that_fails_after_its_tile_went_away_is_remembered(
+    tmp_path: Path,
+) -> None:
+    # A resize to the plain list removes the tiles while the second one's download
+    # waits; its 404 is still logged once, and the tiles made again do not ask twice.
+    held = f"{IMAGES}/heat86.jpg"
+    host = HoldingHost(held={held}, status=404)
+    app = tiles_app(tmp_path, host, film=poster_films())
+    async with app.run_test(size=SIZE) as pilot:
+        await film_preview(pilot, tmp_path)
+        await press(pilot, "t")
+        await until(pilot, lambda: held in host.urls)
+        await pilot.resize_terminal(90, 28)
+        await settle(pilot)
+        host.release.set()
+        await until(
+            pilot, lambda: any("Heat" in line and "404" in line for line in no_poster_lines(app))
+        )
+        await pilot.resize_terminal(*SIZE)
+        await settle(pilot)
+        await pilot.pause(0.2)
+        asked = host.urls.count(held)
+        second = tile_poster_words(app, 1)
+    assert asked == 1
+    assert "no poster" in second
+    assert len(no_poster_lines(app)) == 2  # the first tile's 404 and the second's
