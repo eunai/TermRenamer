@@ -101,7 +101,7 @@ _AtOldName = Callable[[], "os.stat_result | None"]
 ``None``: a look whose last call on the disk is that ``lstat``, so that it can sit
 directly before the call it guards. It raises :class:`OSError` when the old name
 cannot be read, :class:`FileNotFoundError` when it is gone. For a copied file no longer
-held open it is ``None`` with no call, so nothing is removed by it."""
+held open it is ``None`` when the old name is there, so nothing is removed by it."""
 
 
 def _one_file(a: os.stat_result, b: os.stat_result) -> bool:
@@ -178,9 +178,12 @@ class _Held:
         """``path``'s ``lstat`` when that name holds this file or folder now, else
         ``None``. The look through the descriptor comes first and the look by name last,
         so the look by name can sit directly before the call it guards; it raises
-        :class:`OSError` when the name cannot be read."""
+        :class:`OSError` when the name cannot be read, :class:`FileNotFoundError` when it
+        is gone. A file released is looked at too, and is never found there: a name that
+        is gone still says so."""
         if self.fd is None:
-            return None if self.released else (now if self.agrees(now := os.lstat(path)) else None)
+            now = os.lstat(path)
+            return now if not self.released and self.agrees(now) else None
         try:
             held_now: os.stat_result | None = os.fstat(self.fd)
         except OSError:
