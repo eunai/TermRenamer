@@ -159,8 +159,9 @@ class AppliedStage(StageView):
 
 
 def has_anything_to_undo(outcome: ApplyOutcome) -> bool:
-    """Whether the outcome records a move or a folder made or removed."""
-    return bool(outcome.moves or outcome.folders_created or outcome.folders_removed)
+    """Whether the outcome records a file moved or a folder removed: something to put
+    back. Folders Apply made alone leave nothing to put back."""
+    return bool(outcome.moves or outcome.folders_removed)
 
 
 def not_renamed(plan: Plan, results: Sequence[ApplyResult]) -> list[tuple[PlanEntry, ApplyResult]]:

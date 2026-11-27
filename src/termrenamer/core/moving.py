@@ -134,9 +134,9 @@ def move_no_replace(
         if expected is not None:
             _check(source, os.lstat(source), expected)  # the last call before the rename
         _rename_case(source, dest, before, changes)
-    elif is_folder(source, os.lstat(source)):
+    elif is_folder(source, st := os.lstat(source)):
         if expected is not None:
-            raise NotAsRecorded(errno.EISDIR, "a folder is there now", str(source))
+            _check(source, st, expected)
         _move_folder(source, dest, changes)
     else:
         _move_file(source, dest, changes, expected)

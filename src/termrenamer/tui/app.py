@@ -538,7 +538,10 @@ class TermRenamerApp(App[None]):
         elif event.state in (WorkerState.ERROR, WorkerState.CANCELLED):
             self._undoing = False
             self.session_settings.unlock()
-            self.say(f"Undo failed: {event.worker.error}. l shows what it did.", MessageKind.ERROR)
+            self.say(
+                f"Undo stopped: {event.worker.error}. Some files may be back already.",
+                MessageKind.ERROR,
+            )
             self._refresh_chrome()
 
     def _undo_finished(self, applied: ApplyOutcome, undone: UndoOutcome) -> None:
@@ -557,7 +560,7 @@ class TermRenamerApp(App[None]):
                 )
         for folder in undone.folders_made_again:
             self._messages.info("Made again: %s", folder)
-        for folder in undone.folders_removed:
+        for folder in undone.emptied_folders_removed:
             self._messages.info("Removed, as Undo left it empty: %s", folder)
         for path in applied.files_left_behind:
             self._messages.warning(
@@ -574,8 +577,10 @@ class TermRenamerApp(App[None]):
         self.query_one(QueueStage).show_queue(self.queue.sources)
         self._show_stage(Stage.QUEUE)
         put_back = f"Undo put {plural(undone.put_back, 'file')} back"
-        if undone.left:
-            self.say(f"{put_back} and left {undone.left}: l shows why.", MessageKind.WARNING)
+        if undone.not_put_back:
+            self.say(
+                f"{put_back} and left {undone.not_put_back}: l shows why.", MessageKind.WARNING
+            )
         else:
             self.say(f"{put_back}. Nothing was left.")
 

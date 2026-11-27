@@ -71,7 +71,7 @@ def test_a_full_undo_puts_the_tree_back_as_it_was_before_apply(tmp_path: Path) -
     assert listing(show) == before
     assert [r.status for r in undone.results] == [ApplyStatus.RENAMED] * len(applied.moves)
     assert undone.put_back == len(applied.moves)
-    assert undone.left == 0
+    assert undone.not_put_back == 0
 
 
 def _season(show: Path) -> Path:
@@ -95,9 +95,16 @@ def _outcome_of(changes: Changes) -> ApplyOutcome:
 
 
 def _link_or_skip(link: Path, target: Path) -> None:
+    """A symbolic link at ``link``; on Windows without the privilege, a junction to a
+    folder ``target``, which needs none."""
     try:
         link.symlink_to(target, target_is_directory=target.is_dir())
     except OSError as exc:
+        if WINDOWS and target.is_dir():
+            import _winapi  # noqa: PLC0415  (Windows only)
+
+            _winapi.CreateJunction(str(target), str(link))  # type: ignore[attr-defined]
+            return
         pytest.skip(f"this system makes no symbolic link without privilege: {exc}")
 
 
@@ -128,7 +135,7 @@ def test_the_removed_folders_are_made_again_and_the_folders_apply_made_removed(
         show / "Disc 1",
         show / "Disc 1" / "Subs",
     )
-    assert undone.folders_removed == (season / "Subs", season, show / "Show Name")
+    assert undone.emptied_folders_removed == (season / "Subs", season, show / "Show Name")
     assert not (show / "Show Name").exists()
 
 
@@ -148,7 +155,7 @@ def test_a_folder_straggler_goes_back_as_its_files_into_its_folders_made_again(
     assert listing(show) == before
     assert _by_source(undone.results)[moved_subs / "French.srt"] == (ApplyStatus.RENAMED, "ok")
     assert show / "Disc 1" / "Subs" / "Empty" in undone.folders_made_again
-    assert moved_subs / "Empty" in undone.folders_removed
+    assert moved_subs / "Empty" in undone.emptied_folders_removed
 
 
 def test_a_file_changed_since_apply_is_left_with_the_folders_it_needs(tmp_path: Path) -> None:
@@ -164,14 +171,18 @@ def test_a_file_changed_since_apply_is_left_with_the_folders_it_needs(tmp_path: 
         ApplyStatus.SKIP,
         "changed since Apply: its size or modification time changed",
     )
-    assert (undone.put_back, undone.left) == (len(applied.moves) - 1, 1)
+    assert (undone.put_back, undone.not_put_back) == (len(applied.moves) - 1, 1)
     assert changed.read_bytes() == b"changed after Apply"
+
+    def key(path: Path) -> str:
+        return path.relative_to(show).as_posix()
+
     expected = dict(before)
-    del expected["Disc 2/Show.Name.S01E02.mkv"]
-    expected["Show Name"] = ("folder",)
-    expected["Show Name/Season 01"] = ("folder",)
+    del expected[key(show / "Disc 2" / "Show.Name.S01E02.mkv")]
+    expected[key(show / "Show Name")] = ("folder",)
+    expected[key(_season(show))] = ("folder",)
     found = listing(show)
-    del found["Show Name/Season 01/Show Name - S01E02 - Second.mkv"]
+    del found[key(changed)]
     assert found == expected
 
 
@@ -237,6 +248,7 @@ def test_a_file_gone_from_its_new_place_is_left(tmp_path: Path) -> None:
 
 
 def test_a_case_only_rename_is_undone(tmp_path: Path) -> None:
+    tmp_path = tmp_path.resolve()  # a record holds resolved paths, as queued Sources are
     source = _write(tmp_path / "show name.mkv", b"v")
     changes = Changes()
     move_no_replace(source, tmp_path / "Show Name.mkv", changes)
@@ -244,12 +256,13 @@ def test_a_case_only_rename_is_undone(tmp_path: Path) -> None:
     undone = undo_apply(_outcome_of(changes))
 
     assert os.listdir(tmp_path) == ["show name.mkv"]
-    assert (undone.put_back, undone.left) == (1, 0)
+    assert (undone.put_back, undone.not_put_back) == (1, 0)
 
 
 def test_an_unconfirmed_case_only_rename_goes_back_by_what_is_on_disk(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    tmp_path = tmp_path.resolve()  # a record holds resolved paths, as queued Sources are
     if not _ignores_letter_case(tmp_path):
         pytest.skip("on this filesystem a new letter case is a new name, not a case-only rename")
     source = _write(tmp_path / "show name.mkv", b"v")
@@ -283,6 +296,7 @@ def test_an_unconfirmed_case_only_rename_goes_back_by_what_is_on_disk(
 def test_a_case_only_rename_the_disk_never_made_is_found_at_its_old_place(
     tmp_path: Path,
 ) -> None:
+    tmp_path = tmp_path.resolve()  # a record holds resolved paths, as queued Sources are
     if not _ignores_letter_case(tmp_path):
         pytest.skip("on this filesystem a new letter case is a new name, not a case-only rename")
     old = _write(tmp_path / "show name.mkv", b"v")
@@ -332,7 +346,7 @@ def test_a_file_apply_left_behind_is_left_to_the_person(tmp_path: Path) -> None:
 
     assert copy.read_bytes() == b"copy"
     assert source.read_bytes() == b"copy"
-    assert undone.folders_removed == ()
+    assert undone.emptied_folders_removed == ()
 
 
 def test_an_apply_stopped_by_an_unexpected_error_is_undone_from_its_record(
@@ -385,7 +399,7 @@ def test_an_unexpected_error_stops_undo_and_the_outcome_so_far_is_returned(
     assert len(undone.moves) == 1
     # Only a folder Undo left empty is removed: the season folder holds the files left.
     assert _season(show).is_dir()
-    assert _season(show) not in undone.folders_removed
+    assert _season(show) not in undone.emptied_folders_removed
 
 
 def test_a_link_goes_back_as_itself_and_is_never_entered(tmp_path: Path) -> None:
@@ -418,7 +432,7 @@ def test_a_file_whose_old_folder_is_now_a_link_is_left(tmp_path: Path) -> None:
     moved = _season(show) / "Show Name - S01E02 - Second.mkv"
     assert _by_source(undone.results)[moved] == (
         ApplyStatus.SKIP,
-        "its old folder is now a link or a file",
+        "its old folder is now a link or a file, or lies behind a link",
     )
     assert moved.exists()
     assert os.listdir(elsewhere) == []
@@ -442,7 +456,7 @@ def test_a_move_back_to_another_drive_is_a_checked_copy(
         # Windows renames even a case-only name, and a copy keeps the times it can set.
         assert undone.put_back == len(applied.moves)
     assert listing(show) == before
-    assert undone.left == 0
+    assert undone.not_put_back == 0
 
 
 def test_a_source_folder_named_like_its_new_folder_in_another_case_is_undone(
@@ -464,10 +478,11 @@ def test_a_source_folder_named_like_its_new_folder_in_another_case_is_undone(
     undone = undo_apply(applied)
 
     assert listing(backups) == before
-    assert undone.left == 0
+    assert undone.not_put_back == 0
 
 
 def test_a_folder_apply_made_that_is_a_folder_it_removed_stays(tmp_path: Path) -> None:
+    tmp_path = tmp_path.resolve()  # a record holds resolved paths, as queued Sources are
     if not _ignores_letter_case(tmp_path):
         pytest.skip("on this filesystem two letter cases are two folders, never one")
     removed = tmp_path / "show name"
@@ -479,7 +494,7 @@ def test_a_folder_apply_made_that_is_a_folder_it_removed_stays(tmp_path: Path) -
     undone = undo_apply(outcome)
 
     assert undone.folders_made_again == (removed,)
-    assert undone.folders_removed == ()
+    assert undone.emptied_folders_removed == ()
     assert os.listdir(tmp_path) == ["show name"]
 
 
@@ -510,3 +525,47 @@ def test_the_check_of_a_file_is_the_last_look_before_its_move(
     assert _by_source(undone.results)[notes][0] is ApplyStatus.SKIP
     assert notes.read_bytes() == b"written as Undo looked at it"
     assert not (show / "Disc 1" / "notes.txt").exists()
+
+
+def test_a_file_whose_old_folder_lies_behind_a_link_now_is_left(tmp_path: Path) -> None:
+    show = _show(tmp_path)
+    applied = apply_plan(_plan(show), confirmed=True)
+    elsewhere = tmp_path / "Elsewhere"
+    elsewhere.mkdir()
+    # Apply removed "Disc 1" and its "Subs"; a link now stands where "Disc 1" was.
+    _link_or_skip(show / "Disc 1", elsewhere)
+
+    undone = undo_apply(applied)
+
+    left = "its old folder is now a link or a file, or lies behind a link"
+    moved = _season(show) / "Subs" / "English.srt"
+    assert _by_source(undone.results)[moved] == (ApplyStatus.SKIP, left)
+    assert moved.exists()
+    assert os.listdir(elsewhere) == []
+    assert show / "Disc 1" / "Subs" not in undone.folders_made_again
+
+
+def test_a_different_file_at_the_old_name_of_a_case_only_rename_is_left(
+    tmp_path: Path,
+) -> None:
+    tmp_path = tmp_path.resolve()  # a record holds resolved paths, as queued Sources are
+    if not _ignores_letter_case(tmp_path):
+        pytest.skip("on this filesystem a new letter case is a new name, not a case-only rename")
+    old = _write(tmp_path / "show name.mkv", b"v")
+    st = os.lstat(old)
+    new = tmp_path / "Show Name.mkv"
+    move = Move(
+        source=old, destination=new, fingerprint=PlanFingerprint(new, st.st_size, st.st_mtime_ns)
+    )
+    old.write_bytes(b"a different file under the old name")
+    outcome = ApplyOutcome(
+        results=(), stragglers=(), moves=(move,), folders_created=(), folders_removed=()
+    )
+
+    undone = undo_apply(outcome)
+
+    assert (undone.results[0].status, undone.results[0].reason) == (
+        ApplyStatus.SKIP,
+        "changed since Apply: its size or modification time changed",
+    )
+    assert undone.put_back == 0

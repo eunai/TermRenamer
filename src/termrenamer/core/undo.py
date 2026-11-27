@@ -6,18 +6,24 @@ order:
 1. Each folder Apply removed is made again, each before the folders inside it.
 2. Each move is put back, last move first. A file goes back only when it is still at its
    new place with the recorded size and modification time, read with ``lstat`` as the
-   last call before the move, and only into a folder that is not a link. The old name
-   is claimed by the call that makes it
+   last call before the move, and only into a folder that is no link and lies behind
+   none. The old name is claimed by the call that makes it
    (:func:`~termrenamer.core.moving.move_no_replace`), so nothing there is replaced;
    a case-only rename goes back as a plain rename.
 3. Each folder Apply made is removed when Undo left it empty, each before its parent.
 
 A file Apply left behind (a copy it could not remove) is left to the person: it is
 never removed. An entry Apply found already at its name has no move and is not
-touched. Each change is recorded the moment its call succeeds. An error reading or
-moving a file becomes that file's result; any other error stops Undo and leaves every
-later file where it is, and the outcome so far is returned. Only an empty folder is
-ever removed, so a folder a file still needs stays.
+touched. A folder is made again, and a file put back into a folder, only where no link
+stands on the folder's path, so Undo never enters a link on the side of the old places:
+the recorded old paths were resolved when the Sources were queued, so a link on them
+came after. On the side of the new places Undo follows the recorded path, as Apply did:
+a Destination root may itself lie behind a link.
+
+Each change is recorded the moment its call succeeds. An error reading or moving a file
+becomes that file's result; any other error stops Undo and leaves every later file
+where it is, and the outcome so far is returned. Only an empty folder is ever removed,
+so a folder a file still needs stays.
 
 Like Apply, Undo cannot defend against another program that changes a file, a name or
 a folder between Undo's last check and the call that follows it.
@@ -78,7 +84,7 @@ def undo_apply(outcome: ApplyOutcome) -> UndoOutcome:
         results=tuple(results),
         moves=tuple(changes.moves),
         folders_made_again=tuple(changes.folders_created),
-        folders_removed=tuple(changes.folders_removed),
+        emptied_folders_removed=tuple(changes.folders_removed),
         files_left_behind=tuple(changes.files_left_behind),
     )
 
@@ -90,12 +96,22 @@ def _result(move: Move, status: ApplyStatus, reason: str) -> ApplyResult:
     )
 
 
+def _behind_a_link(folder: Path) -> bool:
+    """Whether a link (a symbolic link or a junction) stands on ``folder``'s path: its
+    resolved path differs from the recorded text."""
+    return os.path.realpath(folder) != str(folder)
+
+
 def _make_folders_again(removed: tuple[Path, ...], changes: Changes) -> None:
     """Make each folder of ``removed`` again, outer before inner; a folder that cannot be
-    made is logged, and the files bound for it are left where they are."""
+    made, or whose parent is now a link or behind one, is logged, and the files bound
+    for it are left where they are."""
     # Apply lists each folder before its parent; the stable sort keeps that order's
     # reverse wherever the depth is the same.
     for folder in sorted(reversed(removed), key=lambda path: len(path.parts)):
+        if _behind_a_link(folder.parent):
+            _LOG.warning("Undo did not make %s again: a link is now on its path", folder)
+            continue
         try:
             os.mkdir(folder)
         except FileExistsError:
@@ -110,9 +126,19 @@ def _put_back(move: Move, changes: Changes) -> ApplyResult:
     """Move one file from its new place back to its old place, when the checks pass."""
     new, old = move.destination, move.source
     if is_case_only_rename(old, new):
-        # The folder lists only the old name: the file is at its old place already, as
-        # when Apply could not confirm a case-only rename.
+        # The folder lists only the old name, as when Apply could not confirm a
+        # case-only rename: the file is at its old place already, if it is as recorded.
+        try:
+            st = os.lstat(old)
+        except OSError as exc:
+            return _result(move, ApplyStatus.FAIL, f"cannot read its old place: {exc}")
+        if (st.st_size, st.st_mtime_ns) != (move.fingerprint.size, move.fingerprint.mtime_ns):
+            reason = "changed since Apply: its size or modification time changed"
+            return _result(move, ApplyStatus.SKIP, reason)
         return _result(move, ApplyStatus.RENAMED, "already at its old place")
+    linked = "its old folder is now a link or a file, or lies behind a link"
+    if _behind_a_link(old.parent):
+        return _result(move, ApplyStatus.SKIP, linked)
     try:
         folder = os.lstat(old.parent)
     except FileNotFoundError:
@@ -120,7 +146,7 @@ def _put_back(move: Move, changes: Changes) -> ApplyResult:
     except OSError as exc:
         return _result(move, ApplyStatus.FAIL, f"cannot read its old folder: {exc}")
     if not is_folder(old.parent, folder):
-        return _result(move, ApplyStatus.SKIP, "its old folder is now a link or a file")
+        return _result(move, ApplyStatus.SKIP, linked)
     try:
         move_no_replace(new, old, changes, expected=move.fingerprint)
     except FileExistsError:

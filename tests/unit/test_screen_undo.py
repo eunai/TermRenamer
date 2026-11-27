@@ -6,8 +6,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from termrenamer.core.models import ApplyOutcome
 from termrenamer.tui.dialogs import UndoConfirm
 from termrenamer.tui.stage import Stage
+from termrenamer.tui.stages.applied import has_anything_to_undo
 
 from .screen_driver import (
     SIZE,
@@ -46,7 +48,7 @@ async def test_u_opens_the_undo_confirm_and_n_or_escape_keeps_the_apply(tmp_path
 
         await press(pilot, "u")
         assert isinstance(app.screen, UndoConfirm)
-        lines = text_of(app, "#undo-lines").splitlines()
+        lines = text_of(app, "#confirm-lines").splitlines()
         shown = screen_text(app)
         await press(pilot, "n")
         assert not isinstance(app.screen, UndoConfirm)
@@ -144,3 +146,15 @@ async def test_undo_is_not_offered_when_apply_moved_nothing(tmp_path: Path) -> N
     assert not button
     assert not isinstance(screen, UndoConfirm)
     assert message == "Apply moved nothing, so there is nothing to undo."
+
+
+def test_folders_apply_made_alone_offer_no_undo(tmp_path: Path) -> None:
+    made = ApplyOutcome(
+        results=(), stragglers=(), moves=(), folders_created=(tmp_path,), folders_removed=()
+    )
+    removed = ApplyOutcome(
+        results=(), stragglers=(), moves=(), folders_created=(), folders_removed=(tmp_path,)
+    )
+
+    assert not has_anything_to_undo(made)
+    assert has_anything_to_undo(removed)

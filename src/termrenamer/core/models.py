@@ -354,8 +354,8 @@ class UndoOutcome:
     back; ``SKIP`` that a check left it (it changed, or its old place is taken);
     ``FAIL`` that an error left it. ``moves`` lists every move Undo made.
     ``folders_made_again`` lists each folder Apply removed that Undo made again, each
-    before the folders inside it; ``folders_removed`` each folder Apply made that Undo
-    left empty and removed. ``files_left_behind`` lists each file Undo made at an old
+    before the folders inside it; ``emptied_folders_removed`` each folder Apply made that
+    Undo left empty and removed. ``files_left_behind`` lists each file Undo made at an old
     name and could not remove after its move failed, so the file is at its new place
     too. Each change is listed once its call succeeded.
     """
@@ -363,7 +363,7 @@ class UndoOutcome:
     results: tuple[ApplyResult, ...]
     moves: tuple[Move, ...]
     folders_made_again: tuple[Path, ...]
-    folders_removed: tuple[Path, ...]
+    emptied_folders_removed: tuple[Path, ...]
     files_left_behind: tuple[Path, ...] = ()
 
     @property
@@ -372,6 +372,6 @@ class UndoOutcome:
         return sum(1 for r in self.results if r.status is ApplyStatus.RENAMED)
 
     @property
-    def left(self) -> int:
+    def not_put_back(self) -> int:
         """How many files Undo left at their new places."""
         return len(self.results) - self.put_back
