@@ -104,17 +104,18 @@ and builds no plan.
 
 The main settings:
 
-| Setting                             | Default | Purpose                                                             |
-| ----------------------------------- | ------- | ------------------------------------------------------------------- |
-| `TERMRENAMER_TMDB_API_KEY`          | none    | TMDB key. Needed to build a plan with TMDB.                         |
-| `TERMRENAMER_TVDB_API_KEY`          | none    | TheTVDB v4 key. Needed to build a plan with TheTVDB.                |
-| `TERMRENAMER_OMDB_API_KEY`          | none    | OMDb key. Needed to build a plan with OMDb.                         |
-| `TERMRENAMER_ENABLE_FOLDER_RENAME`  | `false` | Move files into show or film folders, not just rename the filename. |
-| `TERMRENAMER_ENABLE_SEASON_FOLDERS` | `false` | Place TV episodes in `Season NN` folders. Needs folder rename.      |
-| `TERMRENAMER_FILM_DEST_FOLDER`      | unset   | Root folder for film output. Used only when folder rename is on.    |
-| `TERMRENAMER_TV_DEST_FOLDER`        | unset   | Root folder for TV output. Used only when folder rename is on.      |
-| `TERMRENAMER_CACHE_DB_PATH`         | unset   | Path of a SQLite metadata cache. The cache is off until you set it. |
-| `TERMRENAMER_THEME`                 | `dark`  | Screen colours: `dark` or `light`.                                  |
+| Setting                             | Default  | Purpose                                                                   |
+| ----------------------------------- | -------- | ------------------------------------------------------------------------- |
+| `TERMRENAMER_TMDB_API_KEY`          | none     | TMDB key. Needed to build a plan with TMDB.                               |
+| `TERMRENAMER_TVDB_API_KEY`          | none     | TheTVDB v4 key. Needed to build a plan with TheTVDB.                      |
+| `TERMRENAMER_OMDB_API_KEY`          | none     | OMDb key. Needed to build a plan with OMDb.                               |
+| `TERMRENAMER_ENABLE_FOLDER_RENAME`  | `false`  | Move files into show or film folders, not just rename the filename.       |
+| `TERMRENAMER_ENABLE_SEASON_FOLDERS` | `false`  | Place TV episodes in `Season NN` folders. Needs folder rename.            |
+| `TERMRENAMER_FILM_DEST_FOLDER`      | unset    | Root folder for film output. Used only when folder rename is on.          |
+| `TERMRENAMER_TV_DEST_FOLDER`        | unset    | Root folder for TV output. Used only when folder rename is on.            |
+| `TERMRENAMER_CACHE_DB_PATH`         | unset    | Path of a SQLite metadata cache. The cache is off until you set it.       |
+| `TERMRENAMER_NAME_TAKEN`            | `suffix` | When a new name is taken: `suffix` adds a number, `skip` leaves the file. |
+| `TERMRENAMER_THEME`                 | `dark`   | Screen colours: `dark` or `light`.                                        |
 
 [`.env.example`](.env.example) lists every setting, including HTTP timeout and
 retry tuning. Changes you make on the **Settings** screen last for the current
@@ -168,9 +169,17 @@ Keys:
   own.
 - **Two themes.** Dark and light teal, chosen with `TERMRENAMER_THEME` or on
   the Settings screen.
-- **Collisions.** When a destination name is taken, the plan adds a numbered
-  suffix such as ` (1)`. If a file or folder appears at a destination after the
-  preview, apply skips that entry.
+- **Name taken.** When a new name is already used, by something at that path
+  or by an earlier file of the same plan, the file is marked "name taken". The
+  Name taken setting (`TERMRENAMER_NAME_TAKEN`, or the Settings screen) decides
+  what happens: `suffix`, the default, adds a number such as ` (1)`; `skip`
+  leaves the file, and its Sidecars, where they are. A Sidecar whose own name
+  is taken is skipped alone under `skip` while its video moves. The footer says
+  what will happen to the selected title's first video when its name is taken.
+  The Apply confirm counts the skipped videos and lists each Sidecar skipped
+  while its video moves; the Applied stage lists every skipped file with its
+  reason. If a file or folder appears at a destination after the preview, apply
+  skips that entry. Nothing is ever overwritten.
 - **Folder layouts.** With folder rename on, files move into show or film
   folders, with optional `Season NN` folders for TV. Destination roots apply
   only when folder rename is on.
@@ -187,8 +196,6 @@ Keys:
 
 - `TERMRENAMER_LOG_FILE` has no effect yet
   ([#4](https://github.com/eunai/TermRenamer/issues/4)).
-- There is no setting to skip an entry instead of adding a suffix on a
-  collision ([#6](https://github.com/eunai/TermRenamer/issues/6)).
 
 ## Troubleshooting
 
