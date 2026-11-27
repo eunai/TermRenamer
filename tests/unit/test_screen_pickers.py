@@ -70,7 +70,7 @@ async def test_a_folder_gone_before_the_picker_lists_it_keeps_the_app_and_the_qu
 
     def vanished(path: Path):  # type: ignore[no-untyped-def]
         if path == start:
-            raise FileNotFoundError(errno.ENOENT, "No such file or directory", str(path))
+            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(path))
         return listed(path)
 
     app = make_app()
@@ -89,7 +89,7 @@ async def test_a_folder_gone_before_the_picker_lists_it_keeps_the_app_and_the_qu
         main = app.screen is app.screen_stack[0]
 
     assert isinstance(dialog, FileOpen if key == "a" else SelectDirectory)
-    assert "This folder cannot be read: No such file or directory" in text
+    assert f"This folder cannot be read: {os.strerror(errno.ENOENT)}" in text
     assert running and main
     assert sources == (queued.resolve(),)
 
@@ -110,12 +110,12 @@ async def test_a_folder_refused_with_its_parent_keeps_the_app_and_the_queue(
 
     def refused(path: Path):  # type: ignore[no-untyped-def]
         if path == start:
-            raise PermissionError(errno.EACCES, "Permission denied", str(path))
+            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), str(path))
         return listed(path)
 
     def refused_stat(path: Path, *args: object, **kwargs: object):  # type: ignore[no-untyped-def]
         if path == parent:
-            raise PermissionError(errno.EACCES, "Permission denied", str(path))
+            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), str(path))
         return stat(path, *args, **kwargs)  # type: ignore[arg-type]
 
     app = make_app()
@@ -134,17 +134,14 @@ async def test_a_folder_refused_with_its_parent_keeps_the_app_and_the_queue(
         running = app.is_running
 
     assert isinstance(dialog, FileOpen if key == "a" else SelectDirectory)
-    assert "This folder cannot be read: Permission denied" in text
+    assert f"This folder cannot be read: {os.strerror(errno.EACCES)}" in text
     assert running
     assert sources == (queued.resolve(),)
 
 
-@pytest.mark.parametrize(
-    ("number", "words"),
-    [(errno.EACCES, "Permission denied"), (errno.ENAMETOOLONG, "File name too long")],
-)
+@pytest.mark.parametrize("number", [errno.EACCES, errno.ENAMETOOLONG])
 async def test_a_typed_path_the_disk_cannot_answer_gets_no_suggestion_and_keeps_the_app(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, number: int, words: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, number: int
 ) -> None:
     """The file dialog suggests as the person types; a path the disk refuses to look at
     gets no suggestion, and the dialog, the typed text and the queue stay."""
@@ -157,7 +154,7 @@ async def test_a_typed_path_the_disk_cannot_answer_gets_no_suggestion_and_keeps_
 
     def refused(path: Path, *args: object, **kwargs: object) -> bool:
         if "Locked" in path.parts:
-            raise OSError(number, words, str(path))
+            raise OSError(number, os.strerror(number), str(path))
         return exists(path, *args, **kwargs)  # type: ignore[arg-type]
 
     typed = f"Locked{os.sep}x"
@@ -189,9 +186,9 @@ async def test_a_typed_path_the_disk_cannot_answer_gets_no_suggestion_and_keeps_
 @pytest.mark.parametrize(
     ("number", "said"),
     [
-        (errno.ENAMETOOLONG, "This path cannot be used: File name too long"),
+        (errno.ENAMETOOLONG, "This path cannot be used: {}"),
         # The folder that holds it cannot be looked in.
-        (errno.EACCES, "This folder cannot be read: Permission denied"),
+        (errno.EACCES, "This folder cannot be read: {}"),
     ],
 )
 async def test_enter_on_a_typed_path_the_disk_cannot_answer_says_why_and_keeps_the_app(
@@ -232,7 +229,8 @@ async def test_enter_on_a_typed_path_the_disk_cannot_answer_says_why_and_keeps_t
         running = app.is_running
 
     assert isinstance(dialog, FileOpen)
-    assert said in text
+    # The system's own words for the error: Windows words ENAMETOOLONG its own way.
+    assert said.format(os.strerror(number)) in text
     assert shown == "Too long"
     assert running
     assert sources == (queued.resolve(),)
@@ -271,7 +269,7 @@ async def test_a_folder_that_lists_but_cannot_be_entered_says_why_in_the_folder_
         unsearchable.chmod(0o755)
 
     assert isinstance(dialog, SelectDirectory)
-    assert "This folder cannot be read: Permission denied" in text
+    assert f"This folder cannot be read: {os.strerror(errno.EACCES)}" in text
     assert running
 
 
