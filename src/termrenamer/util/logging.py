@@ -16,6 +16,10 @@ Two layers keep a secret out of the log lines:
    not masked, so a short value never changes a year or a word of a line. So a
    secret that a server echoes back in an error, or that another library logs on its
    own at WARNING or above, is masked only when it is a registered key or token.
+
+The screen shows a Provider's message, never a log line: a
+:class:`~termrenamer.util.errors.ProviderError` masks the same values in its message
+as it is made.
 """
 
 from __future__ import annotations
