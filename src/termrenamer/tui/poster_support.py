@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,7 +21,7 @@ from typing import Any
 
 from textual.widget import Widget
 
-from termrenamer.persistence.posters import PosterRequest, PosterStore
+from termrenamer.persistence.posters import PosterError, PosterRequest, PosterStore
 
 _LOG = logging.getLogger(__name__)
 
@@ -87,12 +88,54 @@ def detect_poster_support(
     return PosterSupport(image=make)
 
 
+@dataclass(slots=True)
+class _Download:
+    """One download in progress, and its error once it has failed."""
+
+    done: threading.Event = field(default_factory=threading.Event)
+    error: str | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class PosterSource:
     """Where the screen's Posters come from while they are shown: the poster store, the
     image widget that draws a stored file, and the requests that failed this session
-    (a failed download or an unreadable file), which every view leaves as "no poster"."""
+    (a failed download or an unreadable file), which every view leaves as "no poster".
+    It downloads each Poster once at a time, for every view that asks."""
 
     store: PosterStore
     image: ImageFactory
     failed: set[PosterRequest] = field(default_factory=set)
+    _downloads: dict[PosterRequest, _Download] = field(
+        default_factory=dict, repr=False, compare=False
+    )
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
+
+    def fetch(self, request: PosterRequest) -> None:
+        """Store the file for ``request``, downloading it when it is not stored.
+
+        While one download of ``request`` runs, a second call waits for it and ends as
+        it did, so two views never download one Poster twice. Blocks, so call it off
+        the screen's thread.
+
+        Raises:
+            PosterError: The download failed, as :meth:`PosterStore.fetch` says.
+        """
+        with self._lock:
+            running = self._downloads.get(request)
+            if running is None:
+                download = self._downloads[request] = _Download()
+        if running is not None:
+            running.done.wait()
+            if running.error is not None:
+                raise PosterError(running.error)
+            return
+        try:
+            self.store.fetch(request)
+        except Exception as exc:
+            download.error = str(exc) if isinstance(exc, PosterError) else repr(exc)
+            raise
+        finally:
+            with self._lock:
+                del self._downloads[request]
+            download.done.set()

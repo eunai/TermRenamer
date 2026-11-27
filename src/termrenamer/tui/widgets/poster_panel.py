@@ -2,10 +2,10 @@
 
 :class:`PosterView` draws one Poster, or in its place the Title's name and a word such
 as "no poster". It asks the poster store for the file: a stored file is drawn at once;
-otherwise, when downloads are allowed, the store downloads it on a thread of its own,
-never on the screen's. A failed download, or a stored file the image widget cannot
-read, logs one line and leaves "no poster"; the source remembers it for the session,
-for every view.
+otherwise, when downloads are allowed, it is downloaded on a thread of its own, never
+on the screen's, and a view that asks for a Poster already on its way waits for it. A
+failed download, or a stored file the image widget cannot read, logs one line and
+leaves "no poster"; the source remembers it for the session, for every view.
 
 While Posters are hidden or unavailable the view is given no :class:`PosterSource`:
 it then draws nothing, removes its image and starts no download (one already running
@@ -225,11 +225,10 @@ class PosterView(Vertical):
             return
         self._words(wanted.name, "")
         if all(fetching != request for fetching, _source in self._fetches.values()):
-            store = source.store
 
             def fetch() -> _Fetched:
                 try:
-                    store.fetch(request)
+                    source.fetch(request)
                 except PosterError as exc:
                     return _Fetched(request, str(exc))
                 except Exception as exc:  # a Poster never stops the screen
@@ -279,10 +278,12 @@ class PosterView(Vertical):
         fetched = event.worker.result if event.state is WorkerState.SUCCESS else None
         if event.state is WorkerState.ERROR:
             fetched = _Fetched(request, str(event.worker.error))
-        if isinstance(fetched, _Fetched) and fetched.error is not None:
+        error = fetched.error if isinstance(fetched, _Fetched) else None
+        # Two views that shared one download log its failure once.
+        if error is not None and request not in source.failed:
             source.failed.add(request)
             name = wanted.name if wanted is not None and is_wanted else request.ref
-            _LOG.warning("No Poster for %s: %s", name, fetched.error)
+            _LOG.warning("No Poster for %s: %s", name, error)
         if is_wanted:
             self._draw()
 
