@@ -72,6 +72,7 @@ class ApplyConfirm(ModalScreen[bool]):
         width: 62;
         max-width: 100%;
         height: auto;
+        max-height: 100%;
         margin-right: 12;
         padding: 0 2;
         border: round $accent;
@@ -85,6 +86,7 @@ class ApplyConfirm(ModalScreen[bool]):
     }
     ApplyConfirm .buttons {
         height: 1;
+        margin-bottom: 1;
     }
     ApplyConfirm .buttons ActionButton {
         margin: 0 2 0 0;

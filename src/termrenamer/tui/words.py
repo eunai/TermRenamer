@@ -83,5 +83,5 @@ def folder_text(folder: PurePath) -> str:
 
 
 def sidecar_skipped(source: PurePath, reason: str) -> str:
-    """The line for a Sidecar skipped while its video moves, in the confirm and after Apply."""
+    """The Apply confirm's line for a Sidecar skipped while its video moves."""
     return f"Sidecar skipped: {source.name} · {reason}"
