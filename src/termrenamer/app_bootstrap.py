@@ -131,7 +131,7 @@ def where_to_set(variable: str) -> str:
     )
 
 
-def load_settings(*, env_file: Path | None = None, require_tmdb_key: bool = True) -> Settings:
+def load_settings(*, env_file: Path | None = None) -> Settings:
     """Load settings from the environment and the settings files.
 
     Sources, highest first: environment variables, a ``.env`` in the current working
@@ -141,10 +141,10 @@ def load_settings(*, env_file: Path | None = None, require_tmdb_key: bool = True
 
     Args:
         env_file: If provided, the only file read; environment variables still win.
-        require_tmdb_key: When True, TMDB API key must be set (TV vertical slice).
 
     Raises:
-        ValidationError: Missing required configuration or invalid values.
+        ValidationError: No Provider key (TMDB, TheTVDB or OMDb) is set, or a value is
+            invalid. A TheTVDB subscriber PIN alone is not a key.
     """
     files = [env_file] if env_file is not None else [user_settings_path(), Path.cwd() / ".env"]
     env = _layer(*(_read_settings_file(path) for path in files), os.environ)
@@ -206,8 +206,9 @@ def load_settings(*, env_file: Path | None = None, require_tmdb_key: bool = True
     enable_folder_rename = _read_bool(env, "TERMRENAMER_ENABLE_FOLDER_RENAME", default=False)
     enable_season_folders = _read_bool(env, "TERMRENAMER_ENABLE_SEASON_FOLDERS", default=False)
 
-    if require_tmdb_key and not tmdb_key:
-        msg = f"TMDB API key is required: {where_to_set('TERMRENAMER_TMDB_API_KEY')}."
+    if not (tmdb_key or tvdb_key or omdb_key):
+        variables = "TERMRENAMER_TMDB_API_KEY, TERMRENAMER_TVDB_API_KEY or TERMRENAMER_OMDB_API_KEY"
+        msg = f"No Provider API key is set, and one is enough: {where_to_set(variables)}."
         raise ValidationError(msg)
 
     return Settings(
@@ -250,10 +251,10 @@ def create_metadata_cache(settings: Settings) -> SqliteMetadataCache | None:
     return SqliteMetadataCache(settings.cache_db_path)
 
 
-def bootstrap(*, require_tmdb_key: bool = True) -> Settings:
+def bootstrap() -> Settings:
     """Configure logging and return settings."""
     setup_logging()
-    settings = load_settings(require_tmdb_key=require_tmdb_key)
+    settings = load_settings()
     if settings.log_file_path is not None:
         _LOG.debug("File logging path configured: %s", settings.log_file_path)
     return settings

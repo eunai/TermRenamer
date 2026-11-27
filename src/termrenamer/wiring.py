@@ -19,22 +19,42 @@ from termrenamer.app_bootstrap import (
     create_metadata_cache,
     where_to_set,
 )
+from termrenamer.core.models import ScanMode
 from termrenamer.util.errors import ValidationError
 from termrenamer.util.http import HttpClient
 
 
+def _tmdb_missing_message() -> str:
+    return f"TMDB requires an API key: {where_to_set('TERMRENAMER_TMDB_API_KEY')}."
+
+
 @dataclass(frozen=True, slots=True)
 class PlanningWiring:
-    """Resolved TV + film providers for :func:`termrenamer.core.planning.build_rename_plan`."""
+    """TV + film providers for :func:`termrenamer.core.planning.build_rename_plan`.
 
-    tv_tmdb: TvMetadataProvider
+    Each Provider is present, or ``None`` when its key is missing. No Provider is
+    required on its own; selecting one with no key is reported when a plan is built.
+    """
+
+    tv_tmdb: TvMetadataProvider | None
     tv_tvdb: TvMetadataProvider | None
-    film: FilmMetadataProvider
+    film: FilmMetadataProvider | None
     film_omdb: FilmMetadataProvider | None
+
+    def keyed_providers(self) -> dict[ScanMode, frozenset[str]]:
+        """Return, per Mode, the ids of the Providers whose key is set."""
+        tv = {"tmdb": self.tv_tmdb, "tvdb": self.tv_tvdb}
+        film = {"tmdb": self.film, "omdb": self.film_omdb}
+        return {
+            ScanMode.TV: frozenset(pid for pid, p in tv.items() if p is not None),
+            ScanMode.FILM: frozenset(pid for pid, p in film.items() if p is not None),
+        }
 
     def resolve_tv(self, *, provider_id: str) -> TvMetadataProvider:
         """Return the TV metadata provider for ``tmdb`` or ``tvdb``."""
         if provider_id == "tmdb":
+            if self.tv_tmdb is None:
+                raise ValidationError(_tmdb_missing_message())
             return self.tv_tmdb
         if provider_id == "tvdb":
             if self.tv_tvdb is None:
@@ -51,6 +71,8 @@ class PlanningWiring:
     def resolve_film(self, *, provider_id: str) -> FilmMetadataProvider:
         """Return the film metadata provider for ``tmdb`` or ``omdb``."""
         if provider_id == "tmdb":
+            if self.film is None:
+                raise ValidationError(_tmdb_missing_message())
             return self.film
         if provider_id == "omdb":
             if self.film_omdb is None:
@@ -62,18 +84,14 @@ class PlanningWiring:
 
 
 def build_planning_wiring(settings: Settings, http: HttpClient) -> PlanningWiring:
-    """Build TMDB (+ optional TVDB/OMDb) providers with optional SQLite cache wrappers."""
-    if not settings.tmdb_api_key:
-        msg = "TMDB API key is required for planning wiring"
-        raise ValidationError(msg)
-    tmdb = TmdbProvider(http, api_key=settings.tmdb_api_key)
+    """Build each Provider whose key is set, with optional SQLite cache wrappers."""
     cache = create_metadata_cache(settings)
-    tv_tmdb: TvMetadataProvider = (
-        CachedTvMetadataProvider(tmdb, cache) if cache is not None else tmdb
-    )
-    film: FilmMetadataProvider = (
-        CachedFilmMetadataProvider(tmdb, cache) if cache is not None else tmdb
-    )
+    tv_tmdb: TvMetadataProvider | None = None
+    film: FilmMetadataProvider | None = None
+    if settings.has_tmdb_credentials and settings.tmdb_api_key:
+        tmdb = TmdbProvider(http, api_key=settings.tmdb_api_key)
+        tv_tmdb = CachedTvMetadataProvider(tmdb, cache) if cache is not None else tmdb
+        film = CachedFilmMetadataProvider(tmdb, cache) if cache is not None else tmdb
     tv_tvdb: TvMetadataProvider | None = None
     if settings.has_tvdb_credentials and settings.tvdb_api_key:
         raw = TvdbV4Provider(
@@ -90,9 +108,9 @@ def build_planning_wiring(settings: Settings, http: HttpClient) -> PlanningWirin
     return PlanningWiring(tv_tmdb=tv_tmdb, tv_tvdb=tv_tvdb, film=film, film_omdb=film_omdb)
 
 
-def bootstrap_wiring(*, require_tmdb_key: bool = True) -> tuple[Settings, PlanningWiring]:
+def bootstrap_wiring() -> tuple[Settings, PlanningWiring]:
     """Load settings, HTTP client, and planning wiring (used by ``python -m termrenamer``)."""
-    settings = bootstrap(require_tmdb_key=require_tmdb_key)
+    settings = bootstrap()
     http = create_http_client(settings)
     wiring = build_planning_wiring(settings, http)
     return settings, wiring

@@ -4,12 +4,18 @@ Dolphie-style ``Switch`` toggles replace the previous ``Select`` dropdowns:
 TV vs Film is a single two-position ``Switch`` (left/off = TV, right/on = Film);
 provider selection remains mutually-exclusive ``Switch``es, and providers that do
 not apply to the current mode are **hidden** (``display = False`` on the switch
-and its peer ``Label``) so invalid combinations cannot be chosen. An inline
+and its peer ``Label``) so invalid combinations cannot be chosen. A provider
+whose key is missing stays selectable and its label is marked "no key". At
+mount and on every mode change the selection moves to the first provider of the
+mode that has a key (TMDB, then the other), or to TMDB when none has. An inline
 ``settings`` button posts :class:`OpenSettingsRequested` so the host app can
 surface the modal without a dedicated binding.
 """
 
 from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal
@@ -52,6 +58,14 @@ _PROVIDER_LABEL_IDS: dict[str, str] = {
     "provider-omdb": "provider-omdb-label",
 }
 
+_PROVIDER_NAMES: dict[str, str] = {
+    "provider-tmdb": "TMDB",
+    "provider-tvdb": "TheTVDB",
+    "provider-omdb": "OMDb",
+}
+
+_NO_KEY_SUFFIX = " (no key)"
+
 _ALLOWED_PROVIDERS: dict[ScanMode, frozenset[str]] = {
     ScanMode.TV: frozenset({"provider-tmdb", "provider-tvdb"}),
     ScanMode.FILM: frozenset({"provider-tmdb", "provider-omdb"}),
@@ -69,6 +83,10 @@ class ModeProviderBar(Horizontal):
     Internally the widget guards against re-entrant watcher calls while it
     flips peer switches so that a single user click produces **exactly one**
     ``ScanModeChanged`` or ``ProviderChanged`` message.
+
+    Args:
+        keyed: Per mode, the provider ids (``tmdb``, ``tvdb``, ``omdb``) whose key is
+            set. ``None`` treats every provider as having a key.
     """
 
     DEFAULT_CSS = """
@@ -128,6 +146,15 @@ class ModeProviderBar(Horizontal):
     }
     """
 
+    def __init__(
+        self,
+        *,
+        keyed: Mapping[ScanMode, frozenset[str]] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._keyed = keyed
+
     def compose(self) -> ComposeResult:
         yield Label("Mode:")
         yield Label("TV", id="mode-tv-label", classes="-active")
@@ -147,6 +174,11 @@ class ModeProviderBar(Horizontal):
     def on_mount(self) -> None:
         self._apply_provider_mask(ScanMode.TV, emit=False)
         self._emit_initial()
+
+    def _has_key(self, mode: ScanMode, switch_id: str) -> bool:
+        if self._keyed is None:
+            return True
+        return _provider_id_from_switch_id(switch_id) in self._keyed.get(mode, frozenset())
 
     def toggle_mode(self) -> None:
         """Flip TV ↔ Film (used by global ``m`` binding)."""
@@ -197,8 +229,9 @@ class ModeProviderBar(Horizontal):
     # --------------------------------------------------------------- helpers
 
     def _emit_initial(self) -> None:
+        current = next(pid for pid in _PROVIDER_SWITCH_IDS if self._switch_value(pid))
         self.post_message(ScanModeChanged(ScanMode.TV))
-        self.post_message(ProviderChanged("tmdb"))
+        self.post_message(ProviderChanged(_provider_id_from_switch_id(current)))
 
     def _handle_mode_change(self, *, turned_on: bool) -> None:
         new_mode = ScanMode.FILM if turned_on else ScanMode.TV
@@ -222,39 +255,37 @@ class ModeProviderBar(Horizontal):
         self.post_message(ProviderChanged(_provider_id_from_switch_id(switch_id)))
 
     def _apply_provider_mask(self, mode: ScanMode, *, emit: bool) -> None:
-        """Hide providers that do not apply to ``mode``; fall back to TMDB.
+        """Show the providers of ``mode``, mark those without a key, and select one.
 
         Out-of-mode providers are fully hidden (``display = False`` on both the
         switch and its label) rather than disabled, so invalid combinations are
-        not merely greyed out — they literally do not occupy a cell. TMDB is
-        kept as the "always on" fallback when the previously active provider is
-        hidden by the mask.
+        not merely greyed out — they literally do not occupy a cell. The
+        selection moves to the first provider of ``mode`` (declaration order:
+        TMDB, then the other) that has a key, or to TMDB when none has. With
+        ``emit``, a ``ProviderChanged`` is posted when the selection changes.
         """
         allowed = _ALLOWED_PROVIDERS[mode]
         for pid in _PROVIDER_SWITCH_IDS:
             switch = self.query_one(f"#{pid}", Switch)
             label = self.query_one(f"#{_PROVIDER_LABEL_IDS[pid]}", Label)
-            if pid not in allowed:
-                self._set_switch(pid, False)
-                switch.display = False
-                label.display = False
-                switch.disabled = False
-            else:
-                switch.display = True
-                label.display = True
-                switch.disabled = False
+            visible = pid in allowed
+            switch.display = visible
+            label.display = visible
+            switch.disabled = False
+            no_key = visible and not self._has_key(mode, pid)
+            label.update(_PROVIDER_NAMES[pid] + (_NO_KEY_SUFFIX if no_key else ""))
 
+        ordered = tuple(pid for pid in _PROVIDER_SWITCH_IDS if pid in allowed)
+        target = next((pid for pid in ordered if self._has_key(mode, pid)), "provider-tmdb")
         current_on = next(
             (pid for pid in _PROVIDER_SWITCH_IDS if self._switch_value(pid)),
             None,
         )
-        if current_on is None or current_on not in allowed:
-            if current_on is not None:
-                self._set_switch(current_on, False)
-            self._set_switch("provider-tmdb", True)
-            self._set_provider_label_active("provider-tmdb")
-            if emit:
-                self.post_message(ProviderChanged("tmdb"))
+        for pid in _PROVIDER_SWITCH_IDS:
+            self._set_switch(pid, pid == target)
+        self._set_provider_label_active(target)
+        if emit and current_on != target:
+            self.post_message(ProviderChanged(_provider_id_from_switch_id(target)))
 
     def _set_switch(self, switch_id: str, value: bool) -> None:
         switch = self.query_one(f"#{switch_id}", Switch)

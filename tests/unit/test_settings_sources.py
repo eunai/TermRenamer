@@ -128,8 +128,9 @@ def test_env_in_a_parent_of_the_working_folder_is_ignored(
     child.mkdir(parents=True)
     _write(isolated_settings_dirs.workdir / ".env", "TERMRENAMER_TMDB_API_KEY=from-parent\n")
     monkeypatch.chdir(child)
+    monkeypatch.setenv("TERMRENAMER_OMDB_API_KEY", "made-up-omdb")
 
-    settings = load_settings(require_tmdb_key=False)
+    settings = load_settings()
 
     assert settings.tmdb_api_key is None
 
@@ -160,11 +161,14 @@ def test_environment_still_overrides_the_explicit_file(
     assert load_settings(env_file=explicit).tmdb_api_key == "env-key"
 
 
-def test_a_loaded_file_does_not_leak_into_a_later_load(tmp_path: Path) -> None:
+def test_a_loaded_file_does_not_leak_into_a_later_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     explicit = _write(tmp_path / "explicit.env", "TERMRENAMER_TMDB_API_KEY=explicit-key\n")
     load_settings(env_file=explicit)
+    monkeypatch.setenv("TERMRENAMER_OMDB_API_KEY", "made-up-omdb")
 
-    settings = load_settings(require_tmdb_key=False)
+    settings = load_settings()
 
     assert settings.tmdb_api_key is None
 

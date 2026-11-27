@@ -211,7 +211,7 @@ class TermRenamerApp(App[None]):
                     yield ActivityPane(id="activity-pane")
                 with TabPane("Logs", id="tab-logs"):
                     yield RichLog(id="log_panel", highlight=True, markup=True)
-            yield ModeProviderBar(id="mode-bar")
+            yield ModeProviderBar(id="mode-bar", keyed=self._wiring.keyed_providers())
         yield Footer()
 
     def action_toggle_mode(self) -> None:

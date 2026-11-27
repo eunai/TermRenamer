@@ -10,15 +10,9 @@ from termrenamer.app_bootstrap import load_settings
 from termrenamer.util.errors import ValidationError
 
 
-def test_missing_tmdb_key_raises() -> None:
-    with pytest.raises(ValidationError) as excinfo:
-        load_settings(require_tmdb_key=True)
-    assert "TERMRENAMER_TMDB_API_KEY" in str(excinfo.value)
-
-
 def test_present_key_loads(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TERMRENAMER_TMDB_API_KEY", "test_key_value")
-    settings = load_settings(require_tmdb_key=True)
+    settings = load_settings()
     assert settings.tmdb_api_key == "test_key_value"
 
 
@@ -26,7 +20,7 @@ def test_dest_folder_env_vars_optional(monkeypatch: pytest.MonkeyPatch, tmp_path
     monkeypatch.setenv("TERMRENAMER_TMDB_API_KEY", "k")
     monkeypatch.setenv("TERMRENAMER_FILM_DEST_FOLDER", str(tmp_path / "films"))
     monkeypatch.setenv("TERMRENAMER_TV_DEST_FOLDER", str(tmp_path / "tv"))
-    settings = load_settings(require_tmdb_key=True)
+    settings = load_settings()
     assert settings.film_dest_folder == tmp_path / "films"
     assert settings.tv_dest_folder == tmp_path / "tv"
 
@@ -35,7 +29,7 @@ def test_enable_layout_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TERMRENAMER_TMDB_API_KEY", "k")
     monkeypatch.setenv("TERMRENAMER_ENABLE_FOLDER_RENAME", "true")
     monkeypatch.setenv("TERMRENAMER_ENABLE_SEASON_FOLDERS", "0")
-    settings = load_settings(require_tmdb_key=True)
+    settings = load_settings()
     assert settings.enable_folder_rename is True
     assert settings.enable_season_folders is False
 
@@ -44,7 +38,7 @@ def test_invalid_layout_bool_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TERMRENAMER_TMDB_API_KEY", "k")
     monkeypatch.setenv("TERMRENAMER_ENABLE_FOLDER_RENAME", "maybe")
     with pytest.raises(ValidationError) as excinfo:
-        load_settings(require_tmdb_key=True)
+        load_settings()
     assert "TERMRENAMER_ENABLE_FOLDER_RENAME" in str(excinfo.value)
 
 
