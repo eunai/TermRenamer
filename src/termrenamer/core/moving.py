@@ -20,11 +20,13 @@ another program that changes that same file or name between such a check and the
 next call, or that deletes or writes over a name Apply has claimed.
 
 "The same file" never rests on the device and inode number alone, as ext4 and tmpfs give
-the number of a file just removed to the next file made (:func:`_one_file`). A source
+the number of a file just removed to the next file made (:func:`_one_file`). A file
 copied to another drive, and a folder walked, are held open while Apply acts on them
-(:class:`_Held`), so no other file can be given their number meanwhile; on Windows a
-folder is held by its creation time instead. A source moved by a hard link needs no
-holding: its new name keeps the file, and so its number, its own.
+(:class:`_Held`), so that on ext4, tmpfs and other disks that keep an open file's
+number its own, no other file can be given their number meanwhile; on Windows a folder
+is held by its creation time instead. A source moved by a hard link needs no holding:
+its new name keeps the file, and so its number, its own. A symbolic link copied to
+another drive is not held: it is told by its times and its target text.
 """
 
 from __future__ import annotations
