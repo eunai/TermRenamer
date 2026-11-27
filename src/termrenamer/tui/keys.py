@@ -73,7 +73,7 @@ KEYS: tuple[Key, ...] = (
         (("left", "previous_file"), ("right", "next_file")),
         "File",
         "Select a file of the Title",
-        frozenset({Stage.PLAN, Stage.PREVIEW}),
+        frozenset({Stage.PREVIEW}),
     ),
     Key("b", _bound("b", "build_plan"), "Build Plan", "Build the Plan", frozenset({Stage.QUEUE})),
     Key(
