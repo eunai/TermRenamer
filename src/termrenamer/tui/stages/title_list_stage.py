@@ -1,4 +1,5 @@
-"""What the Plan and Preview Stages share: a "Titles" heading with its count over a Title list."""
+"""What the Plan and Preview Stages share: a "Titles" heading with its count over a Title
+list, and the poster panel on the left while Posters are shown."""
 
 from __future__ import annotations
 
@@ -6,7 +7,9 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Static
 
+from termrenamer.tui.poster_support import PosterSource
 from termrenamer.tui.stages.base import StageView
+from termrenamer.tui.widgets.poster_panel import PosterPanel
 from termrenamer.tui.widgets.title_list import TitleList
 
 
@@ -32,7 +35,34 @@ class TitleListStage(StageView):
         color: $tr-dim;
         text-style: none;
     }
+    TitleListStage PosterPanel {
+        display: none;
+    }
+    TitleListStage.-posters PosterPanel {
+        display: block;
+    }
     """
+
+    @property
+    def posters_shown(self) -> bool:
+        """Whether the poster panel is on screen (the Stage has the class ``-posters``)."""
+        return self.has_class("-posters")
+
+    def show_posters(self, source: PosterSource | None, *, paused: bool = False) -> None:
+        """Show the poster panel with Posters from ``source``, or hide it for ``None``.
+
+        Hidden, the panel holds no image and downloads nothing; the details move up.
+        ``paused`` (the Stage is not shown, or something covers it), the panel shows the
+        Title's name in place of the image and downloads nothing.
+        """
+        self.set_class(source is not None, "-posters")
+        for panel in self.query(PosterPanel):
+            panel.pause(paused)
+            panel.use(source)
+        self.posters_changed()
+
+    def posters_changed(self) -> None:
+        """The panel was shown or hidden: a Stage draws again what moves with it."""
 
     def compose_heading(self) -> ComposeResult:
         with Horizontal(classes="list-heading"):

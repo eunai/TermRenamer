@@ -1,7 +1,8 @@
 """A yes-or-no confirm: a titled box of lines over the Title list, with two buttons.
 
 It returns ``True`` for ``y`` and ``False`` for ``n`` or Escape; a subclass may add
-``enter`` for yes. It sits right of where the Poster panel goes.
+``enter`` for yes. It sits right of where the Poster panel goes, and keeps clear of the
+panel while it shows.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Static
 
 from termrenamer.tui.widgets.action_button import ActionButton
+from termrenamer.tui.widgets.poster_panel import keep_clear_of_posters
 
 
 class ConfirmDialog(ModalScreen[bool]):
@@ -79,6 +81,10 @@ class ConfirmDialog(ModalScreen[bool]):
 
     def on_mount(self) -> None:
         self.query_one("#confirm-dialog").border_title = f" {self._title} "
+        keep_clear_of_posters(self.query_one("#confirm-dialog"))
+
+    def on_resize(self) -> None:
+        keep_clear_of_posters(self.query_one("#confirm-dialog"))
 
     def on_action_button_clicked(self, event: ActionButton.Clicked) -> None:
         event.stop()

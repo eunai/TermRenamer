@@ -27,6 +27,8 @@ class IsolatedDirs:
     config_home: Path
     appdata: Path
     workdir: Path
+    cache_home: Path
+    local_appdata: Path
 
     @property
     def user_settings_file(self) -> Path:
@@ -46,7 +48,8 @@ def isolated_settings_dirs(
     """Point every per-user folder and the working folder at temporary locations.
 
     No test reads the developer's real user settings file, a ``.env`` in the folder
-    pytest was started from, or a ``TERMRENAMER_*`` variable from the developer's shell.
+    pytest was started from, or a ``TERMRENAMER_*`` variable from the developer's shell,
+    and none reaches the real per-user cache folder that holds Poster files.
     """
     root = tmp_path_factory.mktemp("isolated")
     dirs = IsolatedDirs(
@@ -54,6 +57,8 @@ def isolated_settings_dirs(
         config_home=root / "home" / ".config",
         appdata=root / "home" / "AppData" / "Roaming",
         workdir=root / "work",
+        cache_home=root / "home" / ".cache",
+        local_appdata=root / "home" / "AppData" / "Local",
     )
     for folder in (dirs.home, dirs.workdir):
         folder.mkdir(parents=True)
@@ -64,6 +69,8 @@ def isolated_settings_dirs(
     monkeypatch.setenv("USERPROFILE", str(dirs.home))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(dirs.config_home))
     monkeypatch.setenv("APPDATA", str(dirs.appdata))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(dirs.cache_home))
+    monkeypatch.setenv("LOCALAPPDATA", str(dirs.local_appdata))
     monkeypatch.chdir(dirs.workdir)
     yield dirs
 

@@ -3,7 +3,10 @@
 The view draws what the build's listener reports (:mod:`termrenamer.core.progress`):
 the Title list with each Title waiting, looking up, found or not found; "N of M files
 looked up"; and a strip with the lookup gauge, the matched and unmatched bars and
-lookups per second. The selected Title's details sit in the left column.
+lookups per second. The selected Title's details sit in the left column, under the
+poster panel while Posters are shown. No Poster is downloaded while the Plan is built:
+the panel draws a Poster the store already holds, and otherwise the Title's name and
+status word.
 """
 
 from __future__ import annotations
@@ -31,8 +34,9 @@ from termrenamer.core.progress import (
 from termrenamer.tui.lookup_rate import LookupRate
 from termrenamer.tui.stages.title_list_stage import TitleListStage
 from termrenamer.tui.widgets.action_button import ActionButton
+from termrenamer.tui.widgets.poster_panel import NO_POSTER, PosterPanel
 from termrenamer.tui.widgets.title_list import ListRow, StatusWord, TitleList
-from termrenamer.tui.words import match_name, plural, title_name
+from termrenamer.tui.words import match_name, plural, provider_name, title_name
 
 _DETAILS_WIDTH = 39
 """The left column's width with its rule, as in the mockup and the Preview Stage."""
@@ -72,11 +76,14 @@ class PlanStage(TitleListStage):
     PlanStage #plan-columns {{
         height: 1fr;
     }}
-    PlanStage #plan-details {{
+    PlanStage #plan-left {{
         width: {_DETAILS_WIDTH};
         height: 100%;
-        padding: 1 3;
         border-right: solid $tr-line;
+    }}
+    PlanStage #plan-details {{
+        height: auto;
+        padding: 1 3;
     }}
     PlanStage #plan-status {{
         height: auto;
@@ -102,6 +109,7 @@ class PlanStage(TitleListStage):
         self.clock: Callable[[], float] = time.monotonic
         """The rate's clock; a test sets its own before the build."""
         self._mode = ScanMode.TV
+        self._provider_id = ""
         self._provider = ""
         self._rows: list[_Row] = []
         self._row_of: dict[str, _Row] = {}
@@ -112,12 +120,15 @@ class PlanStage(TitleListStage):
         self._unmatched = 0
         self._rate = LookupRate(self.clock)
         self._timer: Timer | None = None
+        self._building = False
+        """Whether a build runs; once it ends the panel holds no Poster."""
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="plan-columns"):
-            # The selected Title's details. Ticket #22 fills this column with the
-            # Preview's details; until then it holds the name, status word and videos.
-            yield Static("", id="plan-details")
+            # The selected Title's details: its name, status word and videos.
+            with Vertical(id="plan-left"):
+                yield PosterPanel(id="plan-poster")
+                yield Static("", id="plan-details")
             with Vertical(classes="stage-body"):
                 yield from self.compose_heading()
                 yield TitleList(id="plan-titles")
@@ -131,10 +142,12 @@ class PlanStage(TitleListStage):
 
     # ----------------------------------------------------------- the build
 
-    def start(self, provider: str, mode: ScanMode) -> None:
-        """Begin a build in ``mode`` on ``provider`` (its name), with an empty list."""
+    def start(self, provider_id: str, mode: ScanMode) -> None:
+        """Begin a build in ``mode`` on the Provider ``provider_id``, with an empty list."""
         self._mode = mode
-        self._provider = provider
+        self._provider_id = provider_id
+        self._provider = provider_name(provider_id)
+        self._building = True
         self._rows = []
         self._row_of = {}
         self._current = None
@@ -146,7 +159,12 @@ class PlanStage(TitleListStage):
         self._draw_progress()
 
     def stop(self) -> None:
-        """The build ended or was cancelled: the rate stops moving."""
+        """The build ended or was cancelled: the rate stops moving, the panel empties."""
+        self._stop_timer()
+        self._building = False
+        self.query_one(PosterPanel).clear()
+
+    def _stop_timer(self) -> None:
         if self._timer is not None:
             self._timer.stop()
             self._timer = None
@@ -183,7 +201,7 @@ class PlanStage(TitleListStage):
         ]
         self._row_of = {row.key: row for row in self._rows}
         self.title_list.set_rows([row.list_row() for row in self._rows])
-        self.stop()
+        self._stop_timer()
         self._timer = self.set_interval(1.0, self._draw_progress)
         self._draw_rows()
         self._draw_progress()
@@ -258,6 +276,7 @@ class PlanStage(TitleListStage):
         selected = self.title_list.selected
         row = self._row_of.get(selected.key) if selected is not None else None
         details = self.query_one("#plan-details", Static)
+        self._draw_poster(row)
         if row is None:
             details.update("")
             return
@@ -274,6 +293,24 @@ class PlanStage(TitleListStage):
                 info=info,
             )
         )
+
+    def _draw_poster(self, row: _Row | None) -> None:
+        """The selected Title's Poster when the store holds it; nothing is downloaded."""
+        panel = self.query_one(PosterPanel)
+        if row is None or not self._building:
+            panel.clear()
+            return
+        ref = row.match.poster_ref if row.match is not None else None
+        if row.status is StatusWord.LOOKING_UP:
+            label = f"{row.status}…"
+        elif row.status is StatusWord.WAITING or ref:
+            label = str(row.status)
+        else:
+            label = NO_POSTER
+        panel.show(row.name, provider_id=self._provider_id, ref=ref, label=label, download=False)
+
+    def posters_changed(self) -> None:
+        self._draw_details()
 
     def _draw_strip(self) -> None:
         strip = self.query_one("#plan-strip", Static)

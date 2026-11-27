@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import random
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -25,6 +26,14 @@ class HttpClientConfig:
     backoff_base_seconds: float = 0.5
     jitter: bool = True
     max_backoff_seconds: float = 60.0
+
+
+@dataclass(frozen=True, slots=True)
+class Download:
+    """A downloaded body and the ``Content-Type`` it came with (blank when none)."""
+
+    content: bytes
+    content_type: str
 
 
 class HttpClient:
@@ -57,10 +66,46 @@ class HttpClient:
         Retries on: timeout, connect errors, HTTP 429 / 502 / 503 / 504.
         Does not retry 401/404/400 (adapters handle auth refresh separately).
         """
+        return self._with_retries(lambda: self._client.request(method, url, **kwargs))
+
+    def download(self, url: str, *, max_bytes: int) -> Download:
+        """GET ``url`` with retries, as :meth:`request` does, reading at most ``max_bytes``.
+
+        Redirects are not followed, and the request carries only the client's default
+        headers. A body longer than ``max_bytes`` stops the read and raises
+        ``ProviderError``, as does any status but 200.
+        """
+
+        too_large = f"Download larger than {max_bytes} bytes"
+        body = bytearray()
+
+        def send() -> httpx.Response:
+            body.clear()
+            with self._client.stream("GET", url, follow_redirects=False) as response:
+                if response.status_code != 200:
+                    return response
+                declared = response.headers.get("Content-Length", "")
+                if declared.isdigit() and int(declared) > max_bytes:
+                    raise ProviderError(too_large)
+                for chunk in response.iter_bytes():
+                    body.extend(chunk)
+                    if len(body) > max_bytes:
+                        raise ProviderError(too_large)
+                return response
+
+        response = self._with_retries(send)
+        if response.status_code != 200:
+            raise ProviderError(f"HTTP {response.status_code}")
+        return Download(
+            content=bytes(body),
+            content_type=response.headers.get("Content-Type", ""),
+        )
+
+    def _with_retries(self, send: Callable[[], httpx.Response]) -> httpx.Response:
         last_error: BaseException | None = None
         for attempt in range(self._config.max_attempts):
             try:
-                response = self._client.request(method, url, **kwargs)
+                response = send()
             except (
                 httpx.TimeoutException,
                 httpx.ConnectError,

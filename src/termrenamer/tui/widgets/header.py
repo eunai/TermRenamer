@@ -12,13 +12,16 @@ from textual.widgets import Static
 from termrenamer.core.models import ScanMode
 from termrenamer.tui.words import folder_text
 
+HEADER_ROWS = 1
+"""The header's rows."""
+
 
 class AppHeader(Horizontal):
     """One line: ``TermRenamer  Mode  TV  Film    Provider  TMDB ▾ … Destination root  <path>``."""
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS = (
+        """
     AppHeader {
-        height: 1;
         background: $panel;
         padding: 0 2;
     }
@@ -35,6 +38,12 @@ class AppHeader(Horizontal):
         text-overflow: ellipsis;
     }
     """
+        + f"""
+    AppHeader {{
+        height: {HEADER_ROWS};
+    }}
+    """
+    )
 
     def compose(self) -> ComposeResult:
         yield Static(id="header-left")

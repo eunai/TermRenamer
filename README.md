@@ -68,6 +68,18 @@ Without any provider key, the app exits with status 2 and prints the three key
 settings and the full path of the settings file it expects.
 See [Configure](#configure).
 
+To show Posters, install the optional `posters` extra instead:
+
+```bash
+uv tool install "termrenamer[posters] @ git+https://github.com/eunai/TermRenamer"
+```
+
+Posters are drawn only in a terminal that draws Sixel or Kitty images, for
+example iTerm2, Windows Terminal 1.22 or newer, kitty, WezTerm, Konsole, foot,
+and xterm when it is set up for Sixel (`xterm -ti vt340`). Apple's Terminal,
+GNOME Terminal and the Windows Console draw neither, and there the panel stays
+hidden. The app checks the terminal once, at start.
+
 To upgrade or remove it:
 
 ```bash
@@ -116,6 +128,7 @@ The main settings:
 | `TERMRENAMER_CACHE_DB_PATH`         | unset    | Path of a SQLite metadata cache. The cache is off until you set it.       |
 | `TERMRENAMER_NAME_TAKEN`            | `suffix` | When a new name is taken: `suffix` adds a number, `skip` leaves the file. |
 | `TERMRENAMER_THEME`                 | `dark`   | Screen colours: `dark` or `light`.                                        |
+| `TERMRENAMER_SHOW_POSTERS`          | `true`   | Show the selected Title's Poster, when the `posters` extra is installed.  |
 
 [`.env.example`](.env.example) lists every setting, including HTTP timeout and
 retry tuning. Changes you make on the **Settings** screen last for the current
@@ -140,23 +153,24 @@ releases put to work.
 
 Keys:
 
-| Key     | Where                     | Action                                |
-| ------- | ------------------------- | ------------------------------------- |
-| `a`     | Queue                     | Add a file                            |
-| `f`     | Queue                     | Add a folder                          |
-| `c`     | Queue                     | Clear the queue                       |
-| `b`     | Queue                     | Build the plan                        |
-| `↑` `↓` | Queue, Plan, Preview      | Select a source or a title            |
-| `Enter` | Preview                   | Apply, then `y` or `Enter` to confirm |
-| `Esc`   | Preview                   | Discard the plan                      |
-| `n`     | Applied                   | New batch                             |
-| `m`     | Queue, Preview            | Change mode (TV or Film)              |
-| `p`     | Queue, Preview            | Change provider                       |
-| `s`     | Queue, Preview, Applied   | Settings                              |
-| `l`     | Anywhere but a text field | Logs                                  |
-| `?`     | Anywhere but a text field | Help                                  |
-| `q`     | Anywhere but a text field | Quit                                  |
-| `Esc`   | A dialog or view          | Close it                              |
+| Key     | Where                                          | Action                                |
+| ------- | ---------------------------------------------- | ------------------------------------- |
+| `a`     | Queue                                          | Add a file                            |
+| `f`     | Queue                                          | Add a folder                          |
+| `c`     | Queue                                          | Clear the queue                       |
+| `b`     | Queue                                          | Build the plan                        |
+| `↑` `↓` | Queue, Plan, Preview                           | Select a source or a title            |
+| `Enter` | Preview                                        | Apply, then `y` or `Enter` to confirm |
+| `Esc`   | Preview                                        | Discard the plan                      |
+| `n`     | Applied                                        | New batch                             |
+| `m`     | Queue, Preview                                 | Change mode (TV or Film)              |
+| `p`     | Queue, Preview                                 | Change provider                       |
+| `s`     | Queue, Preview, Applied                        | Settings                              |
+| `i`     | Anywhere but a text field or a dialog          | Hide or show Posters                  |
+| `l`     | Anywhere but a text field                      | Logs                                  |
+| `?`     | Anywhere but a text field                      | Help                                  |
+| `q`     | Anywhere but a text field                      | Quit                                  |
+| `Esc`   | A dialog or view                               | Close it                              |
 
 ## Features
 
@@ -169,6 +183,16 @@ Keys:
   own.
 - **Two themes.** Dark and light teal, chosen with `TERMRENAMER_THEME` or on
   the Settings screen.
+- **Posters.** With the `posters` extra installed and a terminal that draws
+  images, the Plan and Preview show the selected Title's Poster in a framed
+  panel with the provider's name on its border. `i` or the Settings screen
+  hides or shows it for the session; `TERMRENAMER_SHOW_POSTERS=false` starts
+  with it hidden. The panel needs a screen of at least 100 columns by 35 rows;
+  on a smaller one it is hidden. Posters are downloaded from TMDB's or
+  TheTVDB's image host when a Title is selected at the Preview, the first one
+  as the Preview opens, never while the plan is built, and kept for 30 days in
+  a `termrenamer/posters` folder in your per-user cache folder
+  (`%LOCALAPPDATA%` on Windows, `~/.cache` or `XDG_CACHE_HOME` elsewhere).
 - **Name taken.** When a new name is already used, by something at that path
   or by an earlier file of the same plan, the file is marked "name taken". The
   Name taken setting (`TERMRENAMER_NAME_TAKEN`, or the Settings screen) decides

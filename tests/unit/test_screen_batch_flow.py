@@ -164,7 +164,8 @@ async def test_clicking_apply_opens_the_confirm_and_renames_nothing(tmp_path: Pa
         await queue(pilot, folder)
         await build(pilot)
         buttons = app.query_one(PreviewStage).query(ActionButton)
-        [button] = [b for b in buttons if b.press_key == "enter"]
+        # The Preview has an Apply beside the details and one under the list; one shows.
+        [button] = [b for b in buttons if b.press_key == "enter" and b.region.area > 0]
         await pilot.click(button)
         await pilot.pause()
         assert isinstance(app.screen, ApplyConfirm)

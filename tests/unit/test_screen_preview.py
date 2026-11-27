@@ -16,13 +16,16 @@ from .screen_driver import (
     SIZE,
     build,
     lines_with,
+    long_season,
     make_app,
+    mark_seen_walking,
     press,
     queue,
     screen_text,
     settings,
     text_of,
     tv_backups,
+    wiring,
 )
 
 WIDE = (300, 40)
@@ -291,3 +294,15 @@ async def test_a_rename_that_changes_only_letter_case_is_counted_as_a_rename(
         await press(pilot, "n")
     assert footer[1] == f"to {folder / 'Harbour Lights - S01E01 - The Tide Comes In.mkv'}"
     assert lines[:2] == ["Rename 1 video in its own folder.", "Skip none."]
+
+
+async def test_on_a_small_screen_the_selected_file_stays_in_view(tmp_path: Path) -> None:
+    folder, tv = long_season(tmp_path, 40)
+    app = make_app(wiring(tv=tv), settings())
+    async with app.run_test(size=(90, 28)) as pilot:
+        await queue(pilot, folder)
+        await build(pilot)
+        overflow = app.query_one("#details-scroll").max_scroll_y
+        seen = await mark_seen_walking(pilot, 40)
+    assert overflow > 0
+    assert seen == "y" * 78

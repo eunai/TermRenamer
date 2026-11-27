@@ -3,7 +3,10 @@
 The details column holds the selected Title's name, status word and counts, one cell
 per video, the summary of the whole Plan and the Apply action. ``↑`` ``↓`` select a
 Title, ``←`` ``→`` a file of it; the footer shows that file's current and new paths.
-The column stays left of the Title list, where the Poster panel goes (#29).
+
+While Posters are shown, the poster panel tops the column, outside the details' scroll,
+and the selected Title's Poster is downloaded when it is not stored yet. The summary
+and Apply then move under the Title list, as the mockup draws them.
 """
 
 from __future__ import annotations
@@ -21,12 +24,46 @@ from termrenamer.core.planning import PutBack, derive_plan
 from termrenamer.core.title_rows import PlanCounts, TitleRow, title_rows
 from termrenamer.tui.stages.title_list_stage import TitleListStage
 from termrenamer.tui.widgets.action_button import ActionButton
-from termrenamer.tui.widgets.title_details import TitleDetails
+from termrenamer.tui.widgets.footer import FOOTER_FIXED_ROWS
+from termrenamer.tui.widgets.header import HEADER_ROWS
+from termrenamer.tui.widgets.poster_panel import PANEL_HEIGHT, PosterPanel
+from termrenamer.tui.widgets.stages_row import STAGES_ROW_ROWS
+from termrenamer.tui.widgets.title_details import COMPACT_ROWS, TitleDetails
 from termrenamer.tui.widgets.title_list import ListRow, StatusWord, TitleList
 from termrenamer.tui.words import agree, match_name, plural, why_not_renamed
 
 _LABEL_WIDTH = 6
 """``from`` and ``to`` and the spaces after them, in the footer."""
+
+_DETAILS_PADDING_TOP = 1
+"""The row above the details in their scroll."""
+
+_ACTION_ROWS = 2
+"""Change match and Leave out, on rows of their own one under the other while the
+poster panel shows, as the mockup draws them."""
+
+_FOOTER_LINES = 2
+"""The Preview's lines in the footer: the selected file's ``from`` and ``to``."""
+
+ROWS_FOR_POSTERS = (
+    HEADER_ROWS
+    + STAGES_ROW_ROWS
+    + PANEL_HEIGHT
+    + _DETAILS_PADDING_TOP
+    + COMPACT_ROWS
+    + _ACTION_ROWS
+    + FOOTER_FIXED_ROWS
+    + _FOOTER_LINES
+)
+"""The fewest rows that hold the Preview with the poster panel: the panel, the compact
+details and both actions in the column, the header and footer above and below. Below
+this the panel is hidden, as if Posters were off."""
+
+
+def _apply_parts(button_id: str, note_id: str) -> ComposeResult:
+    """The Apply button and its note, for the summary beside the details or under the list."""
+    yield ActionButton("enter", "Apply…", press_key="enter", id=button_id, classes="-strong")
+    yield Static("Nothing moves until you confirm.", id=note_id)
 
 
 class _DetailsScroll(VerticalScroll, can_focus=False):
@@ -36,22 +73,23 @@ class _DetailsScroll(VerticalScroll, can_focus=False):
 
 _WAITING_ACTIONS = ("apply", "leave_out", "pick_match")
 """The actions that wait while a picked Match's episodes are looked up."""
-_WAITING_BUTTONS = ("#apply", "#leave-out", "#change-match")
+_WAITING_BUTTONS = ("#apply", "#apply-under", "#leave-out", "#change-match")
 """Their buttons, off the screen meanwhile."""
 
 
 class PreviewStage(TitleListStage):
     """The details column with the summary and Apply, and the Plan's Title list."""
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS = (
+        """
     PreviewStage #details {
         width: 39;
         height: 1fr;
         border-right: solid $tr-line;
     }
     PreviewStage #details-scroll {
+        width: 100%;  /* 1fr would lose the poster panel's left margin */
         height: 1fr;
-        padding: 1 1 0 3;
         scrollbar-size-vertical: 1;
     }
     PreviewStage #details-actions {
@@ -73,7 +111,39 @@ class PreviewStage(TitleListStage):
         color: $tr-dim;
         margin-top: 1;
     }
+    PreviewStage #summary-under {
+        display: none;
+        height: auto;
+        padding: 1 0 1 3;
+        border-top: solid $tr-line;
+    }
+    PreviewStage #summary-under .summary-counts {
+        margin-bottom: 1;
+    }
+    PreviewStage #summary-under-apply {
+        height: 1;
+    }
+    PreviewStage #summary-under-note {
+        width: auto;
+        color: $tr-dim;
+        margin-left: 2;
+    }
+    PreviewStage.-posters #preview-summary {
+        display: none;
+    }
+    PreviewStage.-posters #summary-under {
+        display: block;
+    }
+    PreviewStage.-posters #details-actions ActionButton {
+        margin: 0;
+    }
     """
+        + f"""
+    PreviewStage #details-scroll {{
+        padding: {_DETAILS_PADDING_TOP} 1 0 3;
+    }}
+    """
+    )
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
@@ -85,6 +155,7 @@ class PreviewStage(TitleListStage):
     def compose(self) -> ComposeResult:
         with Horizontal():
             with Vertical(id="details"):
+                yield PosterPanel(id="preview-poster")
                 with _DetailsScroll(id="details-scroll"):
                     yield TitleDetails()
                 # Under the scroll, so the actions stay on screen however long the Title.
@@ -96,14 +167,16 @@ class PreviewStage(TitleListStage):
                         "x", "Leave out", press_key="x", id="leave-out", classes="-plain"
                     )
                 with Vertical(id="preview-summary"):
-                    yield Static("", id="summary-counts")
-                    yield ActionButton(
-                        "enter", "Apply…", press_key="enter", id="apply", classes="-strong"
-                    )
-                    yield Static("Nothing moves until you confirm.", id="preview-note")
+                    yield Static("", id="summary-counts", classes="summary-counts")
+                    yield from _apply_parts("apply", "preview-note")
             with Vertical(classes="stage-body"):
                 yield from self.compose_heading()
                 yield TitleList(id="preview-titles")
+                # The same summary and Apply, under the list while the poster panel shows.
+                with Vertical(id="summary-under"):
+                    yield Static("", id="summary-counts-under", classes="summary-counts")
+                    with Horizontal(id="summary-under-apply"):
+                        yield from _apply_parts("apply-under", "summary-under-note")
 
     def on_mount(self) -> None:
         # Each button shows once its key's action is built, here or on the app (#28).
@@ -164,7 +237,9 @@ class PreviewStage(TitleListStage):
         if rows:
             self.title_list.highlighted = row_index
         self.show_heading_count(len(rows))
-        self.query_one("#summary-counts", Static).update(_summary(PlanCounts.of(plan)))
+        summary = _summary(PlanCounts.of(plan))
+        for counts in self.query(".summary-counts").results(Static):
+            counts.update(summary)
         self._show_details()
 
     def mark_looking_up(self) -> None:
@@ -198,7 +273,12 @@ class PreviewStage(TitleListStage):
 
     def _show_details(self) -> None:
         if self._plan is not None:
-            self.query_one(TitleDetails).show(self.selected_row, self._plan.mode, self._file)
+            self.query_one(TitleDetails).show(
+                self.selected_row, self._plan.mode, self._file, compact=self.posters_shown
+            )
+            self._show_poster()
+            # Once the details are laid out, the selected file's mark is scrolled to.
+            self.call_after_refresh(self._keep_mark_in_view)
         video = self.selected_file
         left_out = video is not None and video.status is EntryStatus.LEFT_OUT
         self.query_one("#leave-out", ActionButton).update(
@@ -214,6 +294,33 @@ class PreviewStage(TitleListStage):
         change.set_class(unmatched, "-strong")
         change.set_class(not unmatched, "-plain")
         self.changed()
+
+    def _keep_mark_in_view(self) -> None:
+        """Scroll the details the least that brings the selected file's mark on screen."""
+        region = self.query_one(TitleDetails).mark_region()
+        if region is None:
+            return
+        scroll = self.query_one("#details-scroll", VerticalScroll)
+        content = scroll.scrollable_content_region
+        scroll.scroll_to_region(
+            region.translate((-content.x, int(scroll.scroll_y) - content.y)),
+            animate=False,
+            immediate=True,
+        )
+
+    def _show_poster(self) -> None:
+        """The selected Title's Poster, downloaded now when it is not stored yet."""
+        plan, row = self._plan, self.selected_row
+        panel = self.query_one(PosterPanel)
+        if plan is None or row is None:
+            panel.clear()
+            return
+        name = row.name if row.title is None else match_name(row.title, plan.mode)
+        ref = row.title.poster_ref if row.title is not None else None
+        panel.show(name, provider_id=plan.options.provider_id, ref=ref, download=True)
+
+    def posters_changed(self) -> None:
+        self._show_details()
 
     # ------------------------------------------------------------------ keys
 

@@ -23,12 +23,16 @@ def stages_markup(current: Stage) -> str:
     return " [$tr-line]────[/] ".join(parts)
 
 
+STAGES_ROW_ROWS = 2
+"""The Stages row's rows, its bottom rule included."""
+
+
 class StagesRow(Horizontal):
     """The four Stages on the left and the current Stage's short count on the right."""
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS = (
+        """
     StagesRow {
-        height: 2;
         padding: 0 2;
         border-bottom: solid $tr-line;
     }
@@ -40,6 +44,12 @@ class StagesRow(Horizontal):
         color: $tr-dim;
     }
     """
+        + f"""
+    StagesRow {{
+        height: {STAGES_ROW_ROWS};
+    }}
+    """
+    )
 
     def compose(self) -> ComposeResult:
         yield Static(id="stages")

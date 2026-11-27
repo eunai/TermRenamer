@@ -26,6 +26,7 @@ from textual.widgets import Input, Static
 from textual.worker import Worker, WorkerState
 
 from termrenamer.core.models import Candidate
+from termrenamer.tui.widgets.poster_panel import keep_clear_of_posters
 from termrenamer.util.errors import ProviderError
 
 _LOG = logging.getLogger("termrenamer.tui")
@@ -241,10 +242,14 @@ class MatchPicker(ModalScreen[Picked | None]):
 
     def on_mount(self) -> None:
         self.query_one("#picker-dialog").border_title = Content(f" {self._heading} ")
+        keep_clear_of_posters(self.query_one("#picker-dialog"))
         self._say("")
         if self._start_typing:
             self.action_type()
         self._show_rows()
+
+    def on_resize(self) -> None:
+        keep_clear_of_posters(self.query_one("#picker-dialog"))
 
     def _show_rows(self) -> None:
         choices = self.choices

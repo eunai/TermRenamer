@@ -14,11 +14,13 @@ concurrency:
 
 jobs:
   checks:
-    name: Checks (${{ matrix.os }})
+    name: Checks (${{ matrix.os }}, ${{ matrix.posters && 'posters' || 'plain' }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        # A plain install has no image package; the posters extra adds it.
+        posters: [false, true]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Check out the repository
@@ -29,7 +31,7 @@ jobs:
 
       # uv reads the Python version (3.13) from the repo's .python-version.
       - name: Install dependencies
-        run: uv sync --locked
+        run: uv sync --locked ${{ matrix.posters && '--extra posters' || '' }}
 
       - name: Tests and coverage
         run: uv run pytest -v --cov

@@ -48,6 +48,7 @@ class Settings:
     enable_season_folders: bool
     theme: ThemeName = ThemeName.DARK
     name_taken: NameTakenPolicy = NameTakenPolicy.SUFFIX
+    show_posters: bool = True
 
     @property
     def has_tmdb_credentials(self) -> bool:
@@ -240,6 +241,7 @@ def load_settings(*, env_file: Path | None = None) -> Settings:
     enable_season_folders = _read_bool(env, "TERMRENAMER_ENABLE_SEASON_FOLDERS", default=False)
     theme = _read_theme(env)
     name_taken = _read_name_taken(env)
+    show_posters = _read_bool(env, "TERMRENAMER_SHOW_POSTERS", default=True)
 
     if not (tmdb_key or tvdb_key or omdb_key):
         variables = "TERMRENAMER_TMDB_API_KEY, TERMRENAMER_TVDB_API_KEY or TERMRENAMER_OMDB_API_KEY"
@@ -263,6 +265,7 @@ def load_settings(*, env_file: Path | None = None) -> Settings:
         enable_season_folders=enable_season_folders,
         theme=theme,
         name_taken=name_taken,
+        show_posters=show_posters,
     )
 
 

@@ -49,7 +49,7 @@ uv run ruff format --check .
 uv run mypy src
 ```
 
-`--cov` turns on **`pytest-cov`**: it measures line coverage of `src/termrenamer/`, prints the missing lines, and fails the run below **85%** (`[tool.coverage]` in `pyproject.toml`). Without `--cov`, pytest runs the tests only and prints no coverage report, so `uv run pytest tests/unit/<file>.py` checks one file. CI (`.github/workflows/ci.yml`) installs the dependencies with `uv sync --locked`, then runs these four checks on Linux and Windows, on each pull request and each push to `main`.
+`--cov` turns on **`pytest-cov`**: it measures line coverage of `src/termrenamer/`, prints the missing lines, and fails the run below **85%** (`[tool.coverage]` in `pyproject.toml`). Without `--cov`, pytest runs the tests only and prints no coverage report, so `uv run pytest tests/unit/<file>.py` checks one file. CI (`.github/workflows/ci.yml`) installs the dependencies with `uv sync --locked`, then runs these four checks on Linux and Windows, on each pull request and each push to `main`; it runs them once without the `posters` extra and once with it (`uv sync --locked --extra posters`). Locally, `uv sync --extra posters` adds the image package and `uv sync` removes it again.
 
 Run the TUI: `uv run python -m termrenamer`.
 

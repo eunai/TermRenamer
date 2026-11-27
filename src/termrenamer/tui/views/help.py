@@ -1,4 +1,5 @@
-"""Help: every key of the key table, where it works and what it does; Escape closes it."""
+"""Help: every key of the key table, where it works and what it does, and the credits the
+Providers ask for; Escape closes it."""
 
 from __future__ import annotations
 
@@ -11,6 +12,13 @@ from textual.widgets import Static
 
 from termrenamer.tui.keys import KEYS, VIEW_HINTS
 from termrenamer.tui.widgets.footer import hints_markup
+
+CREDITS = (
+    "This product uses the TMDB API but is not endorsed or certified by TMDB.",
+    "Metadata provided by TheTVDB. Please consider adding missing information or "
+    "subscribing. https://thetvdb.com/",
+)
+"""The credits TMDB and TheTVDB ask for where their data and Posters are shown."""
 
 
 def help_markup() -> str:
@@ -25,6 +33,8 @@ def help_markup() -> str:
             f"[b $accent]{escape(key.display):<8}[/][$tr-dim]{escape(key.where):<26}[/]"
             f"{escape(key.help_text)}"
         )
+    lines += ["", "[b]Credits[/b]", ""]
+    lines += [escape(credit) for credit in CREDITS]
     return "\n".join(lines)
 
 

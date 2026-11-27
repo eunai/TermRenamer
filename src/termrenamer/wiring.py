@@ -21,6 +21,7 @@ from termrenamer.app_bootstrap import (
 )
 from termrenamer.core.models import PROVIDER_IDS, ScanMode
 from termrenamer.persistence.cache import SqliteMetadataCache
+from termrenamer.persistence.posters import PosterStore, poster_folder
 from termrenamer.util.errors import ValidationError
 from termrenamer.util.http import HttpClient
 
@@ -37,7 +38,8 @@ class PlanningWiring:
     required on its own; selecting one with no key is reported when a plan is built.
     ``cache`` is the lookup cache, or ``None`` when ``TERMRENAMER_CACHE_DB_PATH`` is
     unset. :meth:`resolve_tv` and :meth:`resolve_film` return a new lookup for one
-    build each time they are called.
+    build each time they are called. ``posters`` is the poster store, which downloads
+    through the same HTTP client, or ``None`` (no Poster is then shown).
     """
 
     tv_tmdb: TvMetadataProvider | None
@@ -45,6 +47,7 @@ class PlanningWiring:
     film: FilmMetadataProvider | None
     film_omdb: FilmMetadataProvider | None
     cache: SqliteMetadataCache | None = None
+    posters: PosterStore | None = None
 
     def keyed_providers(self) -> dict[ScanMode, frozenset[str]]:
         """Return, per Mode, the ids of the Providers whose key is set."""
@@ -121,6 +124,7 @@ def build_planning_wiring(settings: Settings, http: HttpClient) -> PlanningWirin
         film=film,
         film_omdb=film_omdb,
         cache=create_metadata_cache(settings),
+        posters=PosterStore(poster_folder(), http),
     )
 
 

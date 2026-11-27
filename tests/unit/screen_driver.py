@@ -1,7 +1,9 @@
 """Drives the screen in scripted tests: stand-in Providers, the app, keys, and the text on screen.
 
 The stand-ins answer from fixed data and never reach a network. Sources live in each
-test's temporary folder.
+test's temporary folder. Posters are unavailable unless a test asks for them; then a
+stand-in image widget takes the image package's place and a stand-in image host answers
+the poster store's downloads.
 """
 
 from __future__ import annotations
@@ -13,16 +15,23 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import httpx
 from rich.console import Console
 from textual.pilot import Pilot
+from textual.widget import Widget
 from textual.widgets import Static
 from textual_fspicker import FileOpen, SelectDirectory
 
 from termrenamer.app_bootstrap import Settings, ThemeName
 from termrenamer.core.models import Candidate
 from termrenamer.core.policies import NameTakenPolicy
+from termrenamer.persistence.posters import PosterStore
 from termrenamer.tui.app import TermRenamerApp
+from termrenamer.tui.poster_support import ErrorWidget, PosterSupport
+from termrenamer.util.http import HttpClient, HttpClientConfig
 from termrenamer.wiring import PlanningWiring
+
+from .poster_images import JPEG
 
 SIZE = (120, 36)
 """The design size of the screen."""
@@ -92,6 +101,7 @@ def wiring(
     tvdb: TvStandIn | None = None,
     omdb: FilmStandIn | None = None,
     tmdb: bool = True,
+    posters: PosterStore | None = None,
 ) -> PlanningWiring:
     """Stand-ins in place of each Provider; ``tmdb=False`` leaves TMDB without a key."""
     return PlanningWiring(
@@ -99,6 +109,7 @@ def wiring(
         tv_tvdb=tvdb,
         film=(film or film_stand_in()) if tmdb else None,
         film_omdb=omdb,
+        posters=posters,
     )
 
 
@@ -110,6 +121,7 @@ def settings(
     film_root: Path | None = None,
     theme: ThemeName = ThemeName.DARK,
     name_taken: NameTakenPolicy = NameTakenPolicy.SUFFIX,
+    show_posters: bool = True,
 ) -> Settings:
     return Settings(
         tmdb_api_key=None,
@@ -128,11 +140,81 @@ def settings(
         enable_season_folders=season_folders,
         theme=theme,
         name_taken=name_taken,
+        show_posters=show_posters,
     )
 
 
-def make_app(wired: PlanningWiring | None = None, loaded: Settings | None = None) -> TermRenamerApp:
-    return TermRenamerApp(wiring=wired or wiring(), settings=loaded or settings())
+def make_app(
+    wired: PlanningWiring | None = None,
+    loaded: Settings | None = None,
+    *,
+    posters: PosterSupport | None = None,
+) -> TermRenamerApp:
+    return TermRenamerApp(
+        wiring=wired or wiring(), settings=loaded or settings(), poster_support=posters
+    )
+
+
+class StandInImage(Static):
+    """Takes the image package's widget's place: writes ``POSTER`` and the file's name."""
+
+    def __init__(self, image: Path, *, on_error: ErrorWidget) -> None:
+        super().__init__(f"POSTER {image.name[:8]}")
+        self.image: Path | None = image
+        self.on_error = on_error
+
+
+def stand_in_image(path: Path, on_error: ErrorWidget) -> Widget:
+    return StandInImage(path, on_error=on_error)
+
+
+POSTERS_AVAILABLE = PosterSupport(image=stand_in_image)
+"""Posters as a terminal that draws images has them, drawn by :class:`StandInImage`."""
+
+
+class UnreadableImage(StandInImage):
+    """As the image package's widget does with a file it cannot read: shows the widget
+    ``on_error`` makes, inside itself."""
+
+    def on_mount(self) -> None:
+        self.mount(self.on_error(OSError("cannot identify image file")))
+
+
+POSTERS_UNREADABLE = PosterSupport(
+    image=lambda path, on_error: UnreadableImage(path, on_error=on_error)
+)
+"""Posters available, but every stored file fails to draw."""
+
+
+@dataclass
+class ImageHost:
+    """Answers each image download with ``body`` and ``status``; records each request and
+    the thread it arrived on."""
+
+    body: bytes = JPEG
+    status: int = 200
+    requests: list[httpx.Request] = field(default_factory=list)
+    threads: list[threading.Thread] = field(default_factory=list)
+    gate: threading.Event | None = None
+    """When set, each answer waits until the gate opens."""
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        self.threads.append(threading.current_thread())
+        if self.gate is not None:
+            assert self.gate.wait(timeout=5)
+        return httpx.Response(
+            self.status, headers={"Content-Type": "image/jpeg"}, content=self.body
+        )
+
+    @property
+    def urls(self) -> list[str]:
+        return [str(request.url) for request in self.requests]
+
+    def store(self, folder: Path) -> PosterStore:
+        raw = httpx.Client(transport=httpx.MockTransport(self.handle))
+        config = HttpClientConfig(max_attempts=1, backoff_base_seconds=0)
+        return PosterStore(folder, HttpClient(config=config, client=raw))
 
 
 def tv_backups(parent: Path, name: str = "TV Backups") -> Path:
@@ -162,6 +244,12 @@ def screen_text(app: TermRenamerApp) -> str:
 
     Each run of spaces is one space, and each line loses its ends' spaces, so tests
     read words rather than columns."""
+    lines = screen_lines(app)
+    return "\n".join(re.sub(r" {2,}", " ", line).strip() for line in lines)
+
+
+def screen_lines(app: TermRenamerApp) -> list[str]:
+    """The characters on the screen now, one string per row, columns kept."""
     width, height = app.size
     console = Console(
         width=width,
@@ -174,8 +262,7 @@ def screen_text(app: TermRenamerApp) -> str:
     console.print(
         app.screen._compositor.render_update(full=True, screen_stack=app._background_screens)
     )
-    lines = console.export_text().splitlines()
-    return "\n".join(re.sub(r" {2,}", " ", line).strip() for line in lines)
+    return console.export_text().splitlines()
 
 
 def text_of(app: TermRenamerApp, selector: str) -> str:
@@ -205,6 +292,31 @@ async def pick_in_dialog(pilot: Pilot[None], key: str, path: Path | None) -> Non
     else:
         app.screen.dismiss(path)
         await pilot.pause()
+
+
+def long_season(parent: Path, videos: int) -> tuple[Path, TvStandIn]:
+    """A folder with one season of Harbour Lights, ``videos`` episodes long, and the TV
+    stand-in that knows each episode."""
+    folder = parent / "TV Backups"
+    folder.mkdir()
+    for episode in range(1, videos + 1):
+        (folder / f"Harbour Lights S01E{episode:02d}.mkv").write_bytes(b"x")
+    tv = TvStandIn(
+        shows={"harbour lights": (SHOW,)},
+        episodes={("11", 1, e): f"Episode {e}" for e in range(1, videos + 1)},
+    )
+    return folder, tv
+
+
+async def mark_seen_walking(pilot: Pilot[None], videos: int) -> str:
+    """Press right to the last file and back to the first; after each key, ``y`` when
+    the selected file's mark is on screen, else ``n``."""
+    seen = []
+    for key in ["right"] * (videos - 1) + ["left"] * (videos - 1):
+        await press(pilot, key)
+        await pilot.pause()
+        seen.append("y" if any("▔▔" in line for line in screen_lines(pilot.app)) else "n")
+    return "".join(seen)
 
 
 async def queue(pilot: Pilot[None], *folders: Path) -> None:

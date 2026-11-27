@@ -1,8 +1,11 @@
-"""Settings: one form with the Destination roots, Folder rename, Season folder, Name taken, Theme.
+"""Settings: one form with the Destination roots, Folder rename, Season folder, Name taken,
+Show posters and Theme.
 
 Every value is read from and written to the session's settings owner; a change lasts
 until the app quits, and the User settings file is never written. Season folder
-cannot be turned on while Folder rename is off.
+cannot be turned on while Folder rename is off. When Posters are unavailable, Show
+posters shows as unavailable with the reason; when the screen is too small for them, it
+says the size they need.
 """
 
 from __future__ import annotations
@@ -182,9 +185,20 @@ class SettingsView(Screen[None]):
     }
     """
 
-    def __init__(self, owner: SessionSettings) -> None:
+    def __init__(
+        self,
+        owner: SessionSettings,
+        posters_unavailable: str | None = None,
+        *,
+        posters_need: str | None = None,
+    ) -> None:
+        """``posters_unavailable`` is why Posters cannot be shown, or ``None`` when they can;
+        ``posters_need`` is the screen size they need when the screen is smaller, such as
+        "at least 100 columns by 35 rows"."""
         super().__init__()
         self._owner = owner
+        self._posters_unavailable = posters_unavailable
+        self._posters_need = posters_need
 
     def compose(self) -> ComposeResult:
         owner = self._owner
@@ -227,6 +241,22 @@ class SettingsView(Screen[None]):
                 id="name-taken-note",
                 classes="setting-note",
             )
+            with Horizontal(classes="setting-row", id="show-posters-row"):
+                yield Static("  Show posters", classes="setting-label")
+                yield Switch(owner.show_posters, id="show-posters")
+                yield Static(classes="setting-value", id="show-posters-value")
+            if self._posters_unavailable is not None:
+                yield Static(
+                    Content(f"Unavailable: {self._posters_unavailable}."),
+                    id="show-posters-note",
+                    classes="setting-note",
+                )
+            elif self._posters_need is not None:
+                yield Static(
+                    Content(f"Posters show when the screen is {self._posters_need}."),
+                    id="show-posters-note",
+                    classes="setting-note",
+                )
             with Horizontal(classes="setting-row"):
                 yield Static("  Theme", classes="setting-label")
                 yield Choice(owner.theme, id="theme")
@@ -254,12 +284,17 @@ class SettingsView(Screen[None]):
 
     # ---------------------------------------------------------------- reading
 
+    def show_values(self) -> None:
+        """Show the owner's values again, after a change made outside the form (``i``)."""
+        self._show_switches()
+
     def _show_switches(self) -> None:
         """Show the owner's values: the switches, their words and Season folder's rule."""
         folder_rename = self._owner.folder_rename
         for switch_id, on_value in (
             ("folder-rename", folder_rename),
             ("season-folder", self._owner.season_folders),
+            ("show-posters", self._owner.show_posters),
         ):
             switch = self.query_one(f"#{switch_id}", Switch)
             with switch.prevent(Switch.Changed):
@@ -278,6 +313,16 @@ class SettingsView(Screen[None]):
             else:
                 value.update("on" if is_on else "off")
                 value.set_class(is_on, "-on")
+        unavailable = self._posters_unavailable is not None
+        self.query_one("#show-posters", Switch).disabled = unavailable
+        self.query_one("#show-posters-row").set_class(unavailable, "-off")
+        posters = self.query_one("#show-posters-value", Static)
+        if unavailable:
+            posters.update("unavailable")
+            posters.set_class(False, "-on")
+        else:
+            posters.update("on" if self._owner.show_posters else "off")
+            posters.set_class(self._owner.show_posters, "-on")
 
     def _say(self, text: str) -> None:
         self.query_one("#settings-message", Static).update(Content(text))
@@ -320,6 +365,12 @@ class SettingsView(Screen[None]):
         except ValidationError as exc:
             self._say(str(exc))
         self._show_switches()
+
+    @on(Switch.Changed, "#show-posters")
+    def _show_posters_changed(self, event: Switch.Changed) -> None:
+        self._owner.set_show_posters(event.value)
+        self._show_switches()
+        self._say(f"Show posters: {'on' if event.value else 'off'}.")
 
     @on(Choice.Switched, "#name-taken")
     def _name_taken_switched(self, event: Choice.Switched) -> None:
