@@ -199,11 +199,24 @@ def test_two_callers_of_one_poster_share_one_download_and_its_failure(
     ]
 
 
-def test_a_download_nobody_wants_is_given_up_before_its_next_attempt(tmp_path: Path) -> None:
+def test_a_download_nobody_wants_is_never_sent(tmp_path: Path) -> None:
     host = ImageHost(status=503, attempts=3)
     source = PosterSource(store=host.store(tmp_path), image=stand_in_image)
     request = PosterRequest("tmdb", "/heat.jpg")
     with pytest.raises(PosterError):
         source.fetch(request, name="Heat", wanted=lambda: False)
+    assert host.requests == []
+    assert request not in source.failed
+
+
+def test_a_download_no_longer_wanted_is_given_up_before_its_next_attempt(
+    tmp_path: Path,
+) -> None:
+    host = ImageHost(status=503, attempts=3)
+    source = PosterSource(store=host.store(tmp_path), image=stand_in_image)
+    request = PosterRequest("tmdb", "/heat.jpg")
+    answers = iter([True, False])
+    with pytest.raises(PosterError):
+        source.fetch(request, name="Heat", wanted=lambda: next(answers))
     assert len(host.requests) == 1
     assert request not in source.failed

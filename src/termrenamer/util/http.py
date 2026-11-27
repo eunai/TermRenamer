@@ -97,9 +97,9 @@ class HttpClient:
 
         A redirect is not followed, as for :meth:`request`, and the request carries only
         the client's default headers. A body longer than ``max_bytes`` stops the read and
-        raises ``ProviderError``, as does any status but 200. Before each attempt after the
-        first, ``go_on`` is asked whether the answer is still wanted; when it says no,
-        the download raises :class:`Abandoned` without sending again.
+        raises ``ProviderError``, as does any status but 200. Before each attempt, the first
+        included, ``go_on`` is asked whether the answer is still wanted; when it says no,
+        the download raises :class:`Abandoned` without sending.
         """
 
         too_large = f"Download larger than {max_bytes} bytes"
@@ -147,8 +147,8 @@ class HttpClient:
     ) -> httpx.Response:
         last_error: BaseException | None = None
         for attempt in range(self._config.max_attempts):
-            if attempt and go_on is not None and not go_on():
-                raise Abandoned("given up before another attempt: no longer wanted")
+            if go_on is not None and not go_on():
+                raise Abandoned("given up before sending: no longer wanted")
             try:
                 response = send()
             except (

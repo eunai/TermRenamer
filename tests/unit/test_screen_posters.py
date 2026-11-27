@@ -14,7 +14,7 @@ from textual.geometry import Region
 from textual.widgets import Switch
 
 from termrenamer.core.models import Candidate
-from termrenamer.persistence.posters import PosterRequest
+from termrenamer.persistence.posters import PosterRequest, PosterStore
 from termrenamer.tui.app import MIN_POSTER_SIZE, TermRenamerApp
 from termrenamer.tui.dialogs import ApplyConfirm, UndoConfirm
 from termrenamer.tui.dialogs.match_picker import MatchPicker
@@ -426,6 +426,39 @@ async def test_hiding_posters_during_a_download_starts_no_new_attempt(tmp_path: 
         tried_again = len(host.requests)
     assert while_hidden == 1
     assert tried_again == 3  # shown again: a new download, two attempts
+
+
+async def test_a_download_not_yet_sent_when_posters_are_hidden_is_never_sent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Poster's download waits for a thread; Posters are hidden before it gets one.
+    When it starts, it sends nothing: the Poster is no longer wanted."""
+    host = ImageHost()
+    gate, waiting = threading.Event(), threading.Event()
+    fetch = PosterStore.fetch
+
+    def held(store: PosterStore, *args: object, **kwargs: object) -> Path:
+        waiting.set()
+        assert gate.wait(timeout=5)
+        return fetch(store, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(PosterStore, "fetch", held)
+    app = poster_app(tmp_path, host)
+    async with app.run_test(size=SIZE) as pilot:
+        await queue(pilot, tv_backups(tmp_path))
+        await press(pilot, "b")
+        await until(pilot, lambda: waiting.is_set())
+        await press(pilot, "i")
+        gate.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause(0.2)
+        while_hidden = list(host.requests)
+        await press(pilot, "i")
+        await until(pilot, lambda: bool(images(app)))
+        shown_again = len(host.requests)
+
+    assert while_hidden == []
+    assert shown_again == 1  # shown again: downloaded then
 
 
 async def test_a_poster_folder_that_is_a_link_shows_no_poster_and_logs_one_line(
