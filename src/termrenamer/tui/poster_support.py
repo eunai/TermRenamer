@@ -162,9 +162,20 @@ class PosterSource:
             raise PosterError(error) from exc
         finally:
             with self._lock:
-                if error is not None and request not in self.failed:
-                    self.failed.add(request)
-                    if not logged:
-                        _LOG.warning("No Poster for %s: %s", name, error)
+                if error is not None:
+                    self._record_failure(request, name, error, log=not logged)
                 del self._downloads[request]
             download.done.set()
+
+    def record_failure(self, request: PosterRequest, name: str, why: str) -> None:
+        """Remember that ``request`` failed for the run, and log it once, for the Title
+        ``name``: every view then leaves "no poster"."""
+        with self._lock:
+            self._record_failure(request, name, why, log=True)
+
+    def _record_failure(self, request: PosterRequest, name: str, why: str, *, log: bool) -> None:
+        if request in self.failed:
+            return
+        self.failed.add(request)
+        if log:
+            _LOG.warning("No Poster for %s: %s", name, why)

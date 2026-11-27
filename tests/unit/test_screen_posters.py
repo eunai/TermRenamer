@@ -45,6 +45,7 @@ from .screen_driver import (
     text_of,
     tv_backups,
     tv_stand_in,
+    until,
     wiring,
 )
 
@@ -346,14 +347,6 @@ async def test_a_poster_file_the_image_widget_cannot_read_shows_no_poster(
     assert "Harbour Lights" in words and "no poster" in words
     assert drawn == []
     assert len(logs) == 1
-
-
-async def until(pilot, done) -> None:  # type: ignore[no-untyped-def]
-    for _ in range(100):
-        if done():
-            return
-        await pilot.pause(0.05)
-    raise AssertionError("waited too long")
 
 
 def poster_logs(app: TermRenamerApp) -> list[str]:

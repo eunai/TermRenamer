@@ -11,7 +11,7 @@ from __future__ import annotations
 import io
 import re
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -281,6 +281,15 @@ def footer_keys(app: TermRenamerApp) -> list[str]:
 async def press(pilot: Pilot[None], *keys: str) -> None:
     await pilot.press(*keys)
     await pilot.pause()
+
+
+async def until(pilot: Pilot[None], done: Callable[[], bool]) -> None:
+    """Let the app run until ``done()`` is true; fail after about five seconds."""
+    for _ in range(100):
+        if done():
+            return
+        await pilot.pause(0.05)
+    raise AssertionError("waited too long")
 
 
 async def pick_in_dialog(pilot: Pilot[None], key: str, path: Path | None) -> None:

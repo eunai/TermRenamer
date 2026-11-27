@@ -23,7 +23,6 @@ on its way may finish and be stored.
 from __future__ import annotations
 
 import contextlib
-import logging
 from dataclasses import dataclass
 
 from textual.app import App, ComposeResult
@@ -36,8 +35,6 @@ from textual.worker import Worker, WorkerState
 from termrenamer.persistence.posters import PosterError, PosterRequest
 from termrenamer.tui.poster_support import PosterSource
 from termrenamer.tui.words import provider_name
-
-_LOG = logging.getLogger(__name__)
 
 POSTER_WIDTH = 24
 POSTER_HEIGHT = 17
@@ -262,9 +259,7 @@ class PosterView(Vertical):
         self, source: PosterSource, request: PosterRequest, wanted: _Wanted, exc: Exception
     ) -> Widget:
         """The image widget cannot read the stored file: the panel says "no poster"."""
-        if request not in source.failed:
-            source.failed.add(request)
-            _LOG.warning("No Poster for %s: the file cannot be read (%s)", wanted.name, exc)
+        source.record_failure(request, wanted.name, f"the file cannot be read ({exc})")
         # Called while the image widget draws, so the panel changes once that is done.
         self.call_later(self._draw)
         return Static("")

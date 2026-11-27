@@ -7,7 +7,6 @@ Posters are shown through a stand-in image widget and a stand-in image host (see
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -36,6 +35,7 @@ from .screen_driver import (
     settings,
     text_of,
     tv_backups,
+    until,
     wiring,
 )
 from .test_screen_pick_match import (
@@ -96,14 +96,6 @@ class HoldingHost(ImageHost):
             assert self.release.wait(timeout=5)
             self.requests.pop()
         return super().handle(request)
-
-
-async def until(pilot: Pilot[None], done: Callable[[], bool]) -> None:
-    for _ in range(100):
-        if done():
-            return
-        await pilot.pause(0.05)
-    raise AssertionError("waited too long")
 
 
 async def type_a_title(pilot: Pilot[None], text: str) -> None:
