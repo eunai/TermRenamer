@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The file and folder dialogs no longer stop the app** — the file and folder dialogs list their folder in the background. A listing that read its colours while the screen was redrawing it could stop the app with a `KeyError` about `directory-navigation`. It now reads them on the screen's own thread, so opening, browsing or closing either dialog at any moment is safe.
 - **Apply uses the Plan's Folder rename** — Apply merges Stragglers by the Folder rename value the Plan was built with, not by the current setting.
 - **Stragglers leave the Plan's files and target folders alone** — merging Stragglers no longer moves a file of the Plan that Apply did not rename (no match, not recognised, or skipped), nor a folder that is, holds or lies inside a folder the Plan moves files into. Before, a second show's new folder at the top of a queued folder could be moved into the first show's season folder.
 - **Numbered names across queued folders** — when files from several queued folders want the same name, the numbers are given once across the whole Plan in source-path order, so a name such as `Title (1) (1).mkv` no longer appears.
