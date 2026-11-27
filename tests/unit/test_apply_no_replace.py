@@ -42,7 +42,9 @@ def _is_untouched(path: Path, make: Callable[[Path], None]) -> bool:
         return path.read_bytes() == b"appeared"
     if make is _a_folder:
         return path.is_dir() and not any(path.iterdir())
-    return path.is_symlink() and os.readlink(path) == "missing target"
+    # Nothing was written through the link: its target is still missing.
+    missing = path.parent / "missing target"
+    return path.is_symlink() and os.readlink(path) == "missing target" and not missing.exists()
 
 
 def _claims(
@@ -53,8 +55,8 @@ def _claims(
     no_hard_link: int | None = None,
 ) -> None:
     """Make something appear at ``at`` just before the call that claims that name; with
-    ``no_hard_link``, a hard link (on Windows a rename) fails with that error, so the
-    move takes the copy path."""
+    ``no_hard_link``, a hard link (on Windows a rename from another folder, as across
+    drives) fails with that error, so the move takes the copy path."""
     planted: list[Path] = []
     real_link, real_open, real_mkdir = os.link, os.open, os.mkdir
     real_rename, real_symlink = os.rename, os.symlink
@@ -80,7 +82,7 @@ def _claims(
         real_mkdir(path, *args, **kwargs)  # type: ignore[arg-type]
 
     def rename(src: object, dst: object, *args: object, **kwargs: object) -> None:
-        if WINDOWS and no_hard_link is not None:
+        if WINDOWS and no_hard_link is not None and _between_folders(src, dst):
             raise OSError(no_hard_link, os.strerror(no_hard_link))
         plant(dst)
         real_rename(src, dst, *args, **kwargs)  # type: ignore[arg-type]
@@ -99,15 +101,37 @@ def _claims(
         monkeypatch.setattr(os, name, fake)
 
 
-def _across_drives(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Every move takes the copy path: a hard link, and on Windows a rename, fails as it
-    does to another drive."""
+def _between_folders(src: object, dst: object) -> bool:
+    return Path(os.fspath(src)).parent != Path(os.fspath(dst)).parent  # type: ignore[call-overload]
 
-    def refuse(*args: object, **kwargs: object) -> None:
-        raise OSError(errno.EXDEV, "Invalid cross-device link")
 
-    monkeypatch.setattr(os, "link", refuse)
-    monkeypatch.setattr(os, "rename", refuse)
+def _across_drives(monkeypatch: pytest.MonkeyPatch, only: Path | None = None) -> None:
+    """Every move (with ``only``, the move of that source) takes the copy path: a hard
+    link, and a rename from one folder to another, fail as they do to another drive. A
+    rename within a folder works, as the one that claims a Windows copy's new name."""
+    real_link, real_rename = os.link, os.rename
+
+    def moved(src: object) -> bool:
+        return only is None or os.fspath(src) == str(only)  # type: ignore[call-overload]
+
+    def no_link(src: object, dst: object, *args: object, **kwargs: object) -> None:
+        if moved(src):
+            raise OSError(errno.EXDEV, "Invalid cross-device link")
+        real_link(src, dst, *args, **kwargs)  # type: ignore[arg-type]
+
+    def rename(src: object, dst: object, *args: object, **kwargs: object) -> None:
+        if moved(src) and _between_folders(src, dst):
+            raise OSError(errno.EXDEV, "Invalid cross-device link")
+        real_rename(src, dst, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(os, "link", no_link)
+    monkeypatch.setattr(os, "rename", rename)
+
+
+def _in_folder_of(path: object, dest: Path) -> bool:
+    """Whether ``path`` is in ``dest``'s folder: ``dest`` itself, or the fresh name a
+    Windows copy is made under before it is renamed to ``dest``."""
+    return Path(os.fspath(path)).parent == dest.parent  # type: ignore[call-overload]
 
 
 def _by_source(results: tuple[ApplyResult, ...]) -> dict[Path, tuple[ApplyStatus, str]]:
@@ -147,10 +171,11 @@ def test_nothing_that_appears_at_a_new_name_just_before_it_is_claimed_is_replace
     show: Path, monkeypatch: pytest.MonkeyPatch, item: str, kind: str, path_name: str
 ) -> None:
     if WINDOWS and path_name == "copy ENOTSUP":
-        # A hard link that fails on a filesystem without them: Windows renames instead.
+        # A hard link that fails on a filesystem without them. A Windows move makes no
+        # hard link: only a rename that fails across drives copies, the copy EXDEV case.
         pytest.skip(
-            "Windows moves a file by rename, so a filesystem with no hard links "
-            "takes no copy path there"
+            "a Windows move makes no hard link, so a filesystem without them takes no "
+            "copy path there; the copy path across drives runs as copy EXDEV"
         )
     if kind == "broken link":
         needs_symlinks(show)
@@ -175,6 +200,32 @@ def test_nothing_that_appears_at_a_new_name_just_before_it_is_claimed_is_replace
         assert source.read_bytes() == data
     assert all(m.source != source and m.source.parent != source for m in outcome.moves)
     assert dest not in outcome.folders_created
+    assert outcome.files_left_behind == ()
+    # No copy is left under another name.
+    assert not [name for name in os.listdir(dest.parent) if name.startswith(".termrenamer-")]
+
+
+@pytest.mark.parametrize("path_name", ["link", "copy EXDEV"])
+@pytest.mark.parametrize("kind", list(KINDS))
+def test_nothing_at_the_new_name_of_a_symbolic_link_straggler_is_replaced(
+    show: Path, monkeypatch: pytest.MonkeyPatch, kind: str, path_name: str
+) -> None:
+    needs_symlinks(show)
+    link = show / "Disc 1" / "notes link.txt"
+    link.symlink_to("notes.txt")
+    plan = _plan(show)
+    [dest] = [s.destination for s in plan.stragglers if s.source == link]
+    make = KINDS[kind]
+    _claims(monkeypatch, dest, make, no_hard_link=PATHS[path_name])
+
+    outcome = apply_plan(plan, confirmed=True)
+    monkeypatch.undo()
+
+    assert _by_source(outcome.stragglers)[link] == TAKEN
+    assert _is_untouched(dest, make)
+    assert os.readlink(link) == "notes.txt"
+    assert outcome.files_left_behind == ()
+    assert not [name for name in os.listdir(dest.parent) if name.startswith(".termrenamer-")]
 
 
 def test_a_separate_hard_link_of_the_source_at_its_new_name_is_taken(show: Path) -> None:
@@ -230,7 +281,7 @@ def test_a_copy_whose_source_changes_during_it_fails_and_leaves_the_source(
             notes.write_bytes(b"my notes, and more")
         real_fsync(fd)
 
-    _across_drives(monkeypatch)
+    _across_drives(monkeypatch, only=notes)
     monkeypatch.setattr(os, "fsync", fsync)
     outcome = apply_plan(plan, confirmed=True)
     monkeypatch.undo()
@@ -258,11 +309,11 @@ def test_a_failed_copy_that_cannot_be_removed_is_listed_as_left_behind(
         real_fsync(fd)
 
     def unlink(path: object, *args: object, **kwargs: object) -> None:
-        if os.fspath(path) == str(dest):  # type: ignore[call-overload]
-            raise PermissionError(errno.EACCES, "Permission denied", str(dest))
+        if _in_folder_of(path, dest):
+            raise PermissionError(errno.EACCES, "Permission denied", os.fspath(path))  # type: ignore[call-overload]
         real_unlink(path, *args, **kwargs)  # type: ignore[arg-type]
 
-    _across_drives(monkeypatch)
+    _across_drives(monkeypatch, only=notes)
     monkeypatch.setattr(os, "fsync", fsync)
     monkeypatch.setattr(os, "unlink", unlink)
     outcome = apply_plan(plan, confirmed=True)
@@ -270,7 +321,8 @@ def test_a_failed_copy_that_cannot_be_removed_is_listed_as_left_behind(
 
     assert _by_source(outcome.stragglers)[notes][0] is ApplyStatus.FAIL
     assert notes.read_bytes() == b"my notes"
-    assert outcome.files_left_behind == (dest,)
+    [left] = outcome.files_left_behind
+    assert left.parent == dest.parent and left.exists()
 
 
 def test_a_move_whose_new_place_cannot_be_read_is_still_recorded(
@@ -465,7 +517,7 @@ def test_a_copy_whose_source_changes_just_before_its_removal_keeps_the_source(
 
     def open_(path: object, flags: int, *args: object, **kwargs: object) -> int:
         fd = real_open(path, flags, *args, **kwargs)  # type: ignore[arg-type]
-        if flags & os.O_EXCL and os.fspath(path) == str(dest):  # type: ignore[call-overload]
+        if flags & os.O_EXCL and _in_folder_of(path, dest):
             copies.append(fd)
         return fd
 
@@ -475,7 +527,7 @@ def test_a_copy_whose_source_changes_just_before_its_removal_keeps_the_source(
             copies.remove(fd)
             notes.write_bytes(b"my notes, newer")
 
-    _across_drives(monkeypatch)
+    _across_drives(monkeypatch, only=notes)
     monkeypatch.setattr(os, "open", open_)
     monkeypatch.setattr(os, "close", close)
     outcome = apply_plan(plan, confirmed=True)
@@ -502,7 +554,7 @@ def test_a_new_name_made_by_exclusive_create_is_listed_until_its_copy_is_removed
 
     def open_(path: object, flags: int, *args: object, **kwargs: object) -> int:
         fd = real_open(path, flags, *args, **kwargs)  # type: ignore[arg-type]
-        if flags & os.O_EXCL and os.fspath(path) == str(dest):  # type: ignore[call-overload]
+        if flags & os.O_EXCL and _in_folder_of(path, dest):
             made.append(fd)
         return fd
 
@@ -516,7 +568,7 @@ def test_a_new_name_made_by_exclusive_create_is_listed_until_its_copy_is_removed
         closed.append(fd)
         real_close(fd)
 
-    _across_drives(monkeypatch)
+    _across_drives(monkeypatch, only=notes)
     monkeypatch.setattr(os, "open", open_)
     monkeypatch.setattr(os, "fstat", fstat)
     monkeypatch.setattr(os, "close", close)
@@ -525,7 +577,8 @@ def test_a_new_name_made_by_exclusive_create_is_listed_until_its_copy_is_removed
 
     assert _by_source(outcome.stragglers)[notes][0] is ApplyStatus.FAIL
     assert notes.read_bytes() == b"my notes"
-    assert outcome.files_left_behind == (dest,)
+    [left] = outcome.files_left_behind
+    assert left.parent == dest.parent and left.exists()
     assert made and made[0] in closed
 
 

@@ -2,13 +2,14 @@
 
 Every new name is claimed by the call that makes it, and that call fails when anything
 is at the name, links not followed: a hard link, a file opened with exclusive create, a
-symbolic link, a folder made, or on Windows :func:`os.rename`. That rename takes a name
-that is the source's own file (another letter case of its name, a separate hard link of
-it), so on Windows that one name is refused by a check directly before the rename. There
-is no ``shutil.move`` and no ``os.replace``. Each change is
-recorded in :class:`Changes` at the moment the call that made it succeeds, before any
-call that can raise. A symbolic link or a Windows junction is never entered: it is moved
-as itself, and nothing behind it is read, moved or removed.
+symbolic link, a folder made, or on Windows :func:`os.rename`. On Windows an exclusive
+create follows a link at the name, so a copy is made there under a fresh name and
+claimed by that rename; and the rename takes a name that is the source's own file
+(another letter case of its name, a separate hard link of it), so that one name is
+refused by a check directly before it. There is no ``shutil.move`` and no
+``os.replace``. Each change is recorded in :class:`Changes` at the moment the call that
+made it succeeds, before any call that can raise. A symbolic link or a Windows junction
+is never entered: it is moved as itself, and nothing behind it is read, moved or removed.
 
 Apply checks a source and claims a destination by calls that sit directly before the
 change they guard. It cannot defend against another program that changes that same file
@@ -21,6 +22,7 @@ from __future__ import annotations
 import errno
 import logging
 import os
+import secrets
 import stat
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -108,7 +110,8 @@ def move_no_replace(source: Path, dest: Path, changes: Changes) -> None:
     - When that cannot be made for a reason other than a taken name (another drive, a
       filesystem with no hard links): a copy into a file opened with exclusive create,
       checked against the source, then the source unlinked. A symbolic link is made
-      again at ``dest`` and the source unlinked.
+      again at ``dest`` and the source unlinked. On Windows the copy is made under a
+      fresh name beside ``dest``, then renamed to ``dest``.
     - A folder, on every system: ``dest`` is made, then each child is moved by these
       rules in name order, then the emptied source folder is removed.
 
@@ -263,9 +266,15 @@ def _unlink_source(
 def _copy_then_unlink(
     source: Path, st: os.stat_result, dest: Path, before: PlanFingerprint, changes: Changes
 ) -> None:
-    """Copy ``source`` (as ``st`` found it) to a new name at ``dest``, made with exclusive
-    create, check the copy, then unlink the source. On a failure the copy is removed
-    while it still is the one made here, and listed as left behind when it cannot be."""
+    """Copy ``source`` (as ``st`` found it) to a new name at ``dest``, check the copy, then
+    unlink the source. On a failure the copy is removed while it still is the one made
+    here, and listed as left behind when it cannot be.
+
+    Elsewhere the copy is made at ``dest`` by a call that fails when anything is there,
+    links not followed. On Windows an exclusive create follows a link at the name, so
+    the copy is made under a fresh name beside ``dest`` and then claimed by
+    :func:`os.rename`, which refuses every name that exists, a link included.
+    """
     if is_link(source, st) and not stat.S_ISLNK(st.st_mode):
         msg = "a junction cannot be moved to another drive"
         raise OSError(errno.EXDEV, msg, str(source))
@@ -273,13 +282,38 @@ def _copy_then_unlink(
         # A pipe, a socket or a device is never opened: reading one could block or never end.
         msg = "only a file or a symbolic link can be copied to another drive"
         raise OSError(errno.EXDEV, msg, str(source))
-    if stat.S_ISLNK(st.st_mode):
-        os.symlink(os.readlink(source), dest)
+    if os.name == "nt":
+        part = _fresh_name(dest)
+        made = _make_copy(source, st, part, changes)
+        try:
+            os.rename(part, dest)
+        except BaseException:
+            _remove_if_made(part, made, changes)
+            raise
         changes.files_left_behind.append(dest)
-        made = os.lstat(dest)
+        _forget(changes.files_left_behind, part)
     else:
-        fd = _create_new(dest)
-        changes.files_left_behind.append(dest)
+        made = _make_copy(source, st, dest, changes)
+
+    def unchanged(now: os.stat_result) -> bool:
+        return os.path.samestat(now, st) and (now.st_size, now.st_mtime_ns) == (
+            st.st_size,
+            st.st_mtime_ns,
+        )
+
+    _unlink_source(source, dest, made, unchanged, before, changes)
+
+
+def _make_copy(source: Path, st: os.stat_result, at: Path, changes: Changes) -> os.stat_result:
+    """Make a copy of ``source`` (as ``st`` found it) at the new name ``at``, list ``at``
+    as left behind from the moment it is made, and return the copy's ``lstat``."""
+    if stat.S_ISLNK(st.st_mode):
+        os.symlink(os.readlink(source), at)
+        changes.files_left_behind.append(at)
+        made = os.lstat(at)
+    else:
+        fd = os.open(at, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW | _O_BINARY, 0o600)
+        changes.files_left_behind.append(at)
         try:
             made = os.fstat(fd)
         except BaseException:
@@ -289,23 +323,27 @@ def _copy_then_unlink(
             _copy_into(source, st, fd)
         except BaseException:
             _close(fd)
-            _remove_if_made(dest, made, changes)
+            _remove_if_made(at, made, changes)
             raise
         try:
             os.close(fd)
         except BaseException:
-            _remove_if_made(dest, made, changes)
+            _remove_if_made(at, made, changes)
             raise
         if os.utime not in os.supports_fd:
-            _set_times_by_name(dest, made, st)
+            _set_times_by_name(at, made, st)
+    if not os.path.samestat(os.lstat(at), made):
+        raise OSError(errno.EIO, "the copy is not at the name it was made at", str(at))
+    return made
 
-    def unchanged(now: os.stat_result) -> bool:
-        return os.path.samestat(now, st) and (now.st_size, now.st_mtime_ns) == (
-            st.st_size,
-            st.st_mtime_ns,
-        )
 
-    _unlink_source(source, dest, made, unchanged, before, changes)
+def _fresh_name(dest: Path) -> Path:
+    """A name beside ``dest`` that nothing has, for a copy to be made under before it is
+    claimed at ``dest``."""
+    while True:
+        part = dest.with_name(f".termrenamer-{secrets.token_hex(8)}.part")
+        if not os.path.lexists(part):
+            return part
 
 
 def _refuse_the_source_itself(dest: Path, st: os.stat_result) -> None:
@@ -321,23 +359,6 @@ def _refuse_the_source_itself(dest: Path, st: os.stat_result) -> None:
         return  # nothing there, or nothing readable: the rename refuses what exists
     if os.path.samestat(there, st):
         raise FileExistsError(errno.EEXIST, "the new name is the source's own file", str(dest))
-
-
-def _create_new(dest: Path) -> int:
-    """Open a new file at ``dest`` with exclusive create, for writing.
-
-    Raises:
-        FileExistsError: something is at ``dest``. Windows refuses an existing folder
-            with a permission error, so that error counts as a taken name when ``dest``
-            exists.
-    """
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW | _O_BINARY
-    try:
-        return os.open(dest, flags, 0o600)
-    except PermissionError as exc:
-        if os.path.lexists(dest):
-            raise FileExistsError(errno.EEXIST, "the new name exists", str(dest)) from exc
-        raise
 
 
 def _close(fd: int) -> None:
