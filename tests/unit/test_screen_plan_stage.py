@@ -11,6 +11,7 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import pytest
 from textual.pilot import Pilot
 
 from termrenamer.core.models import Candidate
@@ -274,3 +275,36 @@ async def test_a_selected_title_that_joins_another_keeps_the_selection_on_it(
 
     assert selected is not None and selected.name == "Harbour Lights"
     assert details.splitlines() == ["Harbour Lights", "found · 3 videos"]
+
+
+async def test_while_the_first_scan_is_pending_no_zeroed_gauge_is_shown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from termrenamer.tui import app as screen  # noqa: PLC0415
+
+    folder = tv_backups(tmp_path).resolve()
+    go = threading.Event()
+    started = threading.Event()
+    planned = screen.plan_queue
+
+    def held(*args: object, **kwargs: object) -> object:
+        started.set()
+        assert go.wait(timeout=10)
+        return planned(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(screen, "plan_queue", held)
+    app = make_app()
+    async with app.run_test(size=SIZE) as pilot:
+        await queue(pilot, folder)
+        await press(pilot, "b")
+        assert started.wait(timeout=5)
+        await pilot.pause()
+        pending = screen_text(app)
+        go.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+    assert app.stage is Stage.PREVIEW
+    assert "Reading the queued Sources…" in pending
+    for zeroed in ("0 of 0 files", "0/0", "lookups/s", "matched", "unmatched"):
+        assert zeroed not in pending, zeroed

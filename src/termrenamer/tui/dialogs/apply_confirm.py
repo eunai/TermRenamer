@@ -11,7 +11,7 @@ from collections import Counter
 from textual.binding import Binding
 from textual.content import Content
 
-from termrenamer.core.models import EntryStatus, Plan
+from termrenamer.core.models import EntryStatus, Plan, ScanMode
 from termrenamer.core.paths import claim_key
 from termrenamer.core.title_rows import PlanCounts, sidecars_skipped_alone
 from termrenamer.tui.dialogs.confirm import ConfirmDialog
@@ -32,11 +32,7 @@ def confirm_lines(plan: Plan) -> tuple[Content, ...]:
     Stragglers to merge and the Titles they go with, and that nothing has been renamed
     yet."""
     counts = PlanCounts.of(plan)
-    root = plan.options.destination_root
-    if root is not None:
-        where = f"under {folder_text(root)}"
-    else:
-        where = agree(counts.to_rename, "in its own folder", "in their own folders")
+    where = _where(plan, counts.to_rename)
     staying = [v for v in plan.videos if why_not_renamed(v) is not None]
     named = [v for v in staying if v.has_its_name]
     left_out = EntryStatus.LEFT_OUT
@@ -75,6 +71,26 @@ def confirm_lines(plan: Plan) -> tuple[Content, ...]:
         lines.append(Content.from_markup("[$tr-dim]$line[/]", line=_merge_line(plan)))
     lines += [Content(), Content.from_markup("[$warning]Nothing has been renamed yet.[/]")]
     return tuple(lines)
+
+
+def _where(plan: Plan, videos: int) -> str:
+    """Where the Plan puts its videos, as the templates lay them out: in their own
+    folders while Folder rename is off; otherwise into show (and season) or film
+    folders, under the Destination root or, with none, in the folders they were queued
+    from."""
+    options = plan.options
+    if not options.folder_rename:
+        return agree(videos, "in its own folder", "in their own folders")
+    if plan.mode is ScanMode.FILM:
+        folders = agree(videos, "into a film folder", "into film folders")
+    elif options.season_folders:
+        folders = "into show and season folders"
+    else:
+        folders = "into show folders"
+    root = options.destination_root
+    if root is not None:
+        return f"{folders} under {folder_text(root)}"
+    return f"{folders} in the {agree(videos, 'folder it was', 'folders they were')} queued from"
 
 
 def _merge_line(plan: Plan) -> str:

@@ -1,7 +1,7 @@
 """The Applied Stage: what Apply did, counted in videos, and each file it did not rename.
 
-The left column holds the counts and the actions: Undo, while the outcome has
-something to put back and Undo has not run, and New batch. The right lists each
+The left column holds the counts and the actions: Undo, while the outcome records
+anything Undo reverses and Undo has not run, and New batch. The right lists each
 skipped, failed and left out video with its reason, each Sidecar that was not renamed
 while its video was, and each Straggler not merged.
 Every result, Sidecars and Stragglers included, is also in the Logs.
@@ -148,7 +148,7 @@ class AppliedStage(StageView):
         self.query_one("#applied-list", Static).update(
             Content("\n").join(lines)
             if lines
-            else Content.from_markup("[$tr-dim]Every video was renamed.[/]")
+            else Content.from_markup(f"[$tr-dim]{_all_applied(counts)}[/]")
         )
         self.changed()
 
@@ -158,10 +158,20 @@ class AppliedStage(StageView):
         return f"{self._counts.renamed} renamed"
 
 
+def _all_applied(counts: AppliedCounts) -> str:
+    """What the list says when no file is listed: every video was renamed, already had
+    its name, or one or the other."""
+    if not counts.unchanged:
+        return "Every video was renamed."
+    if not counts.renamed:
+        return "Every video already had its name."
+    return "Every video was renamed or already had its name."
+
+
 def has_anything_to_undo(outcome: ApplyOutcome) -> bool:
-    """Whether the outcome records a file moved or a folder removed: something to put
-    back. Folders Apply made alone leave nothing to put back."""
-    return bool(outcome.moves or outcome.folders_removed)
+    """Whether the outcome records anything Undo reverses: a file moved, a folder
+    removed or a folder made (which Undo removes when it is left empty)."""
+    return bool(outcome.moves or outcome.folders_removed or outcome.folders_created)
 
 
 def not_renamed(plan: Plan, results: Sequence[ApplyResult]) -> list[tuple[PlanEntry, ApplyResult]]:

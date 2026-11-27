@@ -13,6 +13,7 @@ import pytest
 from textual.geometry import Region
 from textual.widgets import Switch
 
+from termrenamer.core.models import Candidate
 from termrenamer.persistence.posters import PosterRequest
 from termrenamer.tui.app import MIN_POSTER_SIZE, TermRenamerApp
 from termrenamer.tui.dialogs import ApplyConfirm, UndoConfirm
@@ -28,11 +29,13 @@ from termrenamer.tui.widgets.title_details import TitleDetails
 
 from .links import point_folder_at
 from .screen_driver import (
+    FERRY,
     POSTERS_AVAILABLE,
     POSTERS_UNREADABLE,
     SIZE,
     ImageHost,
     StandInImage,
+    TvStandIn,
     build,
     long_season,
     make_app,
@@ -48,6 +51,7 @@ from .screen_driver import (
     until,
     wiring,
 )
+from .test_screen_text import MARKUP_NAME
 
 HARBOUR_LIGHTS_POSTER = "https://image.tmdb.org/t/p/w342/hl.jpg"
 SMALLEST = (100, ROWS_FOR_POSTERS)
@@ -762,21 +766,67 @@ async def test_help_shows_the_provider_credits() -> None:
     assert "https://thetvdb.com/" in text
 
 
+def panel_box(app: TermRenamerApp) -> list[str]:
+    """The poster panel's rows as the screen draws them, its frame included: the rows
+    from the top border, which holds the Provider's name, to the bottom one."""
+    lines = screen_lines(app)
+    (top,) = [n for n, line in enumerate(lines) if "┌─ " in line]
+    left = lines[top].index("┌")
+    right = lines[top].index("┐", left)
+    bottom = min(n for n in range(top + 1, len(lines)) if lines[n][left] == "└")
+    return [line[left : right + 1] for line in lines[top : bottom + 1]]
+
+
+def assert_framed(box: list[str], provider: str) -> None:
+    """The frame is whole: the Provider's name on the top border, a side on each row."""
+    width = len(box[0])
+    assert box[0] == f"┌─ {provider} ".ljust(width - 1, "─") + "┐"
+    assert all(row[0] == "│" and row[-1] == "│" for row in box[1:-1])
+    assert box[-1] == "└" + "─" * (width - 2) + "┘"
+
+
 @pytest.mark.parametrize(
-    "name", ["C:\\Films\\", "[b]Bold[/b] \\", "A name [/]", "[$accent]x $text"]
+    "name", ["C:\\Films\\", "[b]Bold[/b] \\", "A name [/]", "[$accent]x $text", MARKUP_NAME]
 )
-async def test_the_panel_draws_a_name_as_written(tmp_path: Path, name: str) -> None:
-    # A Windows folder ends in a backslash, which would escape a closing tag after it.
-    app = poster_app(tmp_path, ImageHost())
+async def test_the_panel_draws_a_match_name_as_written_inside_its_whole_frame(
+    tmp_path: Path, name: str
+) -> None:
+    # The Match name is the Provider's text, so it can read as markup or end in a backslash,
+    # which would escape a closing tag after it. The border's Provider name is the app's own.
+    tv = TvStandIn(
+        shows={
+            "harbour lights": (Candidate(id="11", name=name, year=2019),),
+            "night ferry": (FERRY,),
+        },
+        episodes={("11", 1, 1): "The Tide Comes In", ("11", 1, 2): "Salt and Rope"},
+        hold=True,
+    )
+    app = make_app(
+        wiring(tv=tv, posters=ImageHost().store(tmp_path / "posters")),
+        settings(),
+        posters=POSTERS_AVAILABLE,
+    )
     async with app.run_test(size=SIZE) as pilot:
-        await built(pilot, tmp_path)
-        panel(app).show(name, provider_id="tmdb", ref=None, download=False)
+        await queue(pilot, tv_backups(tmp_path))
+        await press(pilot, "b")
+        assert tv.first_done.wait(timeout=5)
+        await pilot.pause(0.2)
+        building = app.stage
+        on_plan = panel_box(app)
+        tv.go.set()
+        await app.workers.wait_for_complete()
         await pilot.pause()
-        words = panel_text(app)
-        title = panel(app).border_title
-    assert name.strip() in words
-    assert "no poster" in words
-    assert title == "TMDB"
+        on_preview = panel_box(app)
+    # A name wider than the panel is cut, with an ellipsis.
+    inner = len(on_plan[0]) - 2
+    shown = name if len(name) <= inner - 2 else name[: inner - 3] + "…"
+    assert building is Stage.PLAN
+    for box in (on_plan, on_preview):
+        assert_framed(box, "TMDB")
+        rows = [row[1:-1] for row in box[1:-1]]
+        named = [n for n, row in enumerate(rows) if f" {shown} " in row]
+        assert len(named) == 1, box
+        assert "no poster" in rows[named[0] + 1]
 
 
 async def test_on_the_applied_stage_the_undo_confirm_keeps_its_own_place(tmp_path: Path) -> None:

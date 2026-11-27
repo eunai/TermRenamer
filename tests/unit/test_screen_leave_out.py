@@ -111,35 +111,41 @@ async def test_a_title_whose_every_file_is_left_out_says_left_out(tmp_path: Path
     assert heading == ["Night Ferry", "left out · 1 season · 1 video"]
 
 
-async def test_x_on_a_not_recognised_file_says_so_and_changes_nothing(tmp_path: Path) -> None:
+async def test_x_leaves_a_not_recognised_file_out_and_puts_it_back(tmp_path: Path) -> None:
     app = make_app()
     async with app.run_test(size=SIZE) as pilot:
         await queue(pilot, tv_backups(tmp_path))
         await build(pilot)
-        built = app.plan
+        # Harbour Lights, Night Ferry, holiday.mkv
         await press(pilot, "down", "down", "x")
-        text = screen_text(app)
+        left_out = screen_text(app)
+        button = text_of(app, "#leave-out")
+        await press(pilot, "x")
+        put_back = screen_text(app)
 
-    assert app.plan is built
-    assert (
-        "Nothing to leave out: Apply does not rename a file with the status not recognised." in text
-    )
+    assert has_row(left_out, "holiday.mkv", "left out 1")
+    assert button.split() == ["x", "Put", "back"]
+    assert "Left out of the Plan: Apply does not touch this file." in left_out
+    assert has_row(put_back, "holiday.mkv", "not recognised 1")
+    assert "Put back in the Plan." in put_back
 
 
-async def test_x_on_a_file_with_no_match_says_so_and_changes_nothing(tmp_path: Path) -> None:
+async def test_x_leaves_a_file_with_no_match_out(tmp_path: Path) -> None:
     folder = tv_backups(tmp_path)
     (folder / "Lost Signal S01E01.mkv").write_bytes(b"x")
     app = make_app()
     async with app.run_test(size=SIZE) as pilot:
         await queue(pilot, folder)
         await build(pilot)
-        built = app.plan
         # Harbour Lights, Lost Signal, Night Ferry, holiday.mkv
         await press(pilot, "down", "x")
         text = screen_text(app)
+        plan = app.plan
 
-    assert app.plan is built
-    assert "Nothing to leave out: Apply does not rename a file with the status no match." in text
+    assert plan is not None
+    lost = next(v for v in plan.videos if v.source.name == "Lost Signal S01E01.mkv")
+    assert lost.status is EntryStatus.LEFT_OUT
+    assert "Left out of the Plan: Apply does not touch this file." in text
 
 
 async def test_apply_leaves_the_left_out_video_and_its_sidecar_and_counts_it_as_left_out(

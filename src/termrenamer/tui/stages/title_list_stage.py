@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal
-from textual.widgets import Static
+from textual.widgets import OptionList, Static
 
 from termrenamer.tui.poster_support import PosterSource
 from termrenamer.tui.stages.base import StageView
@@ -78,6 +78,20 @@ class TitleListStage(StageView):
 
     def redraw(self) -> None:
         self.title_list.redraw()
+
+    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        """A row was highlighted, by a key or by a click: the Stage shows that row."""
+        event.stop()
+        self.row_highlighted()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        """A click on a row selects it; there is nothing more to choose."""
+        event.stop()
+
+    def row_highlighted(self) -> None:
+        """The highlighted row may have changed: a Stage draws the selected row again
+        when it is not the one it shows."""
+        self.changed()
 
     def action_select_previous(self) -> None:
         self.title_list.select_previous()

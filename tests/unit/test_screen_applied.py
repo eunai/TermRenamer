@@ -125,3 +125,38 @@ async def test_a_failed_file_is_listed_with_its_reason(tmp_path: Path) -> None:
     assert counts == ["0 renamed · 0 skipped · 1 failed"]
     assert listed[0] == f"Night Ferry S01E01.mkv {folder}{os.sep}"
     assert listed[1].startswith("failed: mkdir failed:")
+
+
+async def test_a_batch_of_videos_already_named_does_not_say_every_video_was_renamed(
+    tmp_path: Path,
+) -> None:
+    folder = tmp_path / "Backups"
+    folder.mkdir()
+    folder = folder.resolve()
+    (folder / "Night Ferry - S01E01 - Cast Off.mkv").write_bytes(b"x")
+    app = make_app()
+    async with app.run_test(size=SIZE) as pilot:
+        await queue(pilot, folder)
+        await build(pilot)
+        await apply(pilot)
+        counts = lines_of(app, "#applied-counts")
+        listed = lines_of(app, "#applied-list")
+    assert counts == ["0 renamed · 0 skipped · 0 failed", "1 already had its name"]
+    assert listed == ["Every video already had its name."]
+
+
+async def test_a_batch_renamed_and_already_named_says_both(tmp_path: Path) -> None:
+    folder = tmp_path / "Backups"
+    folder.mkdir()
+    folder = folder.resolve()
+    (folder / "Night Ferry - S01E01 - Cast Off.mkv").write_bytes(b"x")
+    (folder / "Harbour Lights S01E01.mkv").write_bytes(b"x")
+    app = make_app()
+    async with app.run_test(size=SIZE) as pilot:
+        await queue(pilot, folder)
+        await build(pilot)
+        await apply(pilot)
+        counts = lines_of(app, "#applied-counts")
+        listed = lines_of(app, "#applied-list")
+    assert counts == ["1 renamed · 0 skipped · 0 failed", "1 already had its name"]
+    assert listed == ["Every video was renamed or already had its name."]

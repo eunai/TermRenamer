@@ -666,7 +666,11 @@ def _plan_of(
 
 @dataclass(frozen=True, slots=True)
 class LeaveOut:
-    """Leave ``video``, a video entry of the Plan, out of it; its Sidecars follow."""
+    """Leave ``video``, a video entry of the Plan, out of it; its Sidecars follow.
+
+    It is the person's choice, whatever the lookup found: a video with no match or not
+    recognised can be left out too, and it stays left out when its Title is given a
+    Match, until it is put back."""
 
     video: PlanEntry
 
@@ -715,8 +719,8 @@ def derive_plan(plan: Plan, change: PlanChange) -> Plan:
 
     Raises:
         ValueError: ``change`` names an entry or Title that is not in ``plan``, a
-            Sidecar, a video that cannot be left out (no match, not recognised,
-            already left out), for :class:`PutBack` a video that is not left out, or
+            Sidecar, for :class:`LeaveOut` a video already left out, for
+            :class:`PutBack` a video that is not left out, or
             for :class:`PickMatch` a target that cannot be given that Match.
         OSError: testing a wanted path on disk failed.
     """
@@ -733,8 +737,8 @@ def derive_plan(plan: Plan, change: PlanChange) -> Plan:
         msg = f"{video.source} cannot be left out: it is a Sidecar, which follows its video."
         raise ValueError(msg)
     if isinstance(change, LeaveOut):
-        if video.wanted is None or video.status is EntryStatus.LEFT_OUT:
-            msg = f"{video.source} cannot be left out: it has the status {video.status.value}."
+        if video.status is EntryStatus.LEFT_OUT:
+            msg = f"{video.source} cannot be left out: it is left out already."
             raise ValueError(msg)
         status = EntryStatus.LEFT_OUT
     else:
@@ -742,8 +746,9 @@ def derive_plan(plan: Plan, change: PlanChange) -> Plan:
             msg = f"{video.source} is not left out."
             raise ValueError(msg)
         # Worked out again when the names are claimed. A video whose picked show has
-        # no such episode comes back with no match.
-        status = _named_status(video.wanted)
+        # no such episode comes back with no match, and one with no Title (its name
+        # was never read and no Match was picked for it) as not recognised.
+        status = EntryStatus.NOT_RECOGNISED if video.title is None else _named_status(video.wanted)
     entries = tuple(
         replace(entry, status=status) if entry == video else entry for entry in plan.entries
     )
@@ -773,7 +778,7 @@ def _with_picked_match(
         if target not in plan.entries or target.is_sidecar:
             msg = f"{target.source} is not a video of the Plan."
             raise ValueError(msg)
-        if target.status is not EntryStatus.NOT_RECOGNISED:
+        if target.title is not None:
             msg = f"{target.source} is not a not recognised file: pick a Match for its Title."
             raise ValueError(msg)
         if options.mode is ScanMode.TV:

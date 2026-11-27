@@ -120,6 +120,21 @@ def _read_name_taken(env: Mapping[str, str]) -> NameTakenPolicy:
         raise ValidationError(msg) from exc
 
 
+def _expanded(name: str, raw: str | None) -> Path | None:
+    """The path the variable ``name`` holds, ``~`` expanded, or ``None`` when unset.
+
+    Raises:
+        ValidationError: ``~user`` names a user the system does not know, or the home
+            folder cannot be found.
+    """
+    if not raw:
+        return None
+    try:
+        return Path(raw).expanduser()
+    except (RuntimeError, OSError) as exc:
+        raise ValidationError(f"{name} cannot be used: {exc}") from exc
+
+
 def user_settings_path() -> Path:
     """Return the path of the user settings file for this platform and environment.
 
@@ -218,24 +233,24 @@ def load_settings(*, env_file: Path | None = None) -> Settings:
         cache_raw = cache_raw.strip()
         if cache_raw == "":
             cache_raw = None
-    cache_path = Path(cache_raw).expanduser() if cache_raw else None
+    cache_path = _expanded("TERMRENAMER_CACHE_DB_PATH", cache_raw)
 
     log_path_raw = env.get("TERMRENAMER_LOG_FILE")
-    log_path = Path(log_path_raw).expanduser() if log_path_raw else None
+    log_path = _expanded("TERMRENAMER_LOG_FILE", log_path_raw)
 
     film_dest_raw = env.get("TERMRENAMER_FILM_DEST_FOLDER")
     if film_dest_raw is not None:
         film_dest_raw = film_dest_raw.strip()
         if film_dest_raw == "":
             film_dest_raw = None
-    film_dest_folder = Path(film_dest_raw).expanduser() if film_dest_raw else None
+    film_dest_folder = _expanded("TERMRENAMER_FILM_DEST_FOLDER", film_dest_raw)
 
     tv_dest_raw = env.get("TERMRENAMER_TV_DEST_FOLDER")
     if tv_dest_raw is not None:
         tv_dest_raw = tv_dest_raw.strip()
         if tv_dest_raw == "":
             tv_dest_raw = None
-    tv_dest_folder = Path(tv_dest_raw).expanduser() if tv_dest_raw else None
+    tv_dest_folder = _expanded("TERMRENAMER_TV_DEST_FOLDER", tv_dest_raw)
 
     enable_folder_rename = _read_bool(env, "TERMRENAMER_ENABLE_FOLDER_RENAME", default=False)
     enable_season_folders = _read_bool(env, "TERMRENAMER_ENABLE_SEASON_FOLDERS", default=False)

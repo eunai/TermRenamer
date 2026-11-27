@@ -95,6 +95,13 @@ _PICK = "pick"
 _UNDO = "undo"
 """The worker that undoes the last Apply."""
 
+_REFUSED_WHILE_APPLYING = frozenset({"apply", "pick_match", "leave_out", "discard_plan"})
+"""The actions that refuse while an Apply runs: each checks it, and the footer leaves
+their keys out."""
+_REFUSED_WHILE_UNDOING = frozenset({"undo", "new_batch"})
+"""The actions that refuse while an Undo runs: each checks it, and the footer leaves
+their keys out."""
+
 
 def _start_folder() -> Path:
     """The folder the file and folder dialogs open in: the working folder, or the home
@@ -282,18 +289,34 @@ class TermRenamerApp(App[None]):
     # -------------------------------------------------------------------- keys
 
     def footer_keys(self) -> list[keys.Key]:
-        """The keys that work at the current Stage right now, in the table's order."""
+        """The keys that work at the current Stage right now, in the table's order.
+
+        A key whose action refuses while an Apply or an Undo runs, or that the lock
+        refuses, is left out until it works again.
+        """
         view = self.stage_view
         shown = []
         for key in keys.KEYS:
             if self.stage not in key.stages or not key.bindings:
                 continue
             actions = [action for _name, action in key.bindings]
+            if key.guarded and self.session_settings.locked:
+                continue  # refused with the lock's message
+            if any(self._refused_now(a) for a in actions):
+                continue
             if all(self._target(a) is not None and view.key_enabled(a) for a in actions):
                 if self._pick is not None and "discard_plan" in actions:
                     key = replace(key, hint="Abandon change")  # what esc does meanwhile
                 shown.append(key)
         return shown
+
+    def _refused_now(self, action: str) -> bool:
+        """Whether ``action`` refuses now because an Apply or an Undo runs."""
+        if self._applying:
+            return action in _REFUSED_WHILE_APPLYING
+        if self._undoing:
+            return action in _REFUSED_WHILE_UNDOING
+        return False
 
     def _locked_message(self, what: str) -> str:
         """Why ``what`` (such as "Mode") cannot change now that the settings are locked."""
@@ -457,7 +480,7 @@ class TermRenamerApp(App[None]):
     # ---------------------------------------------------------- the Preview
 
     def action_discard_plan(self) -> None:
-        if self._applying:
+        if self._refused_now("discard_plan"):
             return
         if self._pick is not None:
             self._abandon_pick()
@@ -470,20 +493,19 @@ class TermRenamerApp(App[None]):
         """Leave the selected video out of the Plan with its Sidecars, or put it back.
 
         Either change derives a new Plan, which the Preview shows with the same file
-        selected. A file Apply does not rename anyway changes nothing, and so does a
-        failure to test the new names on disk: the Plan shown stays.
+        selected. Any video can be left out, one with no match or not recognised too,
+        and it stays left out through Change match until it is put back. A failure to
+        test the new names on disk changes nothing: the Plan shown stays.
         """
         plan = self.plan
         preview = self.query_one(PreviewStage)
         video = preview.selected_file
-        if plan is None or video is None or self._applying or self._refuse_while_picking():
-            return
-        if video.status in (EntryStatus.NO_MATCH, EntryStatus.NOT_RECOGNISED):
-            self.say(
-                "Nothing to leave out: Apply does not rename a file with the status "
-                f"{video.status.value}.",
-                MessageKind.WARNING,
-            )
+        if (
+            plan is None
+            or video is None
+            or self._refused_now("leave_out")
+            or self._refuse_while_picking()
+        ):
             return
         change: PlanChange
         if video.status is EntryStatus.LEFT_OUT:
@@ -510,7 +532,12 @@ class TermRenamerApp(App[None]):
         """
         plan = self.plan
         row = self.query_one(PreviewStage).selected_row
-        if plan is None or row is None or self._applying or self._refuse_while_picking():
+        if (
+            plan is None
+            or row is None
+            or self._refused_now("pick_match")
+            or self._refuse_while_picking()
+        ):
             return
         mode = plan.mode
         target: Title | PlanEntry
@@ -663,7 +690,7 @@ class TermRenamerApp(App[None]):
     def action_apply(self) -> None:
         """Open the Apply confirm; only its yes applies the Plan."""
         plan = self.plan
-        if plan is None or self._applying or self._refuse_while_picking():
+        if plan is None or self._refused_now("apply") or self._refuse_while_picking():
             return
         self.push_screen(ApplyConfirm(plan), self._apply_answered)
 
@@ -676,6 +703,7 @@ class TermRenamerApp(App[None]):
         self.session_settings.lock()
         self.say("Applying the Plan…")
         self._apply(plan)
+        self._refresh_chrome()
 
     @work(thread=True, exclusive=True, group="batch", exit_on_error=False, name=_APPLY)
     def _apply(self, plan: Plan) -> tuple[Plan, ApplyOutcome]:
@@ -756,7 +784,7 @@ class TermRenamerApp(App[None]):
     # -------------------------------------------------------------- Applied
 
     def action_new_batch(self) -> None:
-        if self._undoing:
+        if self._refused_now("new_batch"):
             self.say("Undo is putting the files back; wait for it to finish.", MessageKind.WARNING)
             return
         self.queue.clear()
@@ -768,10 +796,13 @@ class TermRenamerApp(App[None]):
     def on_applied_stage_undo_requested(self, _message: AppliedStage.UndoRequested) -> None:
         """``u``: open the Undo confirm, when the last Apply has anything to put back."""
         applied = self.query_one(AppliedStage)
-        if self._undoing or self.stage is not Stage.APPLIED:
+        if self._refused_now("undo") or self.stage is not Stage.APPLIED:
             return
         if self.outcome is None or not applied.undo_offered:
-            self.say("Apply moved nothing, so there is nothing to undo.", MessageKind.DIM)
+            self.say(
+                "Apply moved nothing and made no folder, so there is nothing to undo.",
+                MessageKind.DIM,
+            )
             return
         self.push_screen(UndoConfirm(self.outcome), self._undo_answered)
 
@@ -787,6 +818,7 @@ class TermRenamerApp(App[None]):
         self.session_settings.lock()
         self.say("Putting the files back…")
         self._undo(outcome)
+        self._refresh_chrome()
 
     @work(thread=True, exclusive=True, group="batch", exit_on_error=False, name=_UNDO)
     def _undo(self, outcome: ApplyOutcome) -> tuple[ApplyOutcome, UndoOutcome]:
@@ -837,6 +869,9 @@ class TermRenamerApp(App[None]):
         self.query_one(QueueStage).show_queue(self.queue.sources)
         self._show_stage(Stage.QUEUE)
         put_back = f"Undo put {plural(undone.put_back, 'file')} back"
+        if not undone.put_back and (removed := len(undone.emptied_folders_removed)):
+            them = "the folder" if removed == 1 else f"the {removed} folders"
+            put_back = f"Undo removed {them} Apply made"
         if undone.not_put_back:
             self.say(
                 f"{put_back} and left {undone.not_put_back}: l shows why.", MessageKind.WARNING
