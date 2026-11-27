@@ -26,7 +26,7 @@ from termrenamer.core.moving import Changes, move_no_replace
 from termrenamer.core.planning import plan_queue
 from termrenamer.core.undo import undo_apply
 
-from .test_apply_no_replace import _ignores_letter_case
+from .test_apply_no_replace import _ignores_letter_case, _numbered_once_written
 from .test_plan_stragglers import _options, _provider, _two_discs, _write
 
 WINDOWS = os.name == "nt"
@@ -497,6 +497,23 @@ def test_a_move_back_to_another_drive_is_a_checked_copy(
         assert undone.put_back == len(applied.moves)
     assert listing(show) == before
     assert undone.not_put_back == 0
+
+
+def test_a_move_back_whose_copy_gets_its_number_with_its_first_bytes_is_made(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    show = _show(tmp_path)
+    before = listing(show)
+    applied = apply_plan(_plan(show), confirmed=True)
+
+    _to_another_drive(monkeypatch)
+    _numbered_once_written(monkeypatch)  # as on macOS exFAT and FAT32
+    undone = undo_apply(applied)
+    monkeypatch.undo()
+
+    assert listing(show) == before
+    assert undone.not_put_back == 0
+    assert undone.files_left_behind == ()
 
 
 def test_a_source_folder_named_like_its_new_folder_in_another_case_is_undone(

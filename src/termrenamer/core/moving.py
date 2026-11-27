@@ -727,8 +727,13 @@ def _make_copy(
     """Make a copy of ``source`` (as ``st`` found it, a file ``held`` open) at the new
     name ``at``, while ``guards`` hold, list ``at`` as left behind from the moment it is
     made, and return the copy's stat as made: a link's ``lstat``, or a file's ``fstat``
-    from before its bytes were written. A copy that fails is removed only while
-    ``at_old_name`` verifies the source at its old name."""
+    once its bytes are written. A copy that fails is removed only while it is the file
+    made here and ``at_old_name`` verifies the source at its old name.
+
+    A file's number is read through its descriptor once the copy is complete, and
+    again just before a failed copy is removed: on exFAT and FAT32, macOS gives an
+    empty file a passing number, which changes when the file is changed, until bytes
+    are first written to it."""
     _guard(guards)
     if held is None:  # a link, which is copied as its target text and never opened
         _remake_link(source, st, at, changes)
@@ -737,15 +742,10 @@ def _make_copy(
         fd = os.open(at, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW | _O_BINARY, 0o600)
         changes.files_left_behind.append(at)
         try:
+            _copy_into(source, st, held, fd)
             made = os.fstat(fd)
         except BaseException:
-            _close(fd)
-            raise
-        try:
-            _copy_into(source, st, held, fd)
-        except BaseException:
-            _close(fd)
-            _remove_if_made(at, made, changes, source, at_old_name)
+            _remove_failed_copy(at, fd, changes, source, at_old_name)
             raise
         try:
             os.close(fd)
@@ -757,6 +757,22 @@ def _make_copy(
     if not os.path.samestat(os.lstat(at), made):
         raise OSError(errno.EIO, "the copy is not at the name it was made at", str(at))
     return made
+
+
+def _remove_failed_copy(
+    at: Path, fd: int, changes: Changes, source: Path, at_old_name: _AtOldName
+) -> None:
+    """Close the copy being written through ``fd`` at ``at`` and remove it as
+    :func:`_remove_if_made` does, by the number it has now; a copy whose number cannot
+    be read stays listed as left behind."""
+    try:
+        made = os.fstat(fd)
+    except OSError as exc:
+        _close(fd)
+        _LOG.warning("Keeping %s, which Apply made: cannot read it: %s", at, exc)
+        return
+    _close(fd)
+    _remove_if_made(at, made, changes, source, at_old_name)
 
 
 def _remake_link(source: Path, st: os.stat_result, at: Path, changes: Changes) -> None:
