@@ -1,8 +1,9 @@
 """The Applied Stage: what Apply did, counted in videos, and each file it did not rename.
 
-The left column holds the counts and the actions (New batch; Undo once #26 builds
-it). The right lists each skipped, failed and left out video with its reason, each
-Sidecar that was not renamed while its video was, and each Straggler not merged.
+The left column holds the counts and the actions: Undo, while the outcome has
+something to put back and Undo has not run, and New batch. The right lists each
+skipped, failed and left out video with its reason, each Sidecar that was not renamed
+while its video was, and each Straggler not merged.
 Every result, Sidecars and Stragglers included, is also in the Logs.
 """
 
@@ -14,6 +15,7 @@ from pathlib import PurePath
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content
+from textual.message import Message
 from textual.widgets import Static
 
 from termrenamer.core.models import ApplyOutcome, ApplyResult, ApplyStatus, Plan, PlanEntry
@@ -66,9 +68,13 @@ class AppliedStage(StageView):
     }
     """
 
+    class UndoRequested(Message):
+        """``u``: the person asks to undo the Apply shown."""
+
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._counts: AppliedCounts | None = None
+        self._undo_offered = False
 
     def compose(self) -> ComposeResult:
         with Horizontal():
@@ -85,17 +91,34 @@ class AppliedStage(StageView):
                     yield Static("", id="applied-list")
 
     def on_mount(self) -> None:
-        # The Undo button shows once its key's action is built (#26).
-        self.query_one("#undo").display = callable(getattr(self, "action_undo", None))
+        self.query_one("#undo").display = self._undo_offered
 
     @property
     def counts(self) -> AppliedCounts | None:
         return self._counts
 
+    @property
+    def undo_offered(self) -> bool:
+        """Whether ``u`` offers Undo now."""
+        return self._undo_offered
+
+    def offer_undo(self, offered: bool) -> None:
+        """Offer Undo, or stop offering it (it has run, or it is running)."""
+        self._undo_offered = offered
+        self.query_one("#undo").display = offered
+        self.changed()
+
+    def action_undo(self) -> None:
+        self.post_message(self.UndoRequested())
+
+    def key_enabled(self, action: str) -> bool:
+        return action != "undo" or self._undo_offered
+
     def show_results(self, plan: Plan, outcome: ApplyOutcome) -> None:
         counts = AppliedCounts.of(plan, outcome)
         results = outcome.results
         self._counts = counts
+        self.offer_undo(has_anything_to_undo(outcome))
         line = (
             f"[$success]{counts.renamed} renamed[/] [$tr-dim]·[/] "
             f"[$warning]{counts.skipped} skipped[/] [$tr-dim]·[/] "
@@ -133,6 +156,12 @@ class AppliedStage(StageView):
         if self._counts is None:
             return ""
         return f"{self._counts.renamed} renamed"
+
+
+def has_anything_to_undo(outcome: ApplyOutcome) -> bool:
+    """Whether the outcome records a file moved or a folder removed: something to put
+    back. Folders Apply made alone leave nothing to put back."""
+    return bool(outcome.moves or outcome.folders_removed)
 
 
 def not_renamed(plan: Plan, results: Sequence[ApplyResult]) -> list[tuple[PlanEntry, ApplyResult]]:

@@ -8,17 +8,13 @@ from __future__ import annotations
 
 from collections import Counter
 
-from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
 from textual.content import Content
-from textual.screen import ModalScreen
-from textual.widgets import Static
 
 from termrenamer.core.models import EntryStatus, Plan
 from termrenamer.core.paths import claim_key
 from termrenamer.core.title_rows import PlanCounts, sidecars_skipped_alone
-from termrenamer.tui.widgets.action_button import ActionButton
+from termrenamer.tui.dialogs.confirm import ConfirmDialog
 from termrenamer.tui.words import (
     agree,
     folder_text,
@@ -101,63 +97,12 @@ def _merge_line(plan: Plan) -> str:
     return f"Merge {plural(len(plan.stragglers), 'Straggler')}{titles}"
 
 
-class ApplyConfirm(ModalScreen[bool]):
-    """ "Apply the Plan?" with what Apply will do (:func:`confirm_lines`), and Apply or Back."""
+class ApplyConfirm(ConfirmDialog):
+    """ "Apply the Plan?" with what Apply will do (:func:`confirm_lines`), and Apply or Back;
+    ``enter`` applies too."""
 
-    BINDINGS = [
-        Binding("y", "answer(True)", show=False),
-        Binding("enter", "answer(True)", show=False),
-        Binding("n", "answer(False)", show=False),
-        Binding("escape", "answer(False)", show=False),
-    ]
-
-    DEFAULT_CSS = """
-    ApplyConfirm {
-        align: right middle;
-        background: $background 60%;
-    }
-    ApplyConfirm #confirm-dialog {
-        width: 62;
-        max-width: 100%;
-        height: auto;
-        max-height: 100%;
-        margin-right: 12;
-        padding: 0 2;
-        border: round $accent;
-        border-title-color: $foreground;
-        border-title-style: bold;
-        background: $tr-dialog;
-    }
-    ApplyConfirm #confirm-lines {
-        height: auto;
-        padding: 1 0 1 0;
-    }
-    ApplyConfirm .buttons {
-        height: 1;
-        margin-bottom: 1;
-    }
-    ApplyConfirm .buttons ActionButton {
-        margin: 0 2 0 0;
-    }
-    """
+    BINDINGS = [*ConfirmDialog.BINDINGS, Binding("enter", "answer(True)", show=False)]
 
     def __init__(self, plan: Plan) -> None:
-        super().__init__()
-        self._lines = confirm_lines(plan)
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="confirm-dialog"):
-            yield Static(Content("\n").join(self._lines), id="confirm-lines")
-            with Horizontal(classes="buttons"):
-                yield ActionButton("y", "Apply", press_key="y", id="confirm-yes", classes="-strong")
-                yield ActionButton("n", "Back", press_key="n", id="confirm-no", classes="-plain")
-
-    def on_mount(self) -> None:
-        self.query_one("#confirm-dialog").border_title = " Apply the Plan? "
-
-    def on_action_button_clicked(self, event: ActionButton.Clicked) -> None:
-        event.stop()
-        self.dismiss(event.button.id == "confirm-yes")
-
-    def action_answer(self, yes: bool) -> None:
-        self.dismiss(yes)
+        lines = Content("\n").join(confirm_lines(plan))
+        super().__init__("Apply the Plan?", lines, yes="Apply", no="Back")
