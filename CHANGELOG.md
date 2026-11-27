@@ -57,7 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **Provider keys no longer reach the logs** — since 0.1.0, each lookup wrote a log line with the request's full address, which holds the TMDB key (`api_key=`) or the OMDb key (`apikey=`), and the Logs and the console showed it, as did a file the console output was sent to. Every log line, traceback included, now shows `***` in place of a Provider key, TheTVDB's subscriber PIN or its login token. If you shared such a log file, a copy of the console output or a screenshot of the Logs, make a new key with that Provider and set it in place of the old one.
+- **Provider keys no longer reach the logs** — since 0.1.0, each lookup wrote a log line with the request's full address, which holds the TMDB key (`api_key=`) or the OMDb key (`apikey=`), and the Logs view and the console showed that line. TermRenamer writes no log file. Every log line, traceback included, now shows `***` in place of a Provider key, TheTVDB's subscriber PIN or its login token. If you shared a screenshot of the Logs or a copy of those lines, make a new key with that Provider and set it in place of the old one.
 
 ## [0.1.0] - 2026-11-26
 
