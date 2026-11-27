@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Any one provider key is enough to start** — the app starts when at least one of `TERMRENAMER_TMDB_API_KEY`, `TERMRENAMER_TVDB_API_KEY` and `TERMRENAMER_OMDB_API_KEY` is set; it no longer requires the TMDB key (#3). With none, it exits with status 2 and a message that names the three settings, says one is enough and says where to set them; a TheTVDB subscriber PIN alone is not a key. At start and on every change of Mode the provider is the first of that Mode with a key (TMDB, then the other), or TMDB when none has one. A provider with no key is marked "no key" and `p` still selects it; building a plan with it, TMDB included, names the setting to add and builds no plan.
 - **Contributor tooling: coverage check** — the full test check is now `uv run pytest -v --cov` (was `uv run pytest -v`). Coverage is no longer in pytest's default options, so `uv run pytest` with a single test file runs those tests only and exits 0 when they pass, where it used to fail on the 85% coverage threshold. `--cov` measures `src/termrenamer` and still fails below 85%, from `[tool.coverage]` in `pyproject.toml`.
 
+### Fixed
+
+- **Broken symbolic links** — a broken symbolic link now counts as a file that is already there. A planned name held by one gets the numbered name, as for any other taken name, and so does a straggler merged into a destination folder. If one appears at a destination after the preview, apply skips that entry with "destination exists at apply time" instead of replacing the link ([#9](https://github.com/eunai/TermRenamer/issues/9)).
+
 ## [0.1.0] - 2026-11-26
 
 ### Added

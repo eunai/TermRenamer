@@ -7,7 +7,7 @@ import os
 import shutil
 from pathlib import Path
 
-from termrenamer.core.collisions import allocate_destination
+from termrenamer.core.collisions import allocate_destination, name_is_taken
 from termrenamer.core.models import (
     ApplyResult,
     ApplyStatus,
@@ -24,13 +24,6 @@ _LOG = logging.getLogger(__name__)
 def _stat_fingerprint(path: Path) -> PlanFingerprint:
     st = path.stat()
     return PlanFingerprint(path=path, size=st.st_size, mtime_ns=int(st.st_mtime_ns))
-
-
-def _same_file(a: Path, b: Path) -> bool:
-    try:
-        return a.samefile(b)
-    except OSError:
-        return False
 
 
 def _remove_empty_source_dirs(applied_source_parents: set[Path]) -> None:
@@ -183,7 +176,7 @@ def apply_plan(
             )
             continue
 
-        if dest.exists() and not _same_file(source, dest):
+        if name_is_taken(dest, source=source):
             results.append(
                 ApplyResult(
                     source=source,
