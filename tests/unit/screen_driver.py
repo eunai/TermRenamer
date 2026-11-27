@@ -17,6 +17,7 @@ from rich.console import Console
 from textual.pilot import Pilot
 from textual.widgets import Static
 from textual_fspicker import FileOpen, SelectDirectory
+from textual_fspicker.parts import DirectoryNavigation
 
 from termrenamer.app_bootstrap import Settings, ThemeName
 from termrenamer.core.models import Candidate
@@ -191,14 +192,28 @@ async def press(pilot: Pilot[None], *keys: str) -> None:
     await pilot.pause()
 
 
+async def wait_for_listing(pilot: Pilot[None]) -> None:
+    """Wait until the open file or folder dialog has listed its folder.
+
+    The dialog lists it in a worker that may not have started yet, and closing the
+    dialog under that worker fails it; so wait for the entries, then the worker.
+    """
+    listing = pilot.app.screen.query_one(DirectoryNavigation)
+    for _ in range(500):
+        if listing.option_count:
+            break
+        await pilot.pause(0.01)
+    await pilot.app.workers.wait_for_complete()
+    await pilot.pause()
+
+
 async def pick_in_dialog(pilot: Pilot[None], key: str, path: Path | None) -> None:
     """Press ``a`` or ``f``, check the dialog it opens, and choose ``path`` there
     (``None`` presses Escape)."""
     app = pilot.app
     await press(pilot, key)
     assert isinstance(app.screen, FileOpen if key == "a" else SelectDirectory)
-    await app.workers.wait_for_complete()  # the dialog lists its folder in a worker
-    await pilot.pause()
+    await wait_for_listing(pilot)
     if path is None:
         await press(pilot, "escape")
     else:

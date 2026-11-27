@@ -18,6 +18,8 @@ import logging
 import tempfile
 from pathlib import Path
 
+from textual_fspicker.parts import DirectoryNavigation
+
 from termrenamer.api.tmdb import StaticFilmMetadataProvider, StaticTvMetadataProvider
 from termrenamer.app_bootstrap import Settings
 from termrenamer.core.models import EpisodeMetadata
@@ -84,8 +86,14 @@ async def _screenshot(source: Path) -> str:
     async with app.run_test(size=TERMINAL_SIZE) as pilot:
         await pilot.pause()
         await pilot.press("f")  # the folder dialog; the folder is chosen in it
-        await pilot.pause()
-        await app.workers.wait_for_complete()  # the dialog lists its folder in a worker
+        # The dialog lists its folder in a worker that may not have started yet, and
+        # closing the dialog under it fails it: wait for the entries, then the worker.
+        listing = app.screen.query_one(DirectoryNavigation)
+        for _ in range(500):
+            if listing.option_count:
+                break
+            await pilot.pause(0.01)
+        await app.workers.wait_for_complete()
         await pilot.pause()
         app.screen.dismiss(source)
         await pilot.pause()
