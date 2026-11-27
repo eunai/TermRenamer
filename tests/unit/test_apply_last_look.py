@@ -600,7 +600,7 @@ def test_a_folder_a_target_folder_lies_inside_through_a_link_is_no_straggler(
     [dest] = [e.destination for e in plan.entries]
     assert dest is not None
 
-    assert backups / "TV" not in [s.source for s in plan.stragglers]
+    assert plan.stragglers == ()  # ``TV`` holds the target folder, so it stays
     outcome = apply_plan(plan, confirmed=True)
 
     assert _by_source(outcome.results)[video] == (ApplyStatus.RENAMED, "ok")
