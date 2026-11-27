@@ -5,7 +5,6 @@ holds. A Windows folder ends in a backslash, which must not escape what follows 
 from __future__ import annotations
 
 import dataclasses
-import os
 from pathlib import Path, PureWindowsPath
 
 from termrenamer.core.models import Candidate, ScanMode
@@ -14,6 +13,7 @@ from termrenamer.tui.dialogs.apply_confirm import confirm_lines
 from termrenamer.tui.stages.applied import _two_lines
 from termrenamer.tui.widgets.footer import AppFooter
 from termrenamer.tui.widgets.header import AppHeader
+from termrenamer.tui.words import folder_text
 
 from .screen_driver import (
     SIZE,
@@ -122,10 +122,10 @@ async def test_names_in_brackets_reach_every_stage_as_they_are(tmp_path: Path) -
         listed = text_of(app, "#applied-list").splitlines()
 
     assert queued == f"path  {folder}"
-    assert source.endswith(f"[Group] TV[i]{os.sep}Harbour Lights S01E01.mkv")
+    assert source.endswith(str(Path(folder.name) / "Harbour Lights S01E01.mkv"))
     assert {heading, other_heading} == {MARKUP_NAME, "[b]holiday[i].mkv"}
     assert listed[:2] == [
-        f"[b]holiday[i].mkv  {folder}{os.sep}",
+        f"[b]holiday[i].mkv  {folder_text(folder)}",
         "    not recognised: its name could not be read",
     ]
 
