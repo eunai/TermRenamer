@@ -94,6 +94,9 @@ def detect_poster_support(
     return PosterSupport(image=make)
 
 
+_FAILED_EARLIER = "an earlier download of this Poster failed this run"
+
+
 @dataclass(slots=True)
 class _Download:
     """One download in progress: who still wants it, and its error once it failed."""
@@ -130,7 +133,7 @@ class PosterSource:
         does, so two views never download one Poster twice. A download that fails (an
         error status, a body that is not an image, a file that cannot be stored) is
         added to :attr:`failed` and logged in one line, here, before a new call can
-        start another. Before each new attempt the download asks ``wanted`` of every
+        start another; a call for a request already in :attr:`failed` sends nothing. Before each new attempt the download asks ``wanted`` of every
         call that joined it; when none still wants the Poster it is given up, records
         nothing, and a later call tries again.
 
@@ -138,6 +141,8 @@ class PosterSource:
             PosterError: The download failed or was given up.
         """
         with self._lock:
+            if request in self.failed:  # failed since the caller looked: no new try
+                raise PosterError(_FAILED_EARLIER)
             running = self._downloads.get(request)
             if running is None:
                 download = self._downloads[request] = _Download([wanted])

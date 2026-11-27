@@ -18,7 +18,7 @@ from termrenamer.persistence.posters import PosterRequest, PosterStore
 from termrenamer.tui.app import MIN_POSTER_SIZE, TermRenamerApp
 from termrenamer.tui.dialogs import ApplyConfirm, UndoConfirm
 from termrenamer.tui.dialogs.match_picker import MatchPicker
-from termrenamer.tui.poster_support import NO_IMAGES, NOT_INSTALLED, PosterSupport
+from termrenamer.tui.poster_support import NO_IMAGES, NOT_INSTALLED, PosterSource, PosterSupport
 from termrenamer.tui.stage import Stage
 from termrenamer.tui.stages.preview import ROWS_FOR_POSTERS
 from termrenamer.tui.views import HelpView, SettingsView
@@ -459,6 +459,39 @@ async def test_a_download_not_yet_sent_when_posters_are_hidden_is_never_sent(
 
     assert while_hidden == []
     assert shown_again == 1  # shown again: downloaded then
+
+
+async def test_a_view_queued_behind_a_failed_download_does_not_download_it_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Match picker's tile for the current Match wants the Poster the Preview is
+    downloading; with one thread for downloads, the tile's turn comes after that
+    download failed. It shows "no poster" and sends nothing."""
+    gate = threading.Event()
+    host = ImageHost(status=404, gate=gate)
+    one_thread = threading.Lock()
+    fetch = PosterSource.fetch
+
+    def in_turn(source: PosterSource, *args: object, **kwargs: object) -> None:
+        with one_thread:
+            fetch(source, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(PosterSource, "fetch", in_turn)
+    app = poster_app(tmp_path, host)
+    async with app.run_test(size=SIZE) as pilot:
+        await queue(pilot, tv_backups(tmp_path))
+        await press(pilot, "b")
+        await until(pilot, lambda: bool(host.requests))
+        await press(pilot, "t")
+        assert isinstance(app.screen, MatchPicker)
+        await pilot.pause(0.1)
+        gate.set()
+        await app.workers.wait_for_complete()
+        await app.screen.workers.wait_for_complete()
+        await pilot.pause(0.2)
+        sent = len(host.requests)
+
+    assert sent == 1
 
 
 async def test_a_poster_folder_that_is_a_link_shows_no_poster_and_logs_one_line(
