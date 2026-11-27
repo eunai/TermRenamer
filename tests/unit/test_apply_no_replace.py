@@ -889,7 +889,14 @@ def _another_program_replaces(
     path.write_bytes(data)
     if like is not None:
         os.utime(path, ns=(like.st_atime_ns, like.st_mtime_ns))
-    new = os.lstat(path)
+    _reports_the_number_of(monkeypatch, os.lstat(path), was)
+
+
+def _reports_the_number_of(
+    monkeypatch: pytest.MonkeyPatch, new: os.stat_result, was: os.stat_result
+) -> None:
+    """Every ``lstat``, ``stat`` and ``fstat`` of the file ``new`` found reports the
+    device and inode number of ``was``."""
     key = (new.st_dev, new.st_ino)
 
     def numbered(real: Callable[..., os.stat_result]) -> Callable[..., os.stat_result]:
@@ -1053,6 +1060,55 @@ def test_a_source_replaced_by_a_file_of_its_size_and_time_under_its_number_keeps
         _kept_both(outcome, notes, dest, theirs)
 
 
+@pytest.mark.parametrize("name", ["setup.exe", "install.BAT"])
+def test_a_program_file_copied_to_another_drive_is_moved(
+    show: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    # On Windows a look by name adds the execute bits to a program's name, and a look
+    # through the file held open for its copy does not.
+    program = _write(show / "Disc 1" / name, b"a program")
+    plan = _plan(show)
+    [dest] = [s.destination for s in plan.stragglers if s.source == program]
+
+    _across_drives(monkeypatch, only=program)
+    outcome = apply_plan(plan, confirmed=True)
+    monkeypatch.undo()
+
+    assert _by_source(outcome.stragglers)[program] == (ApplyStatus.RENAMED, "ok")
+    assert dest.read_bytes() == b"a program"
+    assert not program.exists(follow_symlinks=False)
+
+
+def test_a_drive_that_reports_no_inode_numbers_still_moves_files_and_folders(
+    show: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    notes = _write(show / "Disc 1" / "notes.txt", b"my notes")
+    subs = show / "Disc 1" / "Subs"
+    plan = _plan(show)
+    dests = {s.source: s.destination for s in plan.stragglers}
+
+    def no_number(real: Callable[..., os.stat_result]) -> Callable[..., os.stat_result]:
+        def look(*args: object, **kwargs: object) -> os.stat_result:
+            _, (seq, extra) = real(*args, **kwargs).__reduce__()
+            fields = list(seq)
+            fields[1] = 0  # st_ino, as some network drives report it
+            return os.stat_result(fields, extra)
+
+        return look
+
+    _across_drives(monkeypatch, only=notes)
+    for name in ("lstat", "stat", "fstat"):
+        monkeypatch.setattr(os, name, no_number(getattr(os, name)))
+    outcome = apply_plan(plan, confirmed=True)
+    monkeypatch.undo()
+
+    results = _by_source(outcome.stragglers)
+    assert results[notes] == (ApplyStatus.RENAMED, "ok")
+    assert results[subs] == (ApplyStatus.RENAMED, "ok")
+    assert dests[notes].read_bytes() == b"my notes"
+    assert (dests[subs] / "English.srt").read_bytes() == b"x"
+
+
 def test_a_failed_copy_whose_source_was_replaced_under_its_number_is_kept(
     show: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1144,18 +1200,7 @@ def test_a_folder_replaced_under_its_number_during_its_walk_is_left_as_it_is(
         os.rmdir(subs)
         os.mkdir(subs)
         _write(french, theirs)
-        new = os.lstat(subs)
-        key = (new.st_dev, new.st_ino)
-
-        def numbered(real: Callable[..., os.stat_result]) -> Callable[..., os.stat_result]:
-            def look(*args: object, **kwargs: object) -> os.stat_result:
-                st = real(*args, **kwargs)
-                return _with_the_number_of(st, was) if (st.st_dev, st.st_ino) == key else st
-
-            return look
-
-        for name in ("lstat", "stat", "fstat"):
-            monkeypatch.setattr(os, name, numbered(getattr(os, name)))
+        _reports_the_number_of(monkeypatch, os.lstat(subs), was)
 
     real_unlink, real_rename = os.unlink, os.rename
     done: list[bool] = []

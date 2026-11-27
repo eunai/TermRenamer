@@ -91,23 +91,26 @@ _Guard = tuple[Path, "_Held | LinkedFolder | None"]
 with ``None``, a real folder; with a :class:`_Held`, the very folder found there before;
 with a :class:`LinkedFolder`, the very link the Plan found, leading where it led."""
 
-_Verify = Callable[[os.stat_result], bool]
+_AtOldName = Callable[[os.stat_result], bool]
 """Whether the source's own file is verified at its old name, given the ``lstat`` of the
 old name now."""
 
 
 def _one_file(a: os.stat_result, b: os.stat_result) -> bool:
-    """Whether two looks taken at the same moment see one file: the same device and a
-    known inode number, and the same kind, link count, size and modification time, and
-    elsewhere than on Windows the same change time. Two looks at one file agree on all of
-    these; a file given the number of one just removed differs in its link count or its
-    times. Windows is left out of the change time, as a look by name and a look through
-    an open file report different ones there."""
-    if a.st_ino == 0 or not os.path.samestat(a, b):
-        return False  # some network drives report no inode number at all
-    fields: tuple[str, ...] = ("st_mode", "st_nlink", "st_size", "st_mtime_ns")
+    """Whether two looks taken at the same moment see one file: the same device and inode
+    number, and the same kind, link count, size and modification time, and elsewhere
+    than on Windows the same change time. Two looks at one file agree on all of these,
+    so a file given the number of one just removed is told apart whenever it differs in
+    any of them; a held file (:class:`_Held`) keeps its number its own anyway.
+
+    Windows is left out of the change time and the permission bits: there a look by name
+    and a look through an open file report different change times, and a look by name
+    adds the execute bits to a program's name (``.exe``, ``.bat``)."""
+    if not os.path.samestat(a, b) or stat.S_IFMT(a.st_mode) != stat.S_IFMT(b.st_mode):
+        return False
+    fields: tuple[str, ...] = ("st_nlink", "st_size", "st_mtime_ns")
     if os.name != "nt":
-        fields += ("st_ctime_ns",)
+        fields += ("st_mode", "st_ctime_ns")
     return all(getattr(a, f) == getattr(b, f) for f in fields)
 
 
@@ -115,7 +118,7 @@ class _Held:
     """A file or folder Apply holds open while it acts on it, so that no other file can
     be given its inode number while it is held: a file removed while open keeps its
     number until it is closed, and Windows refuses to remove a file held open. A look by
-    name is this entry when it agrees with a look through the open descriptor
+    name sees this file or folder when it agrees with a look through the open descriptor
     (:func:`_one_file`).
 
     Windows opens no folder, so a folder there is held by its ``lstat`` and creation
@@ -125,8 +128,8 @@ class _Held:
 
     def __init__(self, path: Path, st: os.stat_result, *, folder: bool) -> None:
         """Open ``path``, which ``st`` (its ``lstat``) found just before, or raise
-        :class:`OSError` when what is opened is not that entry: :class:`NowALink` for a
-        folder that is a link now."""
+        :class:`OSError` when what is opened is not that file or folder:
+        :class:`NowALink` for a folder that is a link now."""
         self.st = st
         self.fd: int | None = None
         self.released = False
@@ -151,7 +154,7 @@ class _Held:
         self.fd = fd
 
     def agrees(self, now: os.stat_result) -> bool:
-        """Whether ``now``, a look by name taken just before, sees this entry."""
+        """Whether ``now``, a look by name taken just before, sees this file or folder."""
         if self.fd is not None:
             try:
                 return _one_file(now, os.fstat(self.fd))
@@ -159,8 +162,9 @@ class _Held:
                 return False
         if self.released:
             return False
-        born = getattr(now, "st_birthtime_ns", None), getattr(self.st, "st_birthtime_ns", None)
-        return now.st_ino != 0 and os.path.samestat(now, self.st) and born[0] == born[1]
+        # A Windows folder, by its number and its creation time.
+        made_then = getattr(self.st, "st_birthtime_ns", None)
+        return os.path.samestat(now, self.st) and getattr(now, "st_birthtime_ns", None) == made_then
 
     def descriptor(self) -> int:
         """The open descriptor of a file held, which stays open until released."""
@@ -169,7 +173,7 @@ class _Held:
         return self.fd
 
     def release(self) -> None:
-        """Close the descriptor; the entry is not verifiable afterwards."""
+        """Close the descriptor; the file is not verifiable afterwards."""
         self.released = True
         if self.fd is not None:
             fd, self.fd = self.fd, None
@@ -571,8 +575,8 @@ def _unlink_source(
     source: Path,
     dest: Path,
     made: os.stat_result,
-    there: _Verify,
-    unchanged: _Verify,
+    at_old_name: _AtOldName,
+    unchanged: _AtOldName,
     before: PlanFingerprint,
     changes: Changes,
     held: _Held | None = None,
@@ -584,7 +588,7 @@ def _unlink_source(
     copied), is the last look before the unlink; on Windows the source ``held`` open is
     released between the two, as Windows removes no file held open. When the old name is
     gone already, the file is at ``dest`` alone and the move is recorded. On any error,
-    an interrupt included, :func:`_settle` decides by the disk, with ``there``, what is
+    an interrupt included, :func:`_settle` decides by the disk, with ``at_old_name``, what is
     kept, so the file never loses both names.
     """
     try:
@@ -603,20 +607,20 @@ def _unlink_source(
         _forget(changes.files_left_behind, dest)
         changes.moved(source, dest, before)
     except BaseException:
-        _settle(source, there, dest, made, before, changes)
+        _settle(source, at_old_name, dest, made, before, changes)
         raise
 
 
 def _settle(
     source: Path,
-    there: _Verify,
+    at_old_name: _AtOldName,
     dest: Path,
     made: os.stat_result,
     before: PlanFingerprint,
     changes: Changes,
 ) -> None:
     """After an error once ``dest`` held the file: remove ``dest`` only while the source's
-    own file is verified at its old name (``there``); record the move when the old name
+    own file is verified at its old name (``at_old_name``); record the move when the old name
     is gone; else keep ``dest`` listed as left behind."""
     if any(m.source == source and m.destination == dest for m in changes.moves):
         return  # the move is recorded already
@@ -629,8 +633,8 @@ def _settle(
     except OSError as exc:
         _LOG.warning("Cannot read %s, so %s is kept: %s", source, dest, exc)
         now = None
-    if now is not None and there(now):
-        _remove_if_made(dest, made, changes, source, there)
+    if now is not None and at_old_name(now):
+        _remove_if_made(dest, made, changes, source, at_old_name)
     elif dest not in changes.files_left_behind:
         changes.files_left_behind.append(dest)
 
@@ -663,7 +667,7 @@ def _copy_then_unlink(
         target = os.readlink(source)
         held = None
 
-        def there(now: os.stat_result) -> bool:
+        def at_old_name(now: os.stat_result) -> bool:
             # A link is its target text: one with the same text at the old name, made at
             # the same time, leaves nothing lost when the link made at ``dest`` goes.
             try:
@@ -675,11 +679,11 @@ def _copy_then_unlink(
             except OSError:
                 return False
 
-        unchanged = there
+        unchanged = at_old_name
     else:
         held = _Held(source, st, folder=False)
 
-        def there(now: os.stat_result) -> bool:
+        def at_old_name(now: os.stat_result) -> bool:
             return held.agrees(now)
 
         def unchanged(now: os.stat_result) -> bool:
@@ -692,18 +696,18 @@ def _copy_then_unlink(
     try:
         if os.name == "nt":
             part = _fresh_name(dest)
-            made = _make_copy(source, st, part, changes, guards, there, held)
+            made = _make_copy(source, st, part, changes, guards, at_old_name, held)
             try:
                 _guard(guards)
                 os.rename(part, dest)
             except BaseException:
-                _remove_if_made(part, made, changes, source, there)
+                _remove_if_made(part, made, changes, source, at_old_name)
                 raise
             changes.files_left_behind.append(dest)
             _forget(changes.files_left_behind, part)
         else:
-            made = _make_copy(source, st, dest, changes, guards, there, held)
-        _unlink_source(source, dest, made, there, unchanged, before, changes, held)
+            made = _make_copy(source, st, dest, changes, guards, at_old_name, held)
+        _unlink_source(source, dest, made, at_old_name, unchanged, before, changes, held)
     finally:
         if held is not None:
             held.release()
@@ -715,14 +719,14 @@ def _make_copy(
     at: Path,
     changes: Changes,
     guards: Sequence[_Guard],
-    there: _Verify,
+    at_old_name: _AtOldName,
     held: _Held | None,
 ) -> os.stat_result:
     """Make a copy of ``source`` (as ``st`` found it, a file ``held`` open) at the new
     name ``at``, while ``guards`` hold, list ``at`` as left behind from the moment it is
     made, and return the copy's stat as made: a link's ``lstat``, or a file's ``fstat``
     from before its bytes were written. A copy that fails is removed only while
-    ``there`` verifies the source at its old name."""
+    ``at_old_name`` verifies the source at its old name."""
     _guard(guards)
     if held is None:  # a link, which is copied as its target text and never opened
         _remake_link(source, st, at, changes)
@@ -739,12 +743,12 @@ def _make_copy(
             _copy_into(source, st, held, fd)
         except BaseException:
             _close(fd)
-            _remove_if_made(at, made, changes, source, there)
+            _remove_if_made(at, made, changes, source, at_old_name)
             raise
         try:
             os.close(fd)
         except BaseException:
-            _remove_if_made(at, made, changes, source, there)
+            _remove_if_made(at, made, changes, source, at_old_name)
             raise
         if os.utime not in os.supports_fd:
             _set_times_by_name(at, made, st)
@@ -868,14 +872,14 @@ def _set_times_by_name(dest: Path, made: os.stat_result, st: os.stat_result) -> 
 
 
 def _remove_if_made(
-    dest: Path, made: os.stat_result, changes: Changes, source: Path, there: _Verify
+    dest: Path, made: os.stat_result, changes: Changes, source: Path, at_old_name: _AtOldName
 ) -> None:
     """Remove ``dest`` while it still is the entry made here and the source's own file
-    is verified at its old name (``there``), and take it off the files left behind; it
+    is verified at its old name (``at_old_name``), and take it off the files left behind; it
     stays listed when it is kept, so a copy is never removed while it may be the only
     one."""
     try:
-        source_there = there(os.lstat(source))
+        source_there = at_old_name(os.lstat(source))
     except OSError as exc:
         _LOG.warning("Keeping %s, which Apply made: cannot find %s: %s", dest, source, exc)
         return

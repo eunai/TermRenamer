@@ -255,8 +255,9 @@ class LinkedFolder:
     """A folder on the way to a new name that was a link or a junction when a Plan first
     went through it: the link's own device, inode and modification time, its target
     text, and the path of the folder it led to then. Apply goes through it only while
-    all five are the same: a link made again gets a new modification time, even where it
-    gets the inode number of the link removed."""
+    all five are the same: a link made again is told apart by its modification time,
+    even where it gets the inode number of the link removed, unless it is made within
+    the same step of the disk's clock."""
 
     path: Path
     device: int
