@@ -12,7 +12,7 @@ import threading
 from collections import deque
 from collections.abc import Callable
 
-_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+from termrenamer.util.logging import MaskingFormatter
 
 
 class LogBook:
@@ -45,7 +45,7 @@ class LogBookHandler(logging.Handler):
         super().__init__()
         self._book = book
         self._on_line = on_line
-        self.setFormatter(logging.Formatter(_FORMAT))
+        self.setFormatter(MaskingFormatter())
 
     def emit(self, record: logging.LogRecord) -> None:
         try:

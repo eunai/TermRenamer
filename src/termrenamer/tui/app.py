@@ -72,7 +72,7 @@ from termrenamer.tui.widgets.header import AppHeader
 from termrenamer.tui.widgets.stages_row import StagesRow
 from termrenamer.tui.words import and_list, match_name, mode_label, noun, plural, provider_name
 from termrenamer.util.errors import ProviderError, ValidationError
-from termrenamer.util.logging import mask_secrets_in_logs
+from termrenamer.util.logging import quiet_request_urls
 from termrenamer.wiring import PlanningWiring
 
 _STAGE_IDS = {
@@ -976,7 +976,7 @@ class TermRenamerApp(App[None]):
 
     def _install_log_handler(self) -> None:
         """Send every log record to the log book in place of stderr, while the screen runs."""
-        mask_secrets_in_logs()
+        quiet_request_urls()
         root = logging.getLogger()
         for handler in root.handlers[:]:
             if isinstance(handler, logging.StreamHandler) and not isinstance(

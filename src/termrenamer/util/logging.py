@@ -1,97 +1,87 @@
-"""Stdlib logging setup for bootstrap and TUI, with Provider keys and tokens masked.
+"""Stdlib logging setup for bootstrap and TUI, keeping Provider keys and tokens out.
 
-Every log record, from any logger and at any level, is made by the record factory
-that :func:`mask_secrets_in_logs` installs. The factory masks a key or a token in the
-record's message and in its traceback before any handler sees the record, so the
-console, the Logs view and any handler added later receive the masked text only.
+Two layers keep a secret out of the log lines:
+
+1. At the source. httpx logs each request's full URL, query string and key included,
+   at INFO; :func:`quiet_request_urls` sets its loggers to WARNING, and
+   :class:`~termrenamer.util.http.HttpClient` logs each request's URL without its
+   query instead. No message of the app quotes a request's URL, headers or body.
+   This is the only layer for a short secret, such as TheTVDB's subscriber PIN.
+2. A net. :class:`MaskingFormatter` writes ``***`` in place of each value given to
+   :func:`keep_out_of_logs` in the final text of each line, traceback and stack
+   included, so a message, a traceback or another library that quotes a key or a
+   token anyway shows the mask. A value shorter than :data:`MIN_MASKED_LENGTH` is
+   not masked, so a short value never changes a year or a word of a line.
 """
 
 from __future__ import annotations
 
 import logging
-import re
 import sys
 import threading
-from typing import Any, TextIO
+from typing import TextIO
 from urllib.parse import quote
 
 MASK = "***"
+LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
-_FIELD = re.compile(
-    r"""(?ix)
-    (?P<name>(?:\b|(?<=_))(?:api_?key|pin|token|access_token|password)\b)
-    (?P<sep>=|["']?\s*:\s*["']?)
-    (?P<value>[^&\s"',;}]+)
-    """
-)
-"""A secret field: ``api_key=…`` in a query string, ``"apikey": "…"`` in a body."""
+MIN_MASKED_LENGTH = 8
+"""The shortest value :func:`keep_out_of_logs` masks. Provider keys and tokens are
+longer; a shorter value would mask ordinary text."""
 
-_BEARER = re.compile(r"(?i)(\bBearer\s+)[^\s\"',;]+")
-
-_MIN_KNOWN_LENGTH = 6
-"""A known secret shorter than this is masked only through :data:`_FIELD`, so a
-one-letter stand-in key in a test never masks every such letter of a line."""
+_REQUEST_LOGGERS = ("httpx", "httpcore")
 
 _known: set[str] = set()
 _lock = threading.Lock()
 
 
 def keep_out_of_logs(*secrets: str | None) -> None:
-    """Mask each of ``secrets``, as written and as a URL writes it, wherever a log line holds it."""
+    """Mask each of ``secrets`` at least :data:`MIN_MASKED_LENGTH` long, as written and
+    as a URL writes it, in every line a :class:`MaskingFormatter` writes."""
     with _lock:
         for secret in secrets:
-            if secret and len(secret) >= _MIN_KNOWN_LENGTH:
+            if secret and len(secret) >= MIN_MASKED_LENGTH:
                 _known.add(secret)
                 _known.add(quote(secret, safe=""))
 
 
 def mask_secrets(text: str) -> str:
-    """``text`` with each known secret, secret field and bearer token replaced by ``***``."""
+    """``text`` with each value given to :func:`keep_out_of_logs` replaced by ``***``."""
     with _lock:
         known = sorted(_known, key=len, reverse=True)
     for secret in known:
         text = text.replace(secret, MASK)
-    text = _FIELD.sub(lambda m: f"{m['name']}{m['sep']}{MASK}", text)
-    return _BEARER.sub(lambda m: f"{m[1]}{MASK}", text)
+    return text
 
 
-def _masked(record: logging.LogRecord) -> logging.LogRecord:
-    try:
-        message = record.getMessage()
-    except Exception:  # a broken record is the handler's to report, as without masking
-        return record
-    shown = mask_secrets(message)
-    if shown != message:
-        record.msg, record.args = shown, None
-    if record.exc_info and not record.exc_text:
-        record.exc_text = mask_secrets(logging.Formatter().formatException(record.exc_info))
-    if record.stack_info:
-        record.stack_info = mask_secrets(record.stack_info)
-    return record
+class MaskingFormatter(logging.Formatter):
+    """A formatter whose every line, traceback and stack included, has the known secrets
+    masked. A record that cannot be formatted gives a line that says so, never an error."""
+
+    def __init__(self, fmt: str = LOG_FORMAT) -> None:
+        super().__init__(fmt)
+
+    def format(self, record: logging.LogRecord) -> str:
+        try:
+            text = super().format(record)
+        except Exception as exc:  # noqa: BLE001 - a log line must never raise into the caller
+            text = f"{record.levelname} {record.name}: a log line could not be written ({exc})"
+        return mask_secrets(text)
 
 
-def mask_secrets_in_logs() -> None:
-    """Make every later log record through a factory that masks keys and tokens; idempotent."""
-    current = logging.getLogRecordFactory()
-    if getattr(current, "masks_secrets", False):
-        return
-
-    def factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
-        return _masked(current(*args, **kwargs))
-
-    factory.masks_secrets = True  # type: ignore[attr-defined]
-    logging.setLogRecordFactory(factory)
+def quiet_request_urls() -> None:
+    """Keep httpx's request lines, which hold each request's full URL, out of the logs."""
+    for name in _REQUEST_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def setup_logging(*, level: int = logging.INFO, stream: TextIO | None = None) -> None:
-    """Configure root logger for console output (default INFO), keys and tokens masked."""
-    mask_secrets_in_logs()
+    """Configure root logger for console output (default INFO), keys and tokens kept out."""
+    quiet_request_urls()
     root = logging.getLogger()
     if root.handlers:
         return
     handler = logging.StreamHandler(stream or sys.stderr)
-    handler.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"),
-    )
+    handler.setFormatter(MaskingFormatter())
     root.addHandler(handler)
     root.setLevel(level)

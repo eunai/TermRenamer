@@ -39,9 +39,11 @@ class Download:
 class HttpClient:
     """Thin wrapper around ``httpx.Client`` with retry/backoff.
 
-    Its own log lines name no URL. httpx logs each request's full URL, query string
-    included; a Provider key or token in it, or in any other log record, is masked by
-    the record factory of :mod:`termrenamer.util.logging`.
+    Each response it returns is logged at INFO with its request's method, the URL
+    without its query string, and the status. TMDB and OMDb send the key in the query
+    string, so httpx's own request lines are kept out of the logs
+    (:mod:`termrenamer.util.logging`). No other line of it quotes a URL, a header or a
+    body.
     """
 
     def __init__(
@@ -137,6 +139,12 @@ class HttpClient:
                 self._sleep_before_retry(attempt, retry_after_seconds=retry_after)
                 continue
 
+            _LOG.info(
+                "HTTP %s %s %s",
+                response.request.method,
+                response.request.url.copy_with(query=None),
+                response.status_code,
+            )
             return response
 
         if last_error is not None:

@@ -1,8 +1,11 @@
 """No log line holds a Provider key or token: the console and the Logs view.
 
-The Providers talk to a stand-in transport with made-up keys; no request leaves the
-machine. ``TERMRENAMER_LOG_FILE`` writes no file yet (#4), so the console and the Logs
-view are every place a log record reaches.
+Two layers (:mod:`termrenamer.util.logging`): no record quotes a key, the PIN or
+TheTVDB's login body, checked through a handler that masks nothing; and the console and
+the Logs view mask each registered key and token whatever quotes it. The Providers talk
+to a stand-in transport with made-up keys; no request leaves the machine.
+``TERMRENAMER_LOG_FILE`` writes no file yet (#4), so the console and the Logs view are
+every place a log line reaches.
 """
 
 from __future__ import annotations
@@ -10,6 +13,7 @@ from __future__ import annotations
 import io
 import logging
 from collections.abc import Callable, Iterator
+from typing import Any
 
 import httpx
 import pytest
@@ -31,11 +35,24 @@ _TVDB_TOKEN = "made.up.tvdb-token-for-the-test"
 _SECRETS = (_TMDB_KEY, _OMDB_KEY, _TVDB_KEY, _TVDB_TOKEN)
 
 
+class _Raw(logging.Handler):
+    """Every record as a plain formatter writes it, traceback included: nothing masked."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.DEBUG)
+        self.setFormatter(logging.Formatter("%(name)s: %(message)s"))
+        self.lines: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.lines.append(self.format(record))
+
+
 @pytest.fixture
 def bare_root() -> Iterator[logging.Logger]:
     """The root logger, restored afterwards; :func:`_strip` empties it in the test."""
     root = logging.getLogger()
     handlers, level, factory = root.handlers[:], root.level, logging.getLogRecordFactory()
+    quiet = {name: logging.getLogger(name).level for name in ("httpx", "httpcore")}
     yield root
     for handler in root.handlers[:]:
         root.removeHandler(handler)
@@ -43,6 +60,8 @@ def bare_root() -> Iterator[logging.Logger]:
         root.addHandler(handler)
     root.setLevel(level)
     logging.setLogRecordFactory(factory)
+    for name, was in quiet.items():
+        logging.getLogger(name).setLevel(was)
 
 
 def _strip(root: logging.Logger) -> None:
@@ -74,43 +93,103 @@ def _look_up_with_every_provider() -> None:
     tvdb.search_shows(hint="Harbour Lights")
 
 
-def _log_a_failed_lookup() -> None:
-    """A Provider failure whose cause quotes the request's URL, logged with its traceback."""
-    url = f"https://api.themoviedb.org/3/search/tv?query=x&api_key={_TMDB_KEY}"
+def _refused_lookup() -> None:
+    """A request the transport refuses, with the key in its query, as a Provider sends it."""
 
     def refuse(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError(f"cannot reach {request.url}", request=request)
+        raise httpx.ConnectError("cannot reach the host", request=request)
 
+    with pytest.raises(ProviderError):
+        _http(refuse).get("https://api.themoviedb.org/3/search/tv", params={"api_key": _TMDB_KEY})
+
+
+class _Changing:
+    """A lazy log argument that gives harmless text first and a key the next time."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def __str__(self) -> str:
+        self.calls += 1
+        return "nothing secret" if self.calls == 1 else f"the key {_TMDB_KEY}"
+
+
+def _quote_every_secret() -> None:
+    """Log each key and token without a field name, as an error message might quote it."""
+    log = logging.getLogger("a.library")
+    log.warning("keys: %s %s %s", _TMDB_KEY, _OMDB_KEY, _TVDB_KEY)
+    log.warning("token: %s", _TVDB_TOKEN)
+    log.warning("lazy: %s", _Changing())
+    log.warning("%d is not a number", _TMDB_KEY)  # cannot be formatted
     try:
-        _http(refuse).get(url)
+        try:
+            raise OSError(f"cannot reach https://example.invalid/?k={_OMDB_KEY}")
+        except OSError as cause:
+            raise ProviderError(f"lookup failed for {_TVDB_KEY}") from cause
     except ProviderError:
-        logging.getLogger("termrenamer.test").exception("Lookup failed for %s", url)
+        log.exception("Lookup failed")
+
+
+def _with_text_preformatted(secret: str) -> Callable[..., logging.LogRecord]:
+    """A record factory, as another library might install, that fills in the traceback and
+    the stack itself with ``secret`` in them."""
+    current = logging.getLogRecordFactory()
+
+    def factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
+        record = current(*args, **kwargs)
+        record.exc_text = f"Traceback: {secret}"
+        record.stack_info = f"Stack: {secret}"
+        return record
+
+    return factory
 
 
 def _assert_no_secret(text: str) -> None:
-    for secret in (*_SECRETS, f"pin={_TVDB_PIN}", f'"pin": "{_TVDB_PIN}"'):
+    for secret in _SECRETS:
         assert secret not in text
 
 
 @pytest.mark.parametrize("level", [logging.DEBUG, logging.INFO])
-def test_the_console_shows_each_request_with_no_key_or_token(
+def test_no_record_quotes_a_key_the_pin_the_token_or_the_login_body(
     bare_root: logging.Logger, level: int
 ) -> None:
     _strip(bare_root)
-    stream = io.StringIO()
-    setup_logging(level=level, stream=stream)
+    setup_logging(level=level, stream=io.StringIO())
+    raw = _Raw()
+    bare_root.addHandler(raw)
 
     _look_up_with_every_provider()
-    _log_a_failed_lookup()
+    _refused_lookup()
+
+    text = "\n".join(raw.lines)
+    assert "termrenamer.util.http: HTTP GET https://api.themoviedb.org/3/search/tv 200" in text
+    assert "HTTP GET https://www.omdbapi.com 200" in text
+    assert "HTTP POST https://api4.thetvdb.com/v4/login 200" in text
+    _assert_no_secret(text)
+    assert _TVDB_PIN not in text and '"pin"' not in text and "apikey" not in text
+
+
+def test_the_console_masks_each_key_and_token_whatever_quotes_it(
+    bare_root: logging.Logger,
+) -> None:
+    _strip(bare_root)
+    stream = io.StringIO()
+    setup_logging(level=logging.DEBUG, stream=stream)
+
+    _look_up_with_every_provider()
+    _quote_every_secret()
+    logging.setLogRecordFactory(_with_text_preformatted(_TMDB_KEY))
+    logging.getLogger("a.library").warning("preformatted")
 
     text = stream.getvalue()
-    assert "HTTP Request: GET https://api.themoviedb.org/3/search/tv?query=Harbour" in text
-    assert "HTTP Request: POST https://api4.thetvdb.com/v4/login" in text
-    assert "Traceback" in text and "cannot reach" in text
+    assert "keys: *** *** ***" in text and "token: ***" in text
+    assert "a log line could not be written" in text
+    assert "Traceback" in text and "lookup failed for ***" in text
+    assert "Traceback: ***" in text and "Stack: ***" in text
     _assert_no_secret(text)
 
 
-async def test_the_logs_view_shows_each_request_with_no_key_or_token(
+async def test_the_logs_view_masks_each_key_and_token_whatever_quotes_it(
     bare_root: logging.Logger,
 ) -> None:
     _strip(bare_root)
@@ -118,27 +197,12 @@ async def test_the_logs_view_shows_each_request_with_no_key_or_token(
     app = make_app()
     async with app.run_test(size=SIZE):
         _look_up_with_every_provider()
-        _log_a_failed_lookup()
+        _refused_lookup()
+        _quote_every_secret()
         text = "\n".join(line for _, line in app.log_book.lines_after(0))
 
-    assert "HTTP Request: GET https://www.omdbapi.com?apikey=***&s=Harbour" in text
-    assert "Traceback" in text and "cannot reach" in text
+    assert "HTTP GET https://www.omdbapi.com 200" in text
+    assert "keys: *** *** ***" in text and "token: ***" in text
+    assert "Traceback" in text and "lookup failed for ***" in text
     _assert_no_secret(text)
-
-
-def test_a_login_body_or_a_bearer_header_quoted_by_a_library_is_masked(
-    bare_root: logging.Logger,
-) -> None:
-    _strip(bare_root)
-    stream = io.StringIO()
-    setup_logging(level=logging.DEBUG, stream=stream)
-    library = logging.getLogger("a.library")
-
-    library.debug("body: %s", '{"apikey": "another-made-up-key", "pin": "9876"}')
-    library.debug("headers: %s", {"Authorization": "Bearer another.made-up.token"})
-
-    text = stream.getvalue()
-    assert '"apikey": "***"' in text and '"pin": "***"' in text
-    assert "'Bearer ***'" in text
-    for secret in ("another-made-up-key", "9876", "another.made-up.token"):
-        assert secret not in text
+    assert "HTTP Request:" not in text
