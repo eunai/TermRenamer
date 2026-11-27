@@ -240,11 +240,31 @@ class Straggler:
     (a folder an entry of the Plan moves into), at the path the Plan fixed for it.
 
     ``source`` is the child as found when the Plan was built; its parent is the source
-    folder. ``destination`` is its path in the target folder.
+    folder. ``destination`` is its path in the target folder. ``is_folder`` says whether
+    it was a folder then (a symbolic link counts as a file): Apply skips it when it is
+    of the other kind at Apply.
     """
 
     source: Path
     destination: Path
+    is_folder: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class LinkedFolder:
+    """A folder on the way to a new name that was a link or a junction when a Plan first
+    went through it: the link's own device, inode and modification time, its target
+    text, and the path of the folder it led to then. Apply goes through it only while
+    all five are the same: a link made again is told apart by its modification time,
+    even where it gets the inode number of the link removed, unless it is made within
+    the same step of the disk's clock."""
+
+    path: Path
+    device: int
+    inode: int
+    modified_ns: int
+    target: str
+    leads_to: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,6 +274,11 @@ class Plan:
     Entries and Stragglers are in source-path order; Titles are in name order.
     ``source_folders`` holds the children of each source folder that Stragglers are
     listed from; a Plan built with Folder rename off lists no Stragglers.
+    ``folders_looked_at`` holds each folder on the way to a new name, read once, when
+    a Plan first went through it under any letter case, and ``linked_folders`` those
+    of them that were a link or a junction then: Apply goes through such a link, by
+    its exact path, only while it is the same link leading to the same folder, and
+    through no other link. A derived Plan keeps both and reads only folders new to it.
     """
 
     options: PlanOptions
@@ -261,6 +286,8 @@ class Plan:
     entries: tuple[PlanEntry, ...]
     stragglers: tuple[Straggler, ...] = ()
     source_folders: tuple[SourceFolder, ...] = ()
+    folders_looked_at: tuple[Path, ...] = ()
+    linked_folders: tuple[LinkedFolder, ...] = ()
 
     @property
     def mode(self) -> ScanMode:
@@ -351,8 +378,10 @@ class UndoOutcome:
 
     ``results`` holds one result per move of the Apply, last move first: ``source`` is
     the file's new place and ``destination`` its old place. ``RENAMED`` means it went
-    back; ``SKIP`` that a check left it (it changed, or its old place is taken);
-    ``FAIL`` that an error left it. ``moves`` lists every move Undo made.
+    back; ``UNCHANGED`` that it was found at its old place already (a case-only rename
+    the disk may never have made), which counts neither as put back nor as left;
+    ``SKIP`` that a check left it (it changed, or its old place is taken); ``FAIL`` that
+    an error left it. ``moves`` lists every move Undo made.
     ``folders_made_again`` lists each folder Apply removed that Undo made again, each
     before the folders inside it; ``emptied_folders_removed`` each folder Apply made that
     Undo left empty and removed. ``files_left_behind`` lists each file Undo made at an old
@@ -374,4 +403,4 @@ class UndoOutcome:
     @property
     def not_put_back(self) -> int:
         """How many files Undo left at their new places."""
-        return len(self.results) - self.put_back
+        return sum(1 for r in self.results if r.status in (ApplyStatus.SKIP, ApplyStatus.FAIL))

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from termrenamer.core.models import (
@@ -11,32 +13,109 @@ from termrenamer.core.models import (
     ApplyResult,
     ApplyStatus,
     EntryStatus,
+    LinkedFolder,
     Plan,
     PlanEntry,
+    PlanFingerprint,
     Straggler,
 )
-from termrenamer.core.moving import Changes, is_folder, leave_folder, move_no_replace
-from termrenamer.core.paths import claim_key, path_key
-from termrenamer.core.planning import fingerprint
+from termrenamer.core.moving import (
+    Changes,
+    NotAsRecorded,
+    NowALink,
+    folders_between,
+    is_folder,
+    is_link,
+    leave_folder,
+    move_no_replace,
+)
+from termrenamer.core.paths import claim_key, source_order
+from termrenamer.core.planning import fingerprint, folders_on_the_way, source_roots
 from termrenamer.util.errors import ValidationError
 
 _LOG = logging.getLogger(__name__)
 
 _TAKEN = "destination exists at apply time"
+_STALE = "stale: source changed since plan"
 _STOPPED = "not applied: Apply stopped after an unexpected error"
 
 
-def _move(source: Path, dest: Path, changes: Changes) -> tuple[ApplyStatus, str]:
-    """Make ``dest``'s folder and move ``source`` there without replacing anything:
-    Apply's one move, for entries and Stragglers alike."""
+def _stale(exc: NotAsRecorded) -> str:
+    """The reason for a source that is not as the Plan recorded it."""
+    if exc.errno == errno.EISDIR:
+        return "stale: the Plan listed a file and a folder is there now"
+    if exc.errno == errno.ENOTDIR:
+        return "stale: the Plan listed a folder and a file is there now"
+    return _STALE
+
+
+@dataclass(frozen=True, slots=True)
+class _Way:
+    """The folders one move goes through, checked at the last look before it:
+    ``new_side`` each folder on the way to the new name
+    (:func:`~termrenamer.core.planning.folders_on_the_way`), ``real_folders`` those and
+    each folder from the owning Source's folder to the source's folder, and ``links``
+    the folders among them that the Plan found to be links. Each of ``real_folders``
+    must be a real folder, and each of ``links`` the very link the Plan found; the
+    Destination root itself may be a link."""
+
+    new_side: tuple[Path, ...]
+    real_folders: tuple[Path, ...]
+    links: tuple[LinkedFolder, ...]
+
+
+def _way(plan: Plan, root: Path, source: Path, dest: Path) -> _Way:
+    # A recorded link is found under any letter case, as the Plan looked at each folder
+    # once under any; it is then checked as the path this move goes through, which on a
+    # disk that tells letter case apart is another entry, and so refused.
+    linked = {claim_key(lf.path): lf for lf in plan.linked_folders}
+    new_side = folders_on_the_way(plan.options, root, dest)
+    on_the_way = [*new_side, root, *folders_between(root, source.parent)]
+    links = {
+        str(f): replace(linked[claim_key(f)], path=f) for f in on_the_way if claim_key(f) in linked
+    }
+    return _Way(
+        new_side=tuple(f for f in new_side if str(f) not in links),
+        real_folders=tuple(f for f in on_the_way if str(f) not in links),
+        links=tuple(links.values()),
+    )
+
+
+def _move(
+    source: Path,
+    dest: Path,
+    changes: Changes,
+    way: _Way,
+    *,
+    expected: PlanFingerprint | None = None,
+    folder: bool | None = None,
+) -> tuple[ApplyStatus, str]:
+    """Make ``dest``'s folder and move ``source`` there without replacing anything or
+    going through a link on ``way``: Apply's one move, for entries and Stragglers alike.
+    With ``expected``, the source must still have the size and modification time the
+    Plan recorded; with ``folder``, it must still be of the kind the Plan listed."""
     try:
-        changes.make_folders(dest.parent)
+        changes.make_folders(dest.parent, real_folders=way.new_side, links=way.links)
+    except NowALink as exc:
+        return ApplyStatus.SKIP, exc.reason
     except OSError as exc:
         return ApplyStatus.FAIL, f"mkdir failed: {exc}"
     try:
-        move_no_replace(source, dest, changes)
+        move_no_replace(
+            source,
+            dest,
+            changes,
+            expected=expected,
+            folder=folder,
+            real_folders=way.real_folders,
+            links=way.links,
+        )
     except FileExistsError:
         return ApplyStatus.SKIP, _TAKEN
+    except NowALink as exc:
+        return ApplyStatus.SKIP, exc.reason
+    except NotAsRecorded as exc:
+        return ApplyStatus.SKIP, _stale(exc)
     except OSError as exc:
         return ApplyStatus.FAIL, f"rename/move failed: {exc}"
     return ApplyStatus.RENAMED, "ok"
@@ -50,7 +129,7 @@ def _remove_empty_source_dirs(applied_source_parents: set[Path], changes: Change
     parent first (same idea as anipyrenamer). Each folder removed is recorded in
     ``changes``.
     """
-    for dir_path in sorted(applied_source_parents, key=lambda p: (-len(p.parts), path_key(p))):
+    for dir_path in sorted(applied_source_parents, key=lambda p: (-len(p.parts), source_order(p))):
         try:
             if not is_folder(dir_path, os.lstat(dir_path)) or any(dir_path.iterdir()):
                 continue
@@ -69,7 +148,7 @@ def _unreadable(exc: OSError) -> tuple[ApplyStatus, str]:
     return ApplyStatus.FAIL, f"cannot read the source: {exc}"
 
 
-def _apply_entry(entry: PlanEntry, changes: Changes) -> ApplyResult:
+def _apply_entry(entry: PlanEntry, plan: Plan, changes: Changes) -> ApplyResult:
     """Rename one entry after the checks; touch nothing when a check fails."""
     source = entry.source
     dest = entry.destination
@@ -87,14 +166,22 @@ def _apply_entry(entry: PlanEntry, changes: Changes) -> ApplyResult:
         current_fp.size != entry.fingerprint.size
         or current_fp.mtime_ns != entry.fingerprint.mtime_ns
     ):
-        return result(ApplyStatus.SKIP, "stale: source changed since plan")
+        return result(ApplyStatus.SKIP, _STALE)
     if entry.has_its_name:
         return result(ApplyStatus.UNCHANGED, "already has its name")
-    return result(*_move(source, dest, changes))
+    way = _way(plan, entry.root, source, dest)
+    return result(*_move(source, dest, changes, way, expected=entry.fingerprint))
 
 
-def _apply_straggler(straggler: Straggler, moved_out: set[str], changes: Changes) -> ApplyResult:
-    """Move one Straggler to the path the Plan fixed, when an entry left its folder."""
+def _apply_straggler(
+    straggler: Straggler,
+    plan: Plan,
+    root_of: dict[str, Path],
+    moved_out: set[str],
+    changes: Changes,
+) -> ApplyResult:
+    """Move one Straggler to the path the Plan fixed, when an entry left its folder and it
+    is still of the kind the Plan listed."""
     source, dest = straggler.source, straggler.destination
 
     def result(status: ApplyStatus, reason: str) -> ApplyResult:
@@ -103,10 +190,17 @@ def _apply_straggler(straggler: Straggler, moved_out: set[str], changes: Changes
     if str(source.parent) not in moved_out:
         return result(ApplyStatus.SKIP, "nothing moved out of its folder")
     try:
-        os.lstat(source)
+        st = os.lstat(source)
     except OSError as exc:
         return result(*_unreadable(exc))
-    return result(*_move(source, dest, changes))
+    if straggler.is_folder and is_link(source, st):
+        return result(ApplyStatus.SKIP, NowALink(source).reason)
+    if is_folder(source, st) != straggler.is_folder:
+        kind = errno.ENOTDIR if straggler.is_folder else errno.EISDIR
+        return result(ApplyStatus.SKIP, _stale(NotAsRecorded(kind, "", str(source))))
+    root = root_of.get(str(source.parent), source.parent)
+    way = _way(plan, root, source, dest)
+    return result(*_move(source, dest, changes, way, folder=straggler.is_folder))
 
 
 def _stopped_by(source: Path, dest: Path | None, exc: Exception) -> ApplyResult:
@@ -121,6 +215,15 @@ def _stopped_by(source: Path, dest: Path | None, exc: Exception) -> ApplyResult:
     )
 
 
+def _left_out(entry: PlanEntry) -> ApplyResult:
+    return ApplyResult(
+        source=entry.source,
+        destination=None,
+        status=ApplyStatus.LEFT_OUT,
+        reason=EntryStatus.LEFT_OUT.value,
+    )
+
+
 def apply_plan(plan: Plan, *, confirmed: bool) -> ApplyOutcome:
     """Execute a Plan exactly as previewed; no file or folder of a source folder that it
     does not list is moved (a folder Straggler moves with what it holds at Apply).
@@ -129,12 +232,15 @@ def apply_plan(plan: Plan, *, confirmed: bool) -> ApplyOutcome:
     name (Name taken set to ``suffix``). Reports every other entry (no match, not
     recognised, name taken under ``skip``) as skipped with its status as the reason,
     and each left out entry as left out; neither is touched.
-    Each video is handled before the Sidecars, and a Sidecar is applied only when its
-    video was renamed or unchanged in this Apply. Then each Straggler the Plan lists is
-    moved to the path the Plan fixed, when at least one entry from its folder moved to
-    another folder in this Apply and the Straggler still exists. Last, the source folders
-    those moves emptied are removed. No move replaces anything (see
-    :func:`~termrenamer.core.moving.move_no_replace`).
+    Each video is handled before the Sidecars, each in the Plan's order, and a Sidecar
+    is applied only when its video was renamed or unchanged in this Apply. Then each
+    Straggler the Plan lists is moved to the path the Plan fixed, when at least one
+    entry from its folder moved to another folder in this Apply and the Straggler still
+    exists and is of the kind the Plan listed. Last, the source folders those moves
+    emptied are removed. No move replaces anything, and none goes through a folder on
+    its way that is now a link (see :func:`~termrenamer.core.moving.move_no_replace`):
+    a source that changed since planning, or a folder on its way that is now a link,
+    is skipped with the reason.
 
     An error reading or moving a file becomes that item's result. Any other error is
     logged with its traceback and fails its item, and Apply stops: every item after it
@@ -152,28 +258,56 @@ def apply_plan(plan: Plan, *, confirmed: bool) -> ApplyOutcome:
         msg = "Apply refused: user confirmation is required before filesystem changes"
         raise ValidationError(msg)
 
-    ordered = sorted(plan.entries, key=lambda e: (e.is_sidecar, path_key(e.source)))
+    # The Plan's own order, read from no disk: videos first, then the Sidecars.
+    ordered = [e for e in plan.entries if not e.is_sidecar] + [
+        e for e in plan.entries if e.is_sidecar
+    ]
     changes = Changes()
     results: list[ApplyResult] = []
+    stragglers: list[ApplyResult] = []
+    try:
+        stopped = _apply_all(plan, ordered, changes, results, stragglers)
+    except Exception as exc:
+        # Outside any one item; whatever moved is in ``changes``.
+        _LOG.error("Apply stopped by an unexpected error", exc_info=exc)
+        stopped = True
+    if stopped:
+        for entry in ordered[len(results) :]:
+            if entry.status is EntryStatus.LEFT_OUT:
+                results.append(_left_out(entry))
+            else:
+                results.append(_skipped(entry.source, entry.destination, _STOPPED))
+        for straggler in plan.stragglers[len(stragglers) :]:
+            stragglers.append(_skipped(straggler.source, straggler.destination, _STOPPED))
+    return ApplyOutcome(
+        results=tuple(results),
+        stragglers=tuple(stragglers),
+        moves=tuple(changes.moves),
+        folders_created=tuple(changes.folders_created),
+        folders_removed=tuple(changes.folders_removed),
+        files_left_behind=tuple(changes.files_left_behind),
+    )
+
+
+def _apply_all(
+    plan: Plan,
+    ordered: list[PlanEntry],
+    changes: Changes,
+    results: list[ApplyResult],
+    stragglers: list[ApplyResult],
+) -> bool:
+    """Apply the entries in ``ordered``, then the Stragglers, then remove the emptied
+    folders, appending one result per item; return whether an unexpected error stopped
+    Apply, which leaves the items after it without a result."""
     emptied: set[Path] = set()
     moved_out: set[str] = set()
     applied_sources: set[Path] = set()
-    stopped = False
+    root_of = source_roots(plan.entries)
 
     for entry in ordered:
         if entry.status is EntryStatus.LEFT_OUT:
             # Before every check: a left out file is reported as left out, not skipped.
-            results.append(
-                ApplyResult(
-                    source=entry.source,
-                    destination=None,
-                    status=ApplyStatus.LEFT_OUT,
-                    reason=EntryStatus.LEFT_OUT.value,
-                ),
-            )
-            continue
-        if stopped:
-            results.append(_skipped(entry.source, entry.destination, _STOPPED))
+            results.append(_left_out(entry))
             continue
         if entry.video is not None and entry.video not in applied_sources:
             # The Plan left it without a name (its video's status), or its video was
@@ -183,48 +317,38 @@ def apply_plan(plan: Plan, *, confirmed: bool) -> ApplyOutcome:
             results.append(_skipped(entry.source, entry.destination, reason))
             continue
         try:
-            outcome = _apply_entry(entry, changes)
+            outcome = _apply_entry(entry, plan, changes)
         except Exception as exc:
-            outcome, stopped = _stopped_by(entry.source, entry.destination, exc), True
+            results.append(_stopped_by(entry.source, entry.destination, exc))
+            return True
         results.append(outcome)
         if outcome.status in (ApplyStatus.RENAMED, ApplyStatus.UNCHANGED):
             applied_sources.add(entry.source)
         if outcome.status is not ApplyStatus.RENAMED or entry.destination is None:
             continue
-        # As the Plan judged it: a source folder by its recorded path, "another folder"
-        # by the claim key.
-        if claim_key(entry.source.parent) != claim_key(entry.destination.parent):
+        # A source folder is told apart by its recorded path as text. A move into the
+        # same folder under another spelling leaves the file in it, and the Plan lists
+        # no Straggler from it, so marking that folder moves and removes nothing.
+        if str(entry.source.parent) != str(entry.destination.parent):
             emptied.add(entry.source.parent)
             moved_out.add(str(entry.source.parent))
 
-    stragglers = []
     for straggler in plan.stragglers:
-        if stopped:
-            stragglers.append(_skipped(straggler.source, straggler.destination, _STOPPED))
-            continue
         try:
-            result = _apply_straggler(straggler, moved_out, changes)
+            result = _apply_straggler(straggler, plan, root_of, moved_out, changes)
         except Exception as exc:
-            result, stopped = _stopped_by(straggler.source, straggler.destination, exc), True
+            stragglers.append(_stopped_by(straggler.source, straggler.destination, exc))
+            return True
         stragglers.append(result)
         if result.status is ApplyStatus.RENAMED:
             emptied.add(straggler.source.parent)
 
-    if not stopped:
-        try:
-            _remove_empty_source_dirs(emptied, changes)
-        except Exception:
-            # The outcome is returned whatever the clean-up does.
-            _LOG.exception("Removing the emptied source folders stopped")
-
-    return ApplyOutcome(
-        results=tuple(results),
-        stragglers=tuple(stragglers),
-        moves=tuple(changes.moves),
-        folders_created=tuple(changes.folders_created),
-        folders_removed=tuple(changes.folders_removed),
-        files_left_behind=tuple(changes.files_left_behind),
-    )
+    try:
+        _remove_empty_source_dirs(emptied, changes)
+    except Exception:
+        # The outcome is returned whatever the clean-up does.
+        _LOG.exception("Removing the emptied source folders stopped")
+    return False
 
 
 def _skipped(source: Path, dest: Path | None, reason: str) -> ApplyResult:

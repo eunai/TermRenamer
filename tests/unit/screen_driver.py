@@ -11,7 +11,7 @@ from __future__ import annotations
 import io
 import re
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -197,6 +197,8 @@ class ImageHost:
     threads: list[threading.Thread] = field(default_factory=list)
     gate: threading.Event | None = None
     """When set, each answer waits until the gate opens."""
+    attempts: int = 1
+    """How many times the store's HTTP client tries a download that gets 429 or 503."""
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
@@ -213,7 +215,7 @@ class ImageHost:
 
     def store(self, folder: Path) -> PosterStore:
         raw = httpx.Client(transport=httpx.MockTransport(self.handle))
-        config = HttpClientConfig(max_attempts=1, backoff_base_seconds=0)
+        config = HttpClientConfig(max_attempts=self.attempts, backoff_base_seconds=0, jitter=False)
         return PosterStore(folder, HttpClient(config=config, client=raw))
 
 
@@ -281,6 +283,15 @@ async def press(pilot: Pilot[None], *keys: str) -> None:
     await pilot.pause()
 
 
+async def until(pilot: Pilot[None], done: Callable[[], bool]) -> None:
+    """Let the app run until ``done()`` is true; fail after about five seconds."""
+    for _ in range(100):
+        if done():
+            return
+        await pilot.pause(0.05)
+    raise AssertionError("waited too long")
+
+
 async def pick_in_dialog(pilot: Pilot[None], key: str, path: Path | None) -> None:
     """Press ``a`` or ``f``, check the dialog it opens, and choose ``path`` there
     (``None`` presses Escape)."""
@@ -308,14 +319,56 @@ def long_season(parent: Path, videos: int) -> tuple[Path, TvStandIn]:
     return folder, tv
 
 
+CELL = "██"
+MARK = "▔▔"
+
+
+def marked_cell(app: TermRenamerApp) -> int | None:
+    """Which cell, counted from 1, the selected file's mark is under on screen.
+
+    The count is read from the Title's cells as drawn, the rows scrolled out of view
+    included. ``None`` when the mark is not on screen, is under no cell, or the screen
+    does not show the row of cells it is under."""
+    rows = text_of(app, "#details-cells").splitlines()
+    marked = [n for n, row in enumerate(rows) if MARK in row]
+    if len(marked) != 1 or marked[0] == 0:
+        return None
+    column = rows[marked[0]].index(MARK)
+    above = rows[marked[0] - 1]
+    if above[column : column + len(CELL)] != CELL:
+        return None
+    # The cells before the mark's row: each line of cells counted on its lowest row,
+    # the one with no cell in the row under it.
+    before = rows[: marked[0] - 1]
+    lowest = [row for n, row in enumerate(before) if CELL in row and CELL not in rows[n + 1]]
+    cell = sum(row.count(CELL) for row in lowest) + above[:column].count(CELL) + 1
+    lines = screen_lines(app)
+    shown = [n for n, line in enumerate(lines) if MARK in line]
+    if len(shown) != 1 or shown[0] == 0:
+        return None
+    left = lines[shown[0]].index(MARK) - column
+    if lines[shown[0] - 1][left : left + len(above)] != above:
+        return None
+    return cell
+
+
 async def mark_seen_walking(pilot: Pilot[None], videos: int) -> str:
-    """Press right to the last file and back to the first; after each key, ``y`` when
-    the selected file's mark is on screen, else ``n``."""
+    """Press right to the last file and back to the first, in a Title whose files are
+    ``Harbour Lights S01E01.mkv`` on (see :func:`long_season`). After each key, ``y``
+    when the footer's ``from`` line names the file now selected and the mark is on
+    screen under that file's cell (:func:`marked_cell`); else ``n``."""
+    app = pilot.app
+    assert isinstance(app, TermRenamerApp)
     seen = []
-    for key in ["right"] * (videos - 1) + ["left"] * (videos - 1):
+    walk = list(range(2, videos + 1)) + list(range(videos - 1, 0, -1))
+    for episode, key in zip(walk, ["right"] * (videos - 1) + ["left"] * (videos - 1), strict=True):
         await press(pilot, key)
         await pilot.pause()
-        seen.append("y" if any("▔▔" in line for line in screen_lines(pilot.app)) else "n")
+        source = text_of(app, "#stage-lines").splitlines()[0]
+        named = source.startswith("from ") and source.endswith(
+            f"Harbour Lights S01E{episode:02d}.mkv"
+        )
+        seen.append("y" if named and marked_cell(app) == episode else "n")
     return "".join(seen)
 
 

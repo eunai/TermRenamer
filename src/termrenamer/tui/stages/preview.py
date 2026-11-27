@@ -150,6 +150,9 @@ class PreviewStage(TitleListStage):
         self._plan: Plan | None = None
         self._rows: tuple[TitleRow, ...] = ()
         self._file = 0
+        self._shown_row: int | None = None
+        """The row the details, the footer and the Poster show; a click that highlights
+        another row selects that row's first file."""
         self._looking_up = False
 
     def compose(self) -> ComposeResult:
@@ -271,7 +274,13 @@ class PreviewStage(TitleListStage):
         super().redraw()
         self._show_details()
 
+    def row_highlighted(self) -> None:
+        if self.title_list.highlighted != self._shown_row:
+            self._file = 0
+            self._show_details()
+
     def _show_details(self) -> None:
+        self._shown_row = self.title_list.highlighted
         if self._plan is not None:
             self.query_one(TitleDetails).show(
                 self.selected_row, self._plan.mode, self._file, compact=self.posters_shown
@@ -356,7 +365,7 @@ class PreviewStage(TitleListStage):
         row, video = self.selected_row, self.selected_file
         if row is None or video is None:
             return ()
-        width = max(20, self.app.size.width - 4 - _LABEL_WIDTH)
+        width = footer_path_width(self.app.size.width)
         why = why_not_renamed(video)
         notes = [why] if why is not None else []
         if why is None and video.status is EntryStatus.NAME_TAKEN:
@@ -403,6 +412,11 @@ def _entry_of(plan: Plan, entry: PlanEntry) -> PlanEntry | None:
     """The entry of ``plan`` (derived from the Plan ``entry`` came from) that records the
     same source: the Plan's own record, compared without reading the disk."""
     return next((e for e in plan.entries if e.source == entry.source), None)
+
+
+def footer_path_width(screen_width: int) -> int:
+    """The cells the footer gives a path on a screen ``screen_width`` cells wide."""
+    return max(20, screen_width - 4 - _LABEL_WIDTH)
 
 
 def fit_path(text: str, width: int) -> str:

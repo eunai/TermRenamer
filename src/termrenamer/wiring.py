@@ -21,7 +21,7 @@ from termrenamer.app_bootstrap import (
 )
 from termrenamer.core.models import PROVIDER_IDS, ScanMode
 from termrenamer.persistence.cache import SqliteMetadataCache
-from termrenamer.persistence.posters import PosterStore, poster_folder
+from termrenamer.persistence.posters import PosterStore, cache_folder, poster_folder
 from termrenamer.util.errors import ValidationError
 from termrenamer.util.http import HttpClient
 
@@ -124,7 +124,7 @@ def build_planning_wiring(settings: Settings, http: HttpClient) -> PlanningWirin
         film=film,
         film_omdb=film_omdb,
         cache=create_metadata_cache(settings),
-        posters=PosterStore(poster_folder(), http),
+        posters=PosterStore(poster_folder(), http, inside=cache_folder()),
     )
 
 

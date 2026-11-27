@@ -290,8 +290,8 @@ Apply and Undo confirms, the Match picker, the file and folder dialogs).
   with it hidden. The panel needs a screen of at least 100 columns by 35 rows;
   on a smaller one it is hidden. A Title with no Poster shows its name and
   "no poster". Posters are downloaded from TMDB's or TheTVDB's image host when
-  a Title is selected at the Preview, the first one as the Preview opens, never
-  while the Plan is built, and kept for 30 days in a `termrenamer/posters`
+  a Title is selected at the Preview, the first one as the Preview opens, and when
+  the Match picker shows a Candidate, never while the Plan is built, and kept for 30 days in a `termrenamer/posters`
   folder in your per-user cache folder (`%LOCALAPPDATA%` on Windows, `~/.cache`
   or `XDG_CACHE_HOME` elsewhere). OMDb gives no Posters.
 - **Logs.** `l` opens the last 5000 log lines of the session, which include the

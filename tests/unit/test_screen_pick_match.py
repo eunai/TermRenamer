@@ -345,6 +345,32 @@ async def test_a_not_recognised_film_is_matched_by_a_typed_title_and_forms_a_tit
     assert heading[0] == "Heat Wave (1990)"
 
 
+async def test_a_file_left_out_while_it_had_no_match_stays_left_out_once_matched(
+    tmp_path: Path,
+) -> None:
+    """Left out before its Match is picked, the film is named by the pick but Apply
+    still leaves it where it is."""
+    app = make_app(wiring(film=films()))
+    async with app.run_test(size=SIZE) as pilot:
+        await film_preview(pilot, tmp_path)
+        rows = [row.name for row in app.query_one("#preview-titles").rows]  # type: ignore[attr-defined]
+        await press(pilot, *["down"] * rows.index("Quiet Harbour (2003)"), "x", "t")
+        typed = app.screen.query_one("#picker-typed")
+        typed.value = "Heat Wave (1990)"  # type: ignore[attr-defined]
+        await press(pilot, "enter")
+        await settle(pilot)
+        await press(pilot, "1")
+        await settle(pilot)
+        heading = text_of(app, "#details-heading").splitlines()
+        await press(pilot, "enter", "y")
+        await settle(pilot)
+
+    folder = tmp_path / "Films"
+    assert heading == ["Heat Wave (1990)", "left out · 1990 · 1 video"]
+    assert (folder / "Quiet.Harbour.2003.mkv").exists()
+    assert not (folder / "Heat Wave (1990).mkv").exists()
+
+
 async def test_two_titles_that_now_share_a_match_are_one_and_stay_selected(
     tmp_path: Path,
 ) -> None:

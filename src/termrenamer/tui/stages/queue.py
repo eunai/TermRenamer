@@ -17,14 +17,21 @@ from termrenamer.tui.words import folder_text, plural
 
 _NEEDS_SOURCES = frozenset({"build_plan", "clear_queue", "select_previous", "select_next"})
 
+_ROWS_BESIDE_TREE = 10
+"""The queue list's rows besides the tree: the gap above it, the rule under it, the
+two rows of buttons with the gap above each, and the note with the gap above it."""
+
 
 class QueueTree(Tree[Path], can_focus=False):
-    """The queue as the app has always drawn it: "Queue", then one leaf per Source."""
+    """The queue as the app has always drawn it: "Queue", then one leaf per Source.
+
+    A click selects the Source on its line. "Queue" is no Source: a click on it keeps
+    the Source selected before, and the tree never folds.
+    """
 
     DEFAULT_CSS = """
     QueueTree {
         height: auto;
-        max-height: 1fr;
         background: $background;
         padding: 0;
         overflow-x: hidden;
@@ -74,7 +81,6 @@ class QueueStage(StageView):
         width: 72;
         max-width: 100%;
         height: auto;
-        max-height: 1fr;
         border-bottom: solid $tr-line;
     }
     QueueStage #queue-note {
@@ -88,6 +94,8 @@ class QueueStage(StageView):
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._sources: tuple[Path, ...] = ()
+        self._source_line = 1
+        """The tree line of the Source last selected (line 0 is "Queue")."""
 
     def compose(self) -> ComposeResult:
         with Vertical(id="queue-empty"), Vertical(id="queue-prompt"):
@@ -100,15 +108,26 @@ class QueueStage(StageView):
             with Center(), Vertical(id="queue-tree-box"):
                 yield QueueTree("Queue", id="source-tree")
             with Center(), Horizontal(classes="buttons"):
-                yield ActionButton("b", "Build the Plan", press_key="b", classes="-strong")
-                yield ActionButton("c", "Clear the queue", press_key="c", classes="-plain")
+                yield ActionButton(
+                    "b", "Build the Plan", press_key="b", id="queue-build", classes="-strong"
+                )
+                yield ActionButton(
+                    "c", "Clear the queue", press_key="c", id="queue-clear", classes="-plain"
+                )
             with Center(), Horizontal(classes="buttons"):
-                yield ActionButton("a", "Add file", press_key="a")
-                yield ActionButton("f", "Add folder", press_key="f")
+                yield ActionButton("a", "Add file", press_key="a", id="queue-add-file")
+                yield ActionButton("f", "Add folder", press_key="f", id="queue-add-folder")
             yield Static("Nothing is looked up until you build the Plan.", id="queue-note")
 
     def on_mount(self) -> None:
+        self.query_one(QueueTree).auto_expand = False
         self.show_queue(())
+
+    def on_resize(self) -> None:
+        """A long queue scrolls in the rows the buttons and the note leave it."""
+        rows = max(2, self.size.height - _ROWS_BESIDE_TREE)
+        self.query_one(QueueTree).styles.max_height = rows
+        self.call_after_refresh(self._keep_selection_in_view)
 
     @property
     def selected_source(self) -> Path | None:
@@ -144,7 +163,13 @@ class QueueStage(StageView):
             target = next((n for n in nodes if n.data == previous), nodes[-1])
             # Line 0 is "Queue"; the Sources follow it, one line each.
             tree.cursor_line = nodes.index(target) + 1
+            # Once the tree is laid out, the selected Source is scrolled to.
+            self.call_after_refresh(self._keep_selection_in_view)
         self.changed()
+
+    def _keep_selection_in_view(self) -> None:
+        tree = self.query_one(QueueTree)
+        tree.scroll_to_line(tree.cursor_line, animate=False)
 
     def redraw(self) -> None:
         self.show_queue(self._sources)
@@ -178,5 +203,19 @@ class QueueStage(StageView):
         self.query_one(QueueTree).action_cursor_down()
         self.changed()
 
-    def on_tree_node_highlighted(self) -> None:
+    def on_tree_node_highlighted(self, event: Tree.NodeHighlighted[Path]) -> None:
+        """A Source was highlighted, by a key or by a click. "Queue" (line 0) is no
+        Source: the selection goes back to the Source selected before."""
+        event.stop()
+        tree = self.query_one(QueueTree)
+        if tree.cursor_line == 0 and tree.root.children:
+            tree.cursor_line = min(self._source_line, len(tree.root.children))
+            return
+        if tree.cursor_line > 0:
+            self._source_line = tree.cursor_line
         self.changed()
+
+    def on_tree_node_collapsed(self, event: Tree.NodeCollapsed[Path]) -> None:
+        """The tree never folds: its toggle on "Queue" opens it again."""
+        event.stop()
+        self.query_one(QueueTree).root.expand()

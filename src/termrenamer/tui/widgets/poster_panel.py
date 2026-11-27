@@ -2,16 +2,20 @@
 
 :class:`PosterView` draws one Poster, or in its place the Title's name and a word such
 as "no poster". It asks the poster store for the file: a stored file is drawn at once;
-otherwise, when downloads are allowed, the store downloads it on a thread of its own,
-never on the screen's. A failed download, or a stored file the image widget cannot
-read, logs one line and leaves "no poster"; the source remembers it for the session,
-for every view.
+otherwise, when downloads are allowed, it is downloaded on a thread of its own, never
+on the screen's, and a view that asks for a Poster already on its way joins it. How a
+download ends is recorded by the :class:`PosterSource`, not the view: a failure logs one
+line and is remembered for the run, for every view, even when the view that asked has
+gone; each view only redraws. A stored file the image widget cannot read is remembered
+and logged the same way, and every view leaves "no poster" for either.
 
 While Posters are hidden or unavailable the view is given no :class:`PosterSource`:
-it then draws nothing, removes its image and starts no download (one already running
-finishes and is stored). While it is paused (its Stage is not shown, or a dialog covers
-it) it draws the Title's name in place of the image and starts no download; a dialog's
-backdrop would otherwise tint the image's cells, which breaks a Kitty image.
+it then draws nothing, removes its image and starts no download. While it is paused
+(its Stage is not shown, or a dialog covers it) it draws the Title's name in place of
+the image and starts no download; a dialog's backdrop would otherwise tint the image's
+cells, which breaks a Kitty image. A download already running makes no new attempt
+once no view may still fetch it (shown, not paused, still asking); an answer already
+on its way may finish and be stored.
 :class:`PosterPanel` frames one view at the mockup's 24 by 17 cells, and
 :func:`keep_clear_of_posters` keeps a dialog to its right.
 """
@@ -19,10 +23,9 @@ backdrop would otherwise tint the image's cells, which breaks a Kitty image.
 from __future__ import annotations
 
 import contextlib
-import logging
 from dataclasses import dataclass
 
-from textual.app import ComposeResult
+from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.content import Content
 from textual.widget import Widget
@@ -32,8 +35,6 @@ from textual.worker import Worker, WorkerState
 from termrenamer.persistence.posters import PosterError, PosterRequest
 from termrenamer.tui.poster_support import PosterSource
 from termrenamer.tui.words import provider_name
-
-_LOG = logging.getLogger(__name__)
 
 POSTER_WIDTH = 24
 POSTER_HEIGHT = 17
@@ -62,14 +63,6 @@ class _Wanted:
     request: PosterRequest | None
     label: str
     download: bool
-
-
-@dataclass(frozen=True, slots=True)
-class _Fetched:
-    """A download's outcome, handed from its thread to the screen."""
-
-    request: PosterRequest
-    error: str | None
 
 
 def placeholder(
@@ -127,17 +120,25 @@ class PosterView(Vertical):
     }}
     """
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(
+        self, *, cells: tuple[int, int] = (POSTER_WIDTH, POSTER_HEIGHT), **kwargs: object
+    ) -> None:
+        """``cells`` is the Poster's width and height in cells."""
         super().__init__(**kwargs)  # type: ignore[arg-type]
+        self._cells = cells
+        if cells != (POSTER_WIDTH, POSTER_HEIGHT):
+            self.styles.width, self.styles.height = cells
         self._source: PosterSource | None = None
         self._wanted: _Wanted | None = None
         self._image: Widget | None = None
         self._image_request: PosterRequest | None = None
         self._paused = False
-        self._fetches: dict[Worker[_Fetched], tuple[PosterRequest, PosterSource]] = {}
+        self._fetches: dict[Worker[None], PosterRequest] = {}
 
     def compose(self) -> ComposeResult:
-        yield Static("", classes="poster-text")
+        text = Static("", classes="poster-text")
+        text.styles.width, text.styles.height = self._cells
+        yield text
 
     @property
     def text(self) -> Static:
@@ -208,6 +209,7 @@ class PosterView(Vertical):
             self.text.display = False
             image = source.image(path, lambda exc: self._unreadable(source, request, wanted, exc))
             image.add_class("poster-image")
+            image.styles.height = self._cells[1]
             self._image, self._image_request = image, request
             self.mount(image)
             return
@@ -215,25 +217,34 @@ class PosterView(Vertical):
             self._words(wanted.name, wanted.label)
             return
         self._words(wanted.name, "")
-        if all(fetching != request for fetching, _source in self._fetches.values()):
-            store = source.store
+        if request not in self._fetches.values():
+            name = wanted.name
 
-            def fetch() -> _Fetched:
-                try:
-                    store.fetch(request)
-                except PosterError as exc:
-                    return _Fetched(request, str(exc))
-                except Exception as exc:  # a Poster never stops the screen
-                    return _Fetched(request, f"{type(exc).__name__}: {exc}")
-                return _Fetched(request, None)
+            def fetch() -> None:
+                with contextlib.suppress(PosterError):
+                    source.fetch(request, name=name, wanted=lambda: self._wants(source, request))
 
             worker = self.run_worker(fetch, thread=True, group="poster", exit_on_error=False)
-            self._fetches[worker] = (request, source)
+            self._fetches[worker] = request
+
+    def _wants(self, source: PosterSource, request: PosterRequest) -> bool:
+        """Whether the view may still download ``request``: attached, shown with
+        ``source``, not paused, and still asked for it. Asked from the download's
+        thread, before each new attempt."""
+        wanted = self._wanted
+        return (
+            self.is_attached
+            and self._source is source
+            and not self._paused
+            and wanted is not None
+            and wanted.download
+            and wanted.request == request
+        )
 
     def _words(self, name: str, label: str) -> None:
         self._drop_image()
         self.text.display = True
-        self.text.update(placeholder(name, label))
+        self.text.update(placeholder(name, label, *self._cells))
 
     def _drop_image(self) -> None:
         image, self._image, self._image_request = self._image, None, None
@@ -248,33 +259,22 @@ class PosterView(Vertical):
         self, source: PosterSource, request: PosterRequest, wanted: _Wanted, exc: Exception
     ) -> Widget:
         """The image widget cannot read the stored file: the panel says "no poster"."""
-        if request not in source.failed:
-            source.failed.add(request)
-            _LOG.warning("No Poster for %s: the file cannot be read (%s)", wanted.name, exc)
+        source.record_failure(request, wanted.name, f"the file cannot be read ({exc})")
         # Called while the image widget draws, so the panel changes once that is done.
         self.call_later(self._draw)
         return Static("")
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        """A download ended: its outcome is recorded by the source, so the view only
+        redraws when it still wants that Poster."""
         if event.worker.group != "poster":
             return
         event.stop()
         if event.state not in (WorkerState.SUCCESS, WorkerState.ERROR, WorkerState.CANCELLED):
             return
-        fetch = self._fetches.pop(event.worker, None)
-        if fetch is None:
-            return
-        request, source = fetch
+        request = self._fetches.pop(event.worker, None)
         wanted = self._wanted
-        is_wanted = wanted is not None and wanted.request == request
-        fetched = event.worker.result if event.state is WorkerState.SUCCESS else None
-        if event.state is WorkerState.ERROR:
-            fetched = _Fetched(request, str(event.worker.error))
-        if isinstance(fetched, _Fetched) and fetched.error is not None:
-            source.failed.add(request)
-            name = wanted.name if wanted is not None and is_wanted else request.ref
-            _LOG.warning("No Poster for %s: %s", name, fetched.error)
-        if is_wanted:
+        if request is not None and wanted is not None and wanted.request == request:
             self._draw()
 
 
@@ -327,15 +327,27 @@ class PosterPanel(Vertical):
         self.view.show(name, request, label=label, download=download)
 
 
+def _panel_shows(app: App[object]) -> bool:
+    """Whether a poster panel shows on the main screen, on the Stage shown there."""
+    panels = app.screen_stack[0].query(PosterPanel)
+    return any(all(node.display for node in panel.ancestors_with_self) for panel in panels)
+
+
+def room_beside_posters(app: App[object]) -> int:
+    """The columns a dialog has: those right of the poster panel while it shows on the
+    main screen, else the whole screen's width."""
+    width = app.size.width
+    return width - PANEL_RIGHT if _panel_shows(app) else width
+
+
 def keep_clear_of_posters(dialog: Widget) -> None:
     """Keep ``dialog`` right of the poster panel while the panel shows on the main screen
     below it (on the Stage shown there), or let it take its stylesheet's place while it
     does not. A dialog calls this when it mounts and on every resize; its stylesheet
     gives it no left margin."""
     app = dialog.app
-    panels = app.screen_stack[0].query(PosterPanel)
     dialog.styles.clear_rule("margin")
-    if any(all(node.display for node in panel.ancestors_with_self) for panel in panels):
+    if _panel_shows(app):
         margin = dialog.styles.margin
         dialog.styles.margin = (margin.top, margin.right, margin.bottom, PANEL_RIGHT)
         room = app.size.width - PANEL_RIGHT - margin.right

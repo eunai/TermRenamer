@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from termrenamer.core.models import Candidate
+from termrenamer.util.text import plain_digits
 
 
 @runtime_checkable
@@ -51,7 +52,7 @@ class BuildScopedTvProvider(Protocol):
 
 def leading_year(value: object) -> int | None:
     """Return the year a Provider date starts with (``"2011-05-20"``, ``"2011–2014"``)."""
-    if isinstance(value, str) and len(value) >= 4 and value[:4].isdigit():
+    if isinstance(value, str) and len(value) >= 4 and plain_digits(value[:4]):
         return int(value[:4])
     return None
 

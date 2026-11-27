@@ -13,6 +13,7 @@ import pytest
 from textual.geometry import Region
 from textual.widgets import Switch
 
+from termrenamer.core.models import Candidate
 from termrenamer.persistence.posters import PosterRequest
 from termrenamer.tui.app import MIN_POSTER_SIZE, TermRenamerApp
 from termrenamer.tui.dialogs import ApplyConfirm, UndoConfirm
@@ -26,12 +27,15 @@ from termrenamer.tui.widgets.footer import AppFooter
 from termrenamer.tui.widgets.poster_panel import PosterPanel
 from termrenamer.tui.widgets.title_details import TitleDetails
 
+from .links import point_folder_at
 from .screen_driver import (
+    FERRY,
     POSTERS_AVAILABLE,
     POSTERS_UNREADABLE,
     SIZE,
     ImageHost,
     StandInImage,
+    TvStandIn,
     build,
     long_season,
     make_app,
@@ -44,8 +48,10 @@ from .screen_driver import (
     text_of,
     tv_backups,
     tv_stand_in,
+    until,
     wiring,
 )
+from .test_screen_text import MARKUP_NAME
 
 HARBOUR_LIGHTS_POSTER = "https://image.tmdb.org/t/p/w342/hl.jpg"
 SMALLEST = (100, ROWS_FOR_POSTERS)
@@ -347,33 +353,102 @@ async def test_a_poster_file_the_image_widget_cannot_read_shows_no_poster(
     assert len(logs) == 1
 
 
-async def test_a_cancelled_download_is_tried_again_when_the_title_is_selected_again(
+def poster_logs(app: TermRenamerApp) -> list[str]:
+    return [line for _n, line in app.log_book.lines_after(0) if "No Poster" in line]
+
+
+async def test_a_failed_download_is_remembered_even_when_its_view_went_away(
     tmp_path: Path,
 ) -> None:
+    # The download's outcome belongs to the download: the screen shrinks below the
+    # size for Posters while the answer is on its way, so the panel goes, and the 404
+    # still counts once; the panel back does not ask again.
     gate = threading.Event()
     host = ImageHost(status=404, gate=gate)
     app = poster_app(tmp_path, host)
     async with app.run_test(size=SIZE) as pilot:
         await queue(pilot, tv_backups(tmp_path))
         await press(pilot, "b")
-        for _ in range(100):  # until the Preview's download is in flight
-            if host.requests:
-                break
-            await pilot.pause(0.05)
+        await until(pilot, lambda: bool(host.requests))
         assert app.stage is Stage.PREVIEW and len(host.requests) == 1
-        view = panel(app).view
-        assert app.workers.cancel_group(view, "poster")
+        await pilot.resize_terminal(90, 28)
+        await pilot.pause(0.2)
+        assert not panel(app).display
         gate.set()
-        await pilot.pause(0.2)  # waiting on the workers would raise for the cancelled one
-        await press(pilot, "down")
-        await press(pilot, "up")
-        for _ in range(100):
-            if len(host.requests) == 2 and "no poster" in panel_text(app):
-                break
-            await pilot.pause(0.05)
+        await until(pilot, lambda: bool(poster_logs(app)))
+        await pilot.resize_terminal(*SIZE)
+        await pilot.pause(0.3)
         words = panel_text(app)
-    assert len(host.requests) == 2
+        logs = poster_logs(app)
+    assert len(host.requests) == 1
     assert "no poster" in words
+    assert len(logs) == 1 and "HTTP 404" in logs[0]
+
+
+async def test_an_abandoned_download_is_tried_again_when_the_title_is_selected_again(
+    tmp_path: Path,
+) -> None:
+    # The first answer is a 503; nobody wants the Poster by then, so the download is
+    # given up before a second attempt, records nothing, and starts anew later.
+    gate = threading.Event()
+    host = ImageHost(status=503, gate=gate, attempts=2)
+    app = poster_app(tmp_path, host)
+    async with app.run_test(size=SIZE) as pilot:
+        await queue(pilot, tv_backups(tmp_path))
+        await press(pilot, "b")
+        await until(pilot, lambda: bool(host.requests))
+        await press(pilot, "down")  # Night Ferry, which has no Poster
+        gate.set()
+        await pilot.pause(0.3)
+        after_release = (len(host.requests), poster_logs(app))
+        await press(pilot, "up")
+        await until(pilot, lambda: "no poster" in panel_text(app))
+        logs = poster_logs(app)
+    assert after_release == (1, [])
+    assert len(host.requests) == 3  # tried again: two attempts, both 503
+    assert len(logs) == 1 and "503" in logs[0]
+
+
+async def test_hiding_posters_during_a_download_starts_no_new_attempt(tmp_path: Path) -> None:
+    gate = threading.Event()
+    host = ImageHost(status=503, gate=gate, attempts=2)
+    app = poster_app(tmp_path, host)
+    async with app.run_test(size=SIZE) as pilot:
+        await queue(pilot, tv_backups(tmp_path))
+        await press(pilot, "b")
+        await until(pilot, lambda: bool(host.requests))
+        await press(pilot, "i")
+        gate.set()
+        await pilot.pause(0.3)
+        while_hidden = len(host.requests)
+        await press(pilot, "i")
+        await until(pilot, lambda: "no poster" in panel_text(app))
+        tried_again = len(host.requests)
+    assert while_hidden == 1
+    assert tried_again == 3  # shown again: a new download, two attempts
+
+
+async def test_a_poster_folder_that_is_a_link_shows_no_poster_and_logs_one_line(
+    tmp_path: Path,
+) -> None:
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    point_folder_at(tmp_path / "posters", elsewhere)
+    host = ImageHost()
+    app = poster_app(tmp_path, host)
+    async with app.run_test(size=SIZE) as pilot:
+        await built(pilot, tmp_path)
+        await pilot.pause(0.2)
+        words = panel_text(app)
+        logs = [
+            line
+            for _n, line in app.log_book.lines_after(0)
+            if "No Poster" in line or "Posters are not stored" in line
+        ]
+    assert "no poster" in words
+    assert host.requests == []
+    assert list(elsewhere.iterdir()) == []
+    assert len(logs) == 1 and "poster folder" in logs[0]
 
 
 # ------------------------------------------------------------ hiding them
@@ -691,21 +766,67 @@ async def test_help_shows_the_provider_credits() -> None:
     assert "https://thetvdb.com/" in text
 
 
+def panel_box(app: TermRenamerApp) -> list[str]:
+    """The poster panel's rows as the screen draws them, its frame included: the rows
+    from the top border, which holds the Provider's name, to the bottom one."""
+    lines = screen_lines(app)
+    (top,) = [n for n, line in enumerate(lines) if "┌─ " in line]
+    left = lines[top].index("┌")
+    right = lines[top].index("┐", left)
+    bottom = min(n for n in range(top + 1, len(lines)) if lines[n][left] == "└")
+    return [line[left : right + 1] for line in lines[top : bottom + 1]]
+
+
+def assert_framed(box: list[str], provider: str) -> None:
+    """The frame is whole: the Provider's name on the top border, a side on each row."""
+    width = len(box[0])
+    assert box[0] == f"┌─ {provider} ".ljust(width - 1, "─") + "┐"
+    assert all(row[0] == "│" and row[-1] == "│" for row in box[1:-1])
+    assert box[-1] == "└" + "─" * (width - 2) + "┘"
+
+
 @pytest.mark.parametrize(
-    "name", ["C:\\Films\\", "[b]Bold[/b] \\", "A name [/]", "[$accent]x $text"]
+    "name", ["C:\\Films\\", "[b]Bold[/b] \\", "A name [/]", "[$accent]x $text", MARKUP_NAME]
 )
-async def test_the_panel_draws_a_name_as_written(tmp_path: Path, name: str) -> None:
-    # A Windows folder ends in a backslash, which would escape a closing tag after it.
-    app = poster_app(tmp_path, ImageHost())
+async def test_the_panel_draws_a_match_name_as_written_inside_its_whole_frame(
+    tmp_path: Path, name: str
+) -> None:
+    # The Match name is the Provider's text, so it can read as markup or end in a backslash,
+    # which would escape a closing tag after it. The border's Provider name is the app's own.
+    tv = TvStandIn(
+        shows={
+            "harbour lights": (Candidate(id="11", name=name, year=2019),),
+            "night ferry": (FERRY,),
+        },
+        episodes={("11", 1, 1): "The Tide Comes In", ("11", 1, 2): "Salt and Rope"},
+        hold=True,
+    )
+    app = make_app(
+        wiring(tv=tv, posters=ImageHost().store(tmp_path / "posters")),
+        settings(),
+        posters=POSTERS_AVAILABLE,
+    )
     async with app.run_test(size=SIZE) as pilot:
-        await built(pilot, tmp_path)
-        panel(app).show(name, provider_id="tmdb", ref=None, download=False)
+        await queue(pilot, tv_backups(tmp_path))
+        await press(pilot, "b")
+        assert tv.first_done.wait(timeout=5)
+        await pilot.pause(0.2)
+        building = app.stage
+        on_plan = panel_box(app)
+        tv.go.set()
+        await app.workers.wait_for_complete()
         await pilot.pause()
-        words = panel_text(app)
-        title = panel(app).border_title
-    assert name.strip() in words
-    assert "no poster" in words
-    assert title == "TMDB"
+        on_preview = panel_box(app)
+    # A name wider than the panel is cut, with an ellipsis.
+    inner = len(on_plan[0]) - 2
+    shown = name if len(name) <= inner - 2 else name[: inner - 3] + "…"
+    assert building is Stage.PLAN
+    for box in (on_plan, on_preview):
+        assert_framed(box, "TMDB")
+        rows = [row[1:-1] for row in box[1:-1]]
+        named = [n for n, row in enumerate(rows) if f" {shown} " in row]
+        assert len(named) == 1, box
+        assert "no poster" in rows[named[0] + 1]
 
 
 async def test_on_the_applied_stage_the_undo_confirm_keeps_its_own_place(tmp_path: Path) -> None:

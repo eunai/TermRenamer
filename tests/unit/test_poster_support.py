@@ -7,6 +7,8 @@ modules take the image package's place, so no test asks the real terminal.
 from __future__ import annotations
 
 import sys
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -15,12 +17,16 @@ from unittest import mock
 import pytest
 from textual.widget import Widget
 
+from termrenamer.persistence.posters import PosterError, PosterRequest
 from termrenamer.tui.poster_support import (
     NO_IMAGES,
     NOT_INSTALLED,
+    PosterSource,
     PosterSupport,
     detect_poster_support,
 )
+
+from .screen_driver import ImageHost, stand_in_image
 
 
 class _Renderable:
@@ -155,3 +161,49 @@ def test_main_checks_the_terminal_once_before_the_screen_starts() -> None:
         main_mod.main()
 
     assert order == ["check", "run"]
+
+
+def test_two_callers_of_one_poster_share_one_download_and_its_failure(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    gate = threading.Event()
+    host = ImageHost(status=404, gate=gate)
+    source = PosterSource(store=host.store(tmp_path), image=stand_in_image)
+    request = PosterRequest("tmdb", "/heat.jpg")
+    errors: list[str] = []
+
+    def ask() -> None:
+        try:
+            source.fetch(request, name="Heat", wanted=lambda: True)
+        except PosterError as exc:
+            errors.append(str(exc))
+
+    first = threading.Thread(target=ask)
+    first.start()
+    for _ in range(100):
+        if host.requests:
+            break
+        time.sleep(0.01)
+    second = threading.Thread(target=ask)
+    second.start()
+    time.sleep(0.05)
+    gate.set()
+    first.join(timeout=5)
+    second.join(timeout=5)
+
+    assert len(host.requests) == 1
+    assert len(errors) == 2 and errors[0] == errors[1]
+    assert request in source.failed
+    assert [r.getMessage() for r in caplog.records if "No Poster" in r.getMessage()] == [
+        "No Poster for Heat: download failed: HTTP 404"
+    ]
+
+
+def test_a_download_nobody_wants_is_given_up_before_its_next_attempt(tmp_path: Path) -> None:
+    host = ImageHost(status=503, attempts=3)
+    source = PosterSource(store=host.store(tmp_path), image=stand_in_image)
+    request = PosterRequest("tmdb", "/heat.jpg")
+    with pytest.raises(PosterError):
+        source.fetch(request, name="Heat", wanted=lambda: False)
+    assert len(host.requests) == 1
+    assert request not in source.failed

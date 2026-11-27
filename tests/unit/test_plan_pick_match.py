@@ -253,6 +253,54 @@ def test_a_left_out_video_the_picked_show_lacks_comes_back_with_no_match(tmp_pat
     assert _summary(put_back)[2] == ("Harbour.Lights.S01E02.mkv", None, EntryStatus.NO_MATCH)
 
 
+def test_a_video_left_out_while_its_title_had_no_match_stays_left_out_once_matched(
+    tmp_path: Path,
+) -> None:
+    """The person left out an episode before picking the show: picking it names the
+    episode but Apply still leaves it, until it is put back."""
+    provider = TvStandIn(shows={}, episodes={("11", 1, 1): "The Tide Comes In"})
+    plan = plan_queue([_harbour_folder(tmp_path)], _tv_options(), provider).plan
+    first = next(v for v in plan.videos if v.episode == 1)
+    assert first.status is EntryStatus.NO_MATCH
+    plan = derive_plan(plan, LeaveOut(first))
+    [title] = plan.titles
+    episodes = look_up_episodes(plan, title, HARBOUR, provider)
+    assert episodes is not None
+
+    derived = derive_plan(plan, PickMatch(title, HARBOUR, episodes=episodes))
+
+    assert _summary(derived)[:2] == [
+        ("Harbour.Lights.S01E01.mkv", None, EntryStatus.LEFT_OUT),
+        ("Harbour.Lights.S01E01.srt", None, EntryStatus.LEFT_OUT),
+    ]
+    put_back = derive_plan(derived, PutBack(derived.videos[0]))
+    assert _summary(put_back)[0] == (
+        "Harbour.Lights.S01E01.mkv",
+        "Harbour Lights - S01E01 - The Tide Comes In.mkv",
+        EntryStatus.READY,
+    )
+
+
+def test_a_left_out_not_recognised_film_given_a_match_stays_left_out(tmp_path: Path) -> None:
+    plan = plan_queue([_not_recognised(tmp_path)], _film_options(), _heat()).plan
+    plan = derive_plan(plan, LeaveOut(plan.entries[0]))
+    video = plan.entries[0]
+    assert video.status is EntryStatus.LEFT_OUT
+
+    derived = derive_plan(plan, PickMatch(video, HEAT_WAVE, found=(HEAT_WAVE, HEAT)))
+
+    assert _summary(derived)[:2] == [
+        ("1080p.mkv", None, EntryStatus.LEFT_OUT),
+        ("1080p.srt", None, EntryStatus.LEFT_OUT),
+    ]
+    assert derived.entries[0].title == _title(derived, "Heat Wave")
+    put_back = derive_plan(derived, PutBack(derived.entries[0]))
+    assert _summary(put_back)[:2] == [
+        ("1080p.mkv", "Heat Wave (1990).mkv", EntryStatus.READY),
+        ("1080p.srt", "Heat Wave (1990).srt", EntryStatus.READY),
+    ]
+
+
 def test_a_tv_pick_without_the_episode_titles_is_refused(tmp_path: Path) -> None:
     plan = plan_queue([_harbour_folder(tmp_path)], _tv_options(), _harbour()).plan
 
@@ -304,6 +352,92 @@ def test_a_merged_title_keeps_the_candidates_of_the_group_whose_hint_sorts_first
     [merged] = derived.titles
     # The other Title's group ("heat", 1986) sorts before the picked one's.
     assert (merged.match, merged.candidates) == (HEAT_1986, (HEAT,))
+
+
+HEAT_REFRESHED = Candidate(id="949", name="Heat Redux", year=1996)
+"""Heat's Provider entry as a later search returns it, with a new name and year."""
+
+
+def test_a_merged_film_title_names_every_file_from_the_one_match_as_a_fresh_build_does(
+    tmp_path: Path,
+) -> None:
+    library = tmp_path / "Library"
+    options = _film_options(library=library)
+    plan = plan_queue([tmp_path], options, _two_heats(tmp_path)).plan
+    older = _title(plan, "Heat")
+    assert older.match == HEAT_1986
+
+    derived = derive_plan(plan, PickMatch(older, HEAT_REFRESHED, found=(HEAT_REFRESHED,)))
+
+    fresh = plan_queue(
+        [tmp_path],
+        options,
+        FilmStandIn(
+            films={("heat", 1986): (HEAT_REFRESHED,), ("heat", 1995): (HEAT_REFRESHED, HEAT_1986)}
+        ),
+    ).plan
+    assert (
+        _summary(derived)
+        == _summary(fresh)
+        == [
+            ("Heat.1986.mkv", "Heat Redux (1996).mkv", EntryStatus.READY),
+            ("Heat.1995.mkv", "Heat Redux (1996) (1).mkv", EntryStatus.NAME_TAKEN),
+        ]
+    )
+    [merged] = derived.titles
+    assert (merged.name, merged.year, merged.match) == ("Heat Redux", 1996, HEAT_REFRESHED)
+    assert [str(e.destination) for e in derived.entries] == [
+        str(e.destination) for e in fresh.entries
+    ]
+
+
+HARBOUR_REFRESHED = Candidate(id="11", name="Harbour Lights Redux", year=2019)
+"""Harbour Lights' Provider entry as a later search returns it, with a new name."""
+
+
+def test_a_merged_tv_title_names_every_episode_from_the_one_match(tmp_path: Path) -> None:
+    for name in (
+        "Harbour.Lights.S01E01.mkv",
+        "Harbour.Lights.S01E01.srt",
+        "Night.Ferry.S01E02.mkv",
+    ):
+        (tmp_path / name).write_bytes(b"x")
+    provider = _harbour()
+    plan = plan_queue([tmp_path], _tv_options(), provider).plan
+    ferry = _title(plan, "Night Ferry")
+
+    episodes = look_up_episodes(plan, ferry, HARBOUR_REFRESHED, provider)
+    assert episodes is not None
+    derived = derive_plan(
+        plan, PickMatch(ferry, HARBOUR_REFRESHED, found=(HARBOUR_REFRESHED,), episodes=episodes)
+    )
+
+    assert _summary(derived) == [
+        (
+            "Harbour.Lights.S01E01.mkv",
+            "Harbour Lights Redux - S01E01 - The Tide Comes In.mkv",
+            EntryStatus.READY,
+        ),
+        (
+            "Harbour.Lights.S01E01.srt",
+            "Harbour Lights Redux - S01E01 - The Tide Comes In.srt",
+            EntryStatus.READY,
+        ),
+        (
+            "Night.Ferry.S01E02.mkv",
+            "Harbour Lights Redux - S01E02 - Salt and Rope.mkv",
+            EntryStatus.READY,
+        ),
+    ]
+    [merged] = derived.titles
+    assert merged.match == HARBOUR_REFRESHED
+    fresh_provider = _harbour()
+    fresh_provider.shows = {
+        "harbour lights": (HARBOUR_REFRESHED,),
+        "night ferry": (HARBOUR_REFRESHED,),
+    }
+    fresh = plan_queue([tmp_path], _tv_options(), fresh_provider).plan
+    assert _summary(derived) == _summary(fresh)
 
 
 def _not_recognised(tmp_path: Path) -> Path:
@@ -627,10 +761,11 @@ def test_a_not_recognised_film_given_a_match_takes_its_folders_stragglers_along(
     tmp_path: Path,
 ) -> None:
     library = tmp_path / "Library"
-    rip = tmp_path / "Films" / "1080p"
-    rip.mkdir(parents=True)
-    (rip / "1080p.mkv").write_bytes(b"?")
-    (rip / "poster.jpg").write_bytes(b"p")
+    # The folder of a backup whose name the parser cannot read.
+    film_folder = tmp_path / "Films" / "1080p"
+    film_folder.mkdir(parents=True)
+    (film_folder / "1080p.mkv").write_bytes(b"?")
+    (film_folder / "poster.jpg").write_bytes(b"p")
     plan = plan_queue([tmp_path / "Films"], _film_options(library=library), _heat()).plan
     assert plan.stragglers == ()
 
@@ -639,7 +774,7 @@ def test_a_not_recognised_film_given_a_match_takes_its_folders_stragglers_along(
     target = library / "Heat Wave (1990)"
     assert derived.entries[0].destination == target / "Heat Wave (1990).mkv"
     assert [(s.source, s.destination) for s in derived.stragglers] == [
-        (rip / "poster.jpg", target / "poster.jpg")
+        (film_folder / "poster.jpg", target / "poster.jpg")
     ]
 
 
@@ -695,7 +830,7 @@ def test_a_picked_name_that_differs_only_in_case_or_unicode_form_is_name_taken(
     assert cafe.destination == tmp_path / f"{first.name} (2001) (1).mkv"
 
 
-def test_picking_works_out_the_stragglers_without_reading_a_folder_or_resolving_a_path(
+def test_picking_works_out_the_stragglers_without_reading_a_folder_or_resolving_a_source(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     library = tmp_path / "Library"

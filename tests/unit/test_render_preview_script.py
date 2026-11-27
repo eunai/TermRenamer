@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import importlib.util
 import logging
+import tempfile
 from pathlib import Path
 from types import ModuleType
 
@@ -45,3 +46,16 @@ def test_render_preview_leaves_the_root_logger_handlers_as_they_were(tmp_path: P
         assert root.handlers == before
     finally:
         root.removeHandler(handler)
+
+
+def test_two_runs_write_the_same_file_with_no_path_of_this_machine(tmp_path: Path) -> None:
+    script = _load_script()
+    first = script.render_preview(tmp_path / "first.svg").read_bytes()
+    second = script.render_preview(tmp_path / "second.svg").read_bytes()
+
+    assert first == second
+    text = html.unescape(first.decode("utf-8")).replace("\xa0", " ")
+    temp = Path(tempfile.gettempdir())
+    for machine_path in {str(temp), str(temp.resolve()), str(Path.home())}:
+        assert machine_path not in text
+    assert "TV Backups" in text and "breaking_bad_s01e01.mkv" in text
