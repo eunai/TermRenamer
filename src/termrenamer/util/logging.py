@@ -31,8 +31,8 @@ MASK = "***"
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
 MIN_MASKED_LENGTH = 8
-"""The shortest value :func:`keep_out_of_logs` masks. Provider keys and tokens are
-longer; a shorter value would mask ordinary text."""
+"""The shortest value :func:`keep_out_of_logs` masks. Provider keys and tokens are at
+least this long (an OMDb key is 8 characters); a shorter value would mask ordinary text."""
 
 _REQUEST_LOGGERS = ("httpx", "httpcore")
 
@@ -42,7 +42,7 @@ _lock = threading.Lock()
 
 def keep_out_of_logs(*secrets: str | None) -> None:
     """Mask each of ``secrets`` at least :data:`MIN_MASKED_LENGTH` long, as written and
-    as a URL writes it, in every line a :class:`MaskingFormatter` writes."""
+    percent-encoded, in every line a :class:`MaskingFormatter` writes."""
     with _lock:
         for secret in secrets:
             if secret and len(secret) >= MIN_MASKED_LENGTH:
