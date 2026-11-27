@@ -11,6 +11,7 @@ each view under :mod:`termrenamer.tui.views`. Every key goes through the key tab
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -74,11 +75,16 @@ class _BuildOutcome:
 
 
 class BuildProgress(Message):
-    """An event a build reported, carried from its thread to the screen."""
+    """An event a build reported, carried from its thread to the screen.
 
-    def __init__(self, event: PlanEvent) -> None:
+    ``cancel`` is that build's cancel signal, which tells its events from those of a
+    build cancelled before it.
+    """
+
+    def __init__(self, event: PlanEvent, cancel: threading.Event) -> None:
         super().__init__()
         self.event = event
+        self.cancel = cancel
 
 
 class LogLineAdded(Message):
@@ -116,6 +122,10 @@ class TermRenamerApp(App[None]):
         self.results: tuple[ApplyResult, ...] | None = None
         """What the last Apply did, while the Applied Stage shows it."""
         self._applying = False
+        self._cancel: threading.Event | None = None
+        self._build_worker: Worker[_BuildOutcome] | None = None
+        """The running build's cancel signal and worker, or ``None`` while no build runs.
+        A cancelled build's thread may still finish a lookup; what it reports is dropped."""
         self._messages = logging.getLogger("termrenamer.tui")
         self._messages.setLevel(logging.INFO)
         self._log_handler: LogBookHandler | None = None
@@ -286,29 +296,51 @@ class TermRenamerApp(App[None]):
         self.query_one(PlanStage).start(provider_name(options.provider_id), options.mode)
         self._show_stage(Stage.PLAN)
         self.say("Building the Plan…")
-        self._build(self.queue.sources, options)
+        self._cancel = threading.Event()
+        self._build_worker = self._build(self.queue.sources, options, self._cancel)
 
-    @work(thread=True, exclusive=True, group="batch", exit_on_error=False, name=_BUILD)
-    def _build(self, sources: tuple[Path, ...], options: PlanOptions) -> _BuildOutcome:
+    @work(thread=True, group="build", exit_on_error=False, name=_BUILD)
+    def _build(
+        self, sources: tuple[Path, ...], options: PlanOptions, cancel: threading.Event
+    ) -> _BuildOutcome:
+        def post(event: PlanEvent) -> None:
+            self.post_message(BuildProgress(event, cancel))
+
         try:
             lookup = self._wiring.resolve(mode=options.mode, provider_id=options.provider_id)
-            build = plan_queue(sources, options, lookup, listener=self._post_progress)
+            build = plan_queue(sources, options, lookup, listener=post, cancel=cancel)
         except (ValidationError, ProviderError) as exc:
             return _BuildOutcome(plan=None, skipped=(), error=str(exc))
-        if not build.plan.entries:
-            return _BuildOutcome(plan=None, skipped=build.messages, error=None)
+        if build is None or not build.plan.entries:
+            skipped = build.messages if build is not None else ()
+            return _BuildOutcome(plan=None, skipped=skipped, error=None)
         return _BuildOutcome(plan=build.plan, skipped=build.messages, error=None)
 
-    def _post_progress(self, event: PlanEvent) -> None:
-        """The build's listener: carry ``event`` to the screen (called on the build's thread)."""
-        self.post_message(BuildProgress(event))
-
     def on_build_progress(self, message: BuildProgress) -> None:
-        if self.stage is Stage.PLAN:
+        if message.cancel is self._cancel and self.stage is Stage.PLAN:
             self.query_one(PlanStage).report(message.event)
 
-    def _build_finished(self, outcome: _BuildOutcome) -> None:
+    def on_plan_stage_cancel_requested(self, _message: PlanStage.CancelRequested) -> None:
+        """Escape during the build: no Plan, the queue kept, the settings free again.
+
+        A lookup already under way finishes on the build's thread; its answer, and
+        anything else that build reports, is dropped.
+        """
+        if self._cancel is None:
+            return
+        self._cancel.set()
+        self._end_build()
+        self._show_stage(Stage.QUEUE)
+        self.say("Plan cancelled. Nothing was renamed.")
+
+    def _end_build(self) -> None:
+        self._cancel = None
+        self._build_worker = None
+        self.query_one(PlanStage).stop()
         self.session_settings.unlock()
+
+    def _build_finished(self, outcome: _BuildOutcome) -> None:
+        self._end_build()
         for line in outcome.skipped:
             self._messages.warning(line)
         if outcome.error is not None:
@@ -379,17 +411,21 @@ class TermRenamerApp(App[None]):
         worker = event.worker
         if worker.name not in (_BUILD, _APPLY):
             return
+        if worker.name == _BUILD and worker is not self._build_worker:
+            return  # a cancelled build
         if event.state is WorkerState.SUCCESS:
             if worker.name == _BUILD and isinstance(worker.result, _BuildOutcome):
                 self._build_finished(worker.result)
             elif worker.name == _APPLY and isinstance(worker.result, tuple):
                 self._apply_finished(*worker.result)
         elif event.state in (WorkerState.ERROR, WorkerState.CANCELLED):
-            self.session_settings.unlock()
-            self._applying = False
             what = "Plan" if worker.name == _BUILD else "Apply"
             if worker.name == _BUILD:
+                self._end_build()
                 self._show_stage(Stage.QUEUE)
+            else:
+                self._applying = False
+                self.session_settings.unlock()
             self.say(f"{what} failed: {worker.error}", MessageKind.ERROR)
             self._refresh_chrome()
 
