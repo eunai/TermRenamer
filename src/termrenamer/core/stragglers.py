@@ -3,12 +3,14 @@
 :func:`plan_stragglers` is the one rule (spec #16, section C). Building a Plan and
 deriving one both call it; it never lists a folder, so a derived Plan lists Stragglers
 from the children recorded when the first Plan was built. The disk is read only to
-test whether a name is taken: each Straggler's wanted path is claimed as an entry's is
-(:func:`~termrenamer.core.collisions.allocate_destination`), and a target folder whose
+test whether a name is taken and where a target folder leads: each Straggler's wanted
+path is claimed as an entry's is
+(:func:`~termrenamer.core.collisions.allocate_destination`), a target folder whose
 name differs from its source folder's only in letter case or Unicode form is tested for
-being that folder (:func:`~termrenamer.core.collisions.is_same_folder`). A source
-folder, an entry and a child are told apart by their recorded paths as text; names
-being claimed and target folders are compared by
+being that folder (:func:`~termrenamer.core.collisions.is_same_folder`), and the folder
+each target folder reaches through the links on its way is read, as a claimed name's
+folder is (:func:`_reached_keys`). A source folder, an entry and a child are told apart
+by their recorded paths as text; names being claimed and target folders are compared by
 :func:`~termrenamer.core.paths.claim_key`.
 """
 
@@ -21,6 +23,18 @@ from pathlib import Path
 from termrenamer.core.collisions import allocate_destination, claim_keys, is_same_folder
 from termrenamer.core.models import PlanEntry, PlanOptions, SourceFolder, Straggler
 from termrenamer.core.paths import claim_key, source_order
+
+
+def _reached_keys(folder: Path) -> frozenset[str]:
+    """The claim keys of the target folder ``folder``: of its path as recorded, and of
+    the path it reaches on disk now, existing links and junctions on the way followed,
+    as :func:`~termrenamer.core.collisions.claim_keys` reads a name being claimed; so a
+    folder the target folder lies inside through a link stays where it is."""
+    try:
+        reached = Path(os.path.realpath(folder))
+    except (OSError, ValueError):
+        return frozenset((claim_key(folder),))
+    return frozenset((claim_key(folder), claim_key(reached)))
 
 
 def _folder_stays(folder: Path, sources: frozenset[str], target_keys: frozenset[str]) -> bool:
@@ -37,6 +51,16 @@ def _folder_stays(folder: Path, sources: frozenset[str], target_keys: frozenset[
     )
 
 
+def _file_stays(path: Path, sources: frozenset[str], target_keys: frozenset[str]) -> bool:
+    """Whether a child file is never a Straggler: it is an entry of the Plan (by the
+    recorded paths as text), or a target folder's path is it or goes through it, by
+    claim key, as through a link to a folder (a link counts as a file)."""
+    if str(path) in sources:
+        return True
+    key = claim_key(path)
+    return any(t == key or t.startswith(key + os.sep) for t in target_keys)
+
+
 def plan_stragglers(
     options: PlanOptions,
     entries: Iterable[PlanEntry],
@@ -46,8 +70,8 @@ def plan_stragglers(
 
     With Folder rename off there are none. A source folder qualifies when at least one
     of its entries is applied to a different folder. Its Stragglers are its recorded
-    child files that are not entries, and its recorded child folders that
-    :func:`_folder_stays` does not keep. Each goes to the target folder that sorts
+    child files that :func:`_file_stays` does not keep, and its recorded child folders
+    that :func:`_folder_stays` does not keep. Each goes to the target folder that sorts
     first of those its folder's entries go to. After every applied entry has claimed
     its name, the Stragglers are numbered and claim theirs in source-path order, by the
     numbering rule whatever Name taken is set to, so no two share a path.
@@ -60,7 +84,9 @@ def plan_stragglers(
     sources = frozenset(str(e.source) for e in entries)
     # An entry that already has its name moves into no folder.
     moving = [e for e in applied if not e.has_its_name]
-    target_keys = frozenset(claim_key(d.parent) for e in moving if (d := e.destination))
+    target_keys = frozenset(
+        k for e in moving if (d := e.destination) for k in _reached_keys(d.parent)
+    )
 
     # A source folder is told apart by its recorded path as text, so two folders whose
     # names differ only in letter case stay two; a target folder whose name differs from
@@ -78,7 +104,9 @@ def plan_stragglers(
         target = target_of.get(str(folder.path))
         if target is None:
             continue
-        wanted.extend((f, target, False) for f in folder.files if str(f) not in sources)
+        wanted.extend(
+            (f, target, False) for f in folder.files if not _file_stays(f, sources, target_keys)
+        )
         wanted.extend(
             (f, target, True) for f in folder.folders if not _folder_stays(f, sources, target_keys)
         )

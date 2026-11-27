@@ -11,7 +11,9 @@ import pytest
 
 from termrenamer.core.apply import apply_plan
 from termrenamer.core.models import ApplyResult, ApplyStatus, Candidate, Plan
+from termrenamer.core.moving import Changes, move_no_replace
 from termrenamer.core.planning import LeaveOut, PickMatch, PutBack, derive_plan, plan_queue
+from termrenamer.core.undo import undo_apply
 
 from .links import needs_symlinks, point_folder_at
 from .test_apply_no_replace import _a_tick_after, _ignores_letter_case, _with_the_number_of
@@ -465,3 +467,156 @@ def test_a_link_the_plan_found_whose_own_target_is_pointed_elsewhere_is_never_en
     video = show / "Disc 1" / "Show.Name.S01E01.mkv"
     assert _by_source(outcome.results)[video] == _no_longer(tmp_path / "Library" / "Show Name")
     assert os.listdir(disk_a) == [] and os.listdir(disk_b) == []
+
+
+def _one_video_into(tmp_path: Path, root: Path) -> tuple[Path, Plan]:
+    """A video planned into the Destination root ``root``."""
+    video = _write(tmp_path / "Backups" / "Show.Name.S01E01.mkv")
+    return video, plan_queue([video], _options(destination_root=root), _provider()).plan
+
+
+def test_a_destination_root_made_a_link_after_the_preview_is_never_entered(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "Library"
+    root.mkdir()
+    elsewhere = tmp_path / "External"
+    elsewhere.mkdir()
+    video, plan = _one_video_into(tmp_path, root)
+    root.rename(tmp_path / "Old Library")
+    point_folder_at(root, elsewhere)
+
+    outcome = apply_plan(plan, confirmed=True)
+
+    assert _by_source(outcome.results)[video] == _now_a_link(root)
+    assert video.read_bytes() == b"x"
+    assert os.listdir(elsewhere) == []
+    assert outcome.moves == () and outcome.folders_created == ()
+
+
+def test_a_destination_root_that_was_a_link_when_the_plan_was_built_is_gone_through(
+    tmp_path: Path,
+) -> None:
+    elsewhere = tmp_path / "External"
+    elsewhere.mkdir()
+    root = tmp_path / "Library"
+    point_folder_at(root, elsewhere)
+    video, plan = _one_video_into(tmp_path, root)
+    [dest] = [e.destination for e in plan.entries]
+    assert dest is not None
+
+    outcome = apply_plan(plan, confirmed=True)
+
+    assert _by_source(outcome.results)[video] == (ApplyStatus.RENAMED, "ok")
+    assert (elsewhere / dest.relative_to(root)).read_bytes() == b"x"
+
+
+def test_a_destination_root_link_pointed_elsewhere_after_the_preview_is_never_entered(
+    tmp_path: Path,
+) -> None:
+    disk_a = tmp_path / "Disk A"
+    disk_b = tmp_path / "Disk B"
+    disk_a.mkdir()
+    disk_b.mkdir()
+    root = tmp_path / "Library"
+    point_folder_at(root, disk_a)
+    video, plan = _one_video_into(tmp_path, root)
+    _unpoint(root)
+    point_folder_at(root, disk_b)
+
+    outcome = apply_plan(plan, confirmed=True)
+
+    assert _by_source(outcome.results)[video] == _no_longer(root)
+    assert video.read_bytes() == b"x"
+    assert os.listdir(disk_a) == [] and os.listdir(disk_b) == []
+
+
+def test_a_link_on_the_way_to_a_new_name_is_no_straggler_and_undo_puts_everything_back(
+    tmp_path: Path,
+) -> None:
+    backups = tmp_path / "Backups"
+    video = _write(backups / "Show.Name.S01E01.mkv")
+    elsewhere = tmp_path / "External"
+    elsewhere.mkdir()
+    link = backups / "Show Name"
+    point_folder_at(link, elsewhere)  # the new folder's path goes through it
+
+    plan = plan_queue([backups], _options(), _provider()).plan
+    [dest] = [e.destination for e in plan.entries]
+    assert dest is not None and link in dest.parents
+    assert [s.source for s in plan.stragglers] == []
+
+    outcome = apply_plan(plan, confirmed=True)
+
+    assert _by_source(outcome.results)[video] == (ApplyStatus.RENAMED, "ok")
+    assert (elsewhere / dest.relative_to(link)).read_bytes() == b"x"
+    assert os.path.samefile(link, elsewhere)
+
+    undone = undo_apply(outcome)
+
+    assert [r.status for r in undone.results] == [ApplyStatus.RENAMED]
+    assert video.read_bytes() == b"x"
+    assert os.path.samefile(link, elsewhere)
+    assert os.listdir(elsewhere) == []
+
+
+def test_a_destination_root_typed_in_another_letter_case_made_a_link_later_is_not_entered(
+    tmp_path: Path,
+) -> None:
+    if not _ignores_letter_case(tmp_path):
+        pytest.skip("needs a disk that ignores letter case")
+    library = tmp_path / "Library"
+    video = _write(library / "Show Name" / "Season 01" / "Show.Name.S01E01.mkv")
+    root = tmp_path / "library"  # the Destination root as typed
+    plan = plan_queue([video], _options(destination_root=root), _provider()).plan
+    [dest] = [e.destination for e in plan.entries]
+    assert dest is not None and library in dest.parents  # spelled as the source's folder
+    elsewhere = tmp_path / "Elsewhere"
+    library.rename(elsewhere)
+    point_folder_at(root, elsewhere)
+
+    outcome = apply_plan(plan, confirmed=True)
+
+    assert _by_source(outcome.results)[video] == _now_a_link(library)
+    moved_along = elsewhere / "Show Name" / "Season 01"
+    assert os.listdir(moved_along) == [video.name]
+    assert outcome.moves == ()
+
+
+@pytest.mark.parametrize("through", ["a link in the queued folder", "a linked Destination root"])
+def test_a_folder_a_target_folder_lies_inside_through_a_link_is_no_straggler(
+    tmp_path: Path, through: str
+) -> None:
+    backups = tmp_path / "Backups"
+    video = _write(backups / "Show.Name.S01E01.mkv")
+    keep = _write(backups / "TV" / "keep.txt")
+    if through == "a link in the queued folder":
+        point_folder_at(backups / "Show Name", backups / "TV")
+        options = _options()
+    else:
+        point_folder_at(tmp_path / "Library", backups / "TV")
+        options = _options(destination_root=tmp_path / "Library")
+    plan = plan_queue([backups], options, _provider()).plan
+    [dest] = [e.destination for e in plan.entries]
+    assert dest is not None
+
+    assert plan.stragglers == ()  # ``TV`` holds the target folder, so it stays
+    outcome = apply_plan(plan, confirmed=True)
+
+    assert _by_source(outcome.results)[video] == (ApplyStatus.RENAMED, "ok")
+    assert dest.read_bytes() == b"x"
+    assert keep.read_bytes() == b"x"
+    assert [m.source for m in outcome.moves] == [video]
+
+
+def test_a_folder_is_never_moved_to_a_place_inside_itself(tmp_path: Path) -> None:
+    folder = tmp_path / "Subs"
+    inside = _write(folder / "English.srt")
+    changes = Changes()
+
+    with pytest.raises(OSError, match="inside the folder"):
+        move_no_replace(folder, folder / "Subs", changes, folder=True)
+
+    assert inside.read_bytes() == b"x"
+    assert os.listdir(folder) == ["English.srt"]
+    assert changes == Changes()

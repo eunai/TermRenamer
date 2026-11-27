@@ -8,11 +8,11 @@ Four parts of the package's dialogs are swapped for the app's own:
   (focus, hover, a theme), so a read from the thread in between would fail the worker
   and stop the app.
 - A folder that cannot be listed or entered (it is gone, the disk refuses to list it,
-  or its names can be read but not looked at) leaves the dialog open and says why, in
-  place of ending the app. Its listing is empty, with ``..`` when the folder above can
-  be read; backspace goes up either way.
+  or its names can be read but not looked at) leaves the dialog open with an empty
+  listing and says why, in place of ending the app; backspace goes up.
 - The file dialog's name field suggests a path as the person types; a path the disk
-  cannot answer for gets no suggestion, in place of ending the app.
+  cannot answer for gets no suggestion, and Enter on it says why on the error line,
+  in place of ending the app.
 - The current folder is shown as written: a folder named ``[$accent]x`` is never read
   as markup.
 """
@@ -29,7 +29,9 @@ from textual import on, work
 from textual.content import Content
 from textual.message import Message
 from textual.widget import Widget
+from textual.widgets import Button, Input
 from textual_fspicker import FileOpen, SelectDirectory
+from textual_fspicker.file_dialog import BaseFileDialog
 from textual_fspicker.parts import CurrentDirectory, DirectoryNavigation
 from textual_fspicker.parts.directory_navigation import DirectoryEntryStyling
 from textual_fspicker.suggest_path import SuggestPath
@@ -115,14 +117,22 @@ def _tail(text: str, width: int) -> str:
     return "…" + "".join(reversed(kept))
 
 
+_CANNOT_USE = "This path cannot be used: {reason}"
+"""What the file dialog's error line says when the disk cannot tell what a typed path
+is."""
+
 _CANNOT_READ = "This folder cannot be read: {reason}"
 """What the dialogs' error line says when a folder cannot be listed."""
 
 
 def _say_unreadable(dialog: FileOpen | SelectDirectory, reason: str) -> None:
     """Say on ``dialog``'s error line, as plain text, why its folder cannot be listed."""
-    text = Content(_CANNOT_READ.format(reason=reason))
-    dialog._set_error(text)  # type: ignore[arg-type]  # noqa: SLF001
+    _say(dialog, _CANNOT_READ.format(reason=reason))
+
+
+def _say(dialog: FileOpen | SelectDirectory, text: str) -> None:
+    """Show ``text`` on ``dialog``'s error line, as plain text."""
+    dialog._set_error(Content(text))  # type: ignore[arg-type]  # noqa: SLF001
 
 
 def _safe(widgets: Iterable[Widget], location: Path) -> Iterator[Widget]:
@@ -165,6 +175,17 @@ class FilePicker(FileOpen):
     def _on_unreadable(self, event: _Listing.Unreadable) -> None:
         event.stop()
         _say_unreadable(self, event.reason)
+
+    @on(Input.Submitted)
+    @on(Button.Pressed, "#select")
+    def _confirm_or_say_why(self, event: Input.Submitted | Button.Pressed) -> None:
+        """Run the package's confirm in place of its own handler; when the disk cannot
+        tell what the typed path is (a name too long), say so and keep the dialog."""
+        event.prevent_default()
+        try:
+            BaseFileDialog._confirm_file(self, event)  # noqa: SLF001
+        except OSError as exc:
+            _say(self, _CANNOT_USE.format(reason=exc.strerror or str(exc)))
 
 
 class FolderPicker(SelectDirectory):

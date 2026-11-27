@@ -56,8 +56,9 @@ class _Way:
     (:func:`~termrenamer.core.planning.folders_on_the_way`), ``real_folders`` those and
     each folder from the owning Source's folder to the source's folder, and ``links``
     the folders among them that the Plan found to be links. Each of ``real_folders``
-    must be a real folder, and each of ``links`` the very link the Plan found; the
-    Destination root itself may be a link."""
+    must be a real folder, and each of ``links`` the very link the Plan found; so the
+    Destination root, which is on the way to the new name, may be a link only when it
+    was that link when the Plan was built."""
 
     new_side: tuple[Path, ...]
     real_folders: tuple[Path, ...]
