@@ -2,12 +2,13 @@
 
 It lists the current Match first (marked), then the first Candidate the search found
 that is not the current Match, then the "type a title" row, as a plain list. With
-no current Match it lists the first two Candidates found. ``↑`` ``↓`` move, ``1`` to ``3`` or
-``enter`` choose, ``/`` goes to typing, and Escape closes it with nothing picked.
+no current Match it lists the first two Candidates found. ``←`` ``→`` or ``↑`` ``↓`` move,
+``1`` to ``3`` or ``enter`` choose, ``/`` goes to typing, and Escape closes it with
+nothing picked; while the typing field has the keys, ``←`` ``→`` move in the field.
 
 With Posters shown it draws the same three as picture tiles side by side, as in the
 mockup: each Candidate's Poster, or "no poster", with its name, year and key under it,
-and the typing field in the third tile. ``←`` ``→`` then move as ``↑`` ``↓`` do. Posters
+and the typing field in the third tile. Posters
 come from the poster store, drawn at once when stored and otherwise downloaded off
 the screen's thread. With Posters hidden or unavailable, or the screen below their
 size, it is the plain list; it changes between the two while it is open.
@@ -244,8 +245,8 @@ class MatchPicker(ModalScreen[Picked | None]):
     BINDINGS = [
         Binding("up", "move(-1)", show=False),
         Binding("down", "move(1)", show=False),
-        Binding("left", "move_across(-1)", show=False),
-        Binding("right", "move_across(1)", show=False),
+        Binding("left", "move(-1)", show=False),
+        Binding("right", "move(1)", show=False),
         Binding("enter", "choose", show=False),
         Binding("slash", "type", show=False),
         Binding("escape", "close", show=False),
@@ -526,14 +527,6 @@ class MatchPicker(ModalScreen[Picked | None]):
         status.display = bool(text)
 
     # ------------------------------------------------------------------ keys
-
-    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        # ``←`` ``→`` move between tiles; the plain list has no use for them.
-        return action != "move_across" or self._tile_size is not None
-
-    def action_move_across(self, step: int) -> None:
-        """``←`` ``→``: as ``↑`` ``↓``, while the tiles show (see :meth:`check_action`)."""
-        self.action_move(step)
 
     def action_move(self, step: int) -> None:
         self.query_one("#picker-typed", _TypedTitle).stop()
