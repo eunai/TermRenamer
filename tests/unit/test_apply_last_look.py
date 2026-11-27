@@ -14,7 +14,7 @@ from termrenamer.core.models import ApplyResult, ApplyStatus, Candidate, Plan
 from termrenamer.core.planning import LeaveOut, PickMatch, PutBack, derive_plan, plan_queue
 
 from .links import needs_symlinks, point_folder_at
-from .test_apply_no_replace import _ignores_letter_case
+from .test_apply_no_replace import _a_tick_after, _ignores_letter_case, _with_the_number_of
 from .test_plan_stragglers import _options, _provider, _two_discs, _write
 
 STALE = (ApplyStatus.SKIP, "stale: source changed since plan")
@@ -415,6 +415,36 @@ def test_a_link_the_plan_found_removed_after_the_preview_gets_no_folder_made_at_
     assert _by_source(outcome.results)[video] == _no_longer(link)
     assert not link.exists(follow_symlinks=False)
     assert outcome.folders_created == () and outcome.moves == ()
+
+
+def test_a_link_the_plan_found_made_again_under_its_number_is_not_that_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    disk_a = tmp_path / "Disk A" / "Show Name"
+    show, plan = _linked_library(tmp_path, disk_a)
+    link = tmp_path / "Library" / "Show Name"
+    was = os.lstat(link)
+    # Another program makes the link again, to the same folder, and it gets the number
+    # of the link removed, as ext4 and tmpfs give it out at once.
+    _unpoint(link)
+    _a_tick_after(tmp_path, was.st_mtime_ns)
+    point_folder_at(link, disk_a)
+    new = os.lstat(link)
+    real_lstat = os.lstat
+
+    def lstat(path: object, *args: object, **kwargs: object) -> os.stat_result:
+        st = real_lstat(path, *args, **kwargs)  # type: ignore[arg-type]
+        same = (st.st_dev, st.st_ino) == (new.st_dev, new.st_ino)
+        return _with_the_number_of(st, was) if same else st
+
+    monkeypatch.setattr(os, "lstat", lstat)
+    outcome = apply_plan(plan, confirmed=True)
+    monkeypatch.undo()
+
+    video = show / "Disc 1" / "Show.Name.S01E01.mkv"
+    assert _by_source(outcome.results)[video] == _no_longer(link)
+    assert os.listdir(disk_a) == []
+    assert outcome.moves == ()
 
 
 def test_a_link_the_plan_found_whose_own_target_is_pointed_elsewhere_is_never_entered(

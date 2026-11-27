@@ -686,7 +686,9 @@ def test_a_file_that_changes_while_undo_copies_it_to_another_drive_is_left(
     monkeypatch.undo()
 
     status, reason = _by_source(undone.results)[notes]
-    assert (status, "changed during the copy" in reason) == (ApplyStatus.FAIL, True)
+    # Seen as the file is opened to be copied, or once it is copied.
+    changed = "changed before the copy" in reason or "changed during the copy" in reason
+    assert (status, changed) == (ApplyStatus.FAIL, True)
     assert notes.read_bytes() == b"written during the copy back"
     old = show / "Disc 1"
     assert not (old / "notes.txt").exists()

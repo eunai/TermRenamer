@@ -858,9 +858,83 @@ def _after_the_claim(
     monkeypatch.setattr(os, "close", close)
 
 
+def _with_the_number_of(st: os.stat_result, was: os.stat_result) -> os.stat_result:
+    """``st`` with the device and inode number of ``was``."""
+    _, (seq, extra) = st.__reduce__()
+    fields = list(seq)
+    fields[1], fields[2] = was.st_ino, was.st_dev  # st_ino, st_dev
+    return os.stat_result(fields, extra)
+
+
+def _another_program_replaces(
+    monkeypatch: pytest.MonkeyPatch,
+    path: Path,
+    data: bytes,
+    *,
+    refused: list[Path],
+    like: os.stat_result | None = None,
+) -> None:
+    """Another program removes the file at ``path`` and writes ``data`` there, and the
+    new file gets the inode number of the one removed, as ext4 and tmpfs give it out at
+    once: every ``lstat``, ``stat`` and ``fstat`` of the new file reports the old device
+    and number. With ``like``, the new file is given ``like``'s modification time. When
+    the removal is refused (Windows refuses to remove a file Apply holds open), nothing
+    is written and ``path`` is added to ``refused``."""
+    was = os.lstat(path)
+    try:
+        os.unlink(path)
+    except PermissionError:
+        refused.append(path)
+        return
+    path.write_bytes(data)
+    if like is not None:
+        os.utime(path, ns=(like.st_atime_ns, like.st_mtime_ns))
+    _reports_the_number_of(monkeypatch, os.lstat(path), was)
+
+
+def _reports_the_number_of(
+    monkeypatch: pytest.MonkeyPatch, new: os.stat_result, was: os.stat_result
+) -> None:
+    """Every ``lstat``, ``stat`` and ``fstat`` of the file ``new`` found reports the
+    device and inode number of ``was``."""
+    key = (new.st_dev, new.st_ino)
+
+    def numbered(real: Callable[..., os.stat_result]) -> Callable[..., os.stat_result]:
+        def look(*args: object, **kwargs: object) -> os.stat_result:
+            st = real(*args, **kwargs)
+            return _with_the_number_of(st, was) if (st.st_dev, st.st_ino) == key else st
+
+        return look
+
+    for name in ("lstat", "stat", "fstat"):
+        monkeypatch.setattr(os, name, numbered(getattr(os, name)))
+
+
 def _skip_the_hard_link_on_windows(path_name: str) -> None:
     if WINDOWS and path_name == "link":
         pytest.skip("a Windows move makes no hard link: its rename leaves no second name")
+
+
+def _another_program_removes(path: Path, *, refused: list[Path]) -> None:
+    """Another program removes ``path``; when the removal is refused (Windows refuses to
+    remove a file Apply holds open), ``path`` is added to ``refused``."""
+    try:
+        os.unlink(path)
+    except PermissionError:
+        refused.append(path)
+
+
+def _a_tick_after(folder: Path, ns: int) -> None:
+    """Return once a file made in ``folder`` gets times other than ``ns``: a filesystem
+    whose clock moves in coarse steps gives two files made within one step the same
+    times."""
+    probe = folder / "clock probe"
+    while True:
+        probe.write_bytes(b"")
+        st = os.lstat(probe)
+        probe.unlink()
+        if st.st_mtime_ns != ns and st.st_ctime_ns != ns:
+            return
 
 
 @pytest.mark.parametrize("path_name", ["link", "copy EXDEV"])
@@ -871,40 +945,288 @@ def test_a_source_whose_old_name_goes_once_its_new_name_holds_it_stays_at_its_ne
     notes = _write(show / "Disc 1" / "notes.txt", b"my notes")
     plan = _plan(show)
     [dest] = [s.destination for s in plan.stragglers if s.source == notes]
-    real_unlink = os.unlink
-    _after_the_claim(monkeypatch, notes, dest, path_name, lambda: real_unlink(notes))
+    refused: list[Path] = []
+    _after_the_claim(
+        monkeypatch,
+        notes,
+        dest,
+        path_name,
+        lambda: _another_program_removes(notes, refused=refused),
+    )
 
     outcome = apply_plan(plan, confirmed=True)
     monkeypatch.undo()
 
+    # On Windows Apply holds the source open, so the other program cannot remove it
+    # and Apply removes the old name itself: the outcome is the same.
+    assert refused == ([notes] if WINDOWS else [])
     assert dest.read_bytes() == b"my notes"
     assert not notes.exists(follow_symlinks=False)
     assert (notes, dest) in [(m.source, m.destination) for m in outcome.moves]
     assert outcome.files_left_behind == ()
 
 
+def _replaces(
+    monkeypatch: pytest.MonkeyPatch,
+    path: Path,
+    data: bytes,
+    number: str,
+    *,
+    refused: list[Path],
+    like: os.stat_result | None = None,
+) -> Callable[[], None]:
+    """Another program replaces the file at ``path`` with ``data``: the new file gets a
+    new inode number, or (``number`` ``"the old number"``) the number of the file removed,
+    as ext4 and tmpfs give it out at once. With ``like``, the new file is made a clock
+    step after ``like``'s change time and given ``like``'s modification time."""
+
+    def replace() -> None:
+        if like is not None:
+            _a_tick_after(path.parent, like.st_ctime_ns)
+        if number == "the old number":
+            _another_program_replaces(monkeypatch, path, data, refused=refused, like=like)
+            return
+        _another_program_removes(path, refused=refused)
+        if not refused:
+            path.write_bytes(data)
+
+    return replace
+
+
+def _kept_both(outcome: object, notes: Path, dest: Path, theirs: bytes) -> None:
+    assert _by_source(outcome.stragglers)[notes][0] is ApplyStatus.FAIL  # type: ignore[attr-defined]
+    assert dest.read_bytes() == b"my notes"
+    assert notes.read_bytes() == theirs
+    assert outcome.files_left_behind == (dest,)  # type: ignore[attr-defined]
+
+
+def _moved_as_held(outcome: object, notes: Path, dest: Path) -> None:
+    """Windows: the other program could not remove the source Apply held open, so the
+    file moved."""
+    assert _by_source(outcome.stragglers)[notes] == (ApplyStatus.RENAMED, "ok")  # type: ignore[attr-defined]
+    assert dest.read_bytes() == b"my notes"
+    assert not notes.exists(follow_symlinks=False)
+    assert outcome.files_left_behind == ()  # type: ignore[attr-defined]
+
+
+NUMBERS = ["a new number", "the old number"]
+
+
+@pytest.mark.parametrize("number", NUMBERS)
 @pytest.mark.parametrize("path_name", ["link", "copy EXDEV"])
 def test_a_source_replaced_once_its_new_name_holds_it_keeps_both_files(
+    show: Path, monkeypatch: pytest.MonkeyPatch, path_name: str, number: str
+) -> None:
+    _skip_the_hard_link_on_windows(path_name)
+    notes = _write(show / "Disc 1" / "notes.txt", b"my notes")
+    plan = _plan(show)
+    [dest] = [s.destination for s in plan.stragglers if s.source == notes]
+    refused: list[Path] = []
+    theirs = b"another program's notes"
+    replace = _replaces(monkeypatch, notes, theirs, number, refused=refused)
+
+    _after_the_claim(monkeypatch, notes, dest, path_name, replace)
+    outcome = apply_plan(plan, confirmed=True)
+    monkeypatch.undo()
+
+    if refused:
+        _moved_as_held(outcome, notes, dest)
+    else:
+        assert not WINDOWS or path_name != "copy EXDEV"
+        _kept_both(outcome, notes, dest, theirs)
+
+
+@pytest.mark.parametrize("path_name", ["link", "copy EXDEV"])
+def test_a_source_replaced_by_a_file_of_its_size_and_time_under_its_number_keeps_both_files(
     show: Path, monkeypatch: pytest.MonkeyPatch, path_name: str
 ) -> None:
     _skip_the_hard_link_on_windows(path_name)
     notes = _write(show / "Disc 1" / "notes.txt", b"my notes")
     plan = _plan(show)
     [dest] = [s.destination for s in plan.stragglers if s.source == notes]
-    real_unlink = os.unlink
+    refused: list[Path] = []
+    theirs = b"my nites"  # the same size, and given the same modification time
+    replace = _replaces(
+        monkeypatch, notes, theirs, "the old number", refused=refused, like=os.lstat(notes)
+    )
 
-    def replace_it() -> None:
-        real_unlink(notes)
-        notes.write_bytes(b"another program's notes")
+    _after_the_claim(monkeypatch, notes, dest, path_name, replace)
+    outcome = apply_plan(plan, confirmed=True)
+    monkeypatch.undo()
 
-    _after_the_claim(monkeypatch, notes, dest, path_name, replace_it)
+    if refused:
+        _moved_as_held(outcome, notes, dest)
+    else:
+        _kept_both(outcome, notes, dest, theirs)
+
+
+@pytest.mark.parametrize("name", ["setup.exe", "install.BAT"])
+def test_a_program_file_copied_to_another_drive_is_moved(
+    show: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    # On Windows a look by name adds the execute bits to a program's name, and a look
+    # through the file held open for its copy does not.
+    program = _write(show / "Disc 1" / name, b"a program")
+    plan = _plan(show)
+    [dest] = [s.destination for s in plan.stragglers if s.source == program]
+
+    _across_drives(monkeypatch, only=program)
+    outcome = apply_plan(plan, confirmed=True)
+    monkeypatch.undo()
+
+    assert _by_source(outcome.stragglers)[program] == (ApplyStatus.RENAMED, "ok")
+    assert dest.read_bytes() == b"a program"
+    assert not program.exists(follow_symlinks=False)
+
+
+def test_a_drive_that_reports_no_inode_numbers_still_moves_files_and_folders(
+    show: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    notes = _write(show / "Disc 1" / "notes.txt", b"my notes")
+    subs = show / "Disc 1" / "Subs"
+    plan = _plan(show)
+    dests = {s.source: s.destination for s in plan.stragglers}
+
+    def no_number(real: Callable[..., os.stat_result]) -> Callable[..., os.stat_result]:
+        def look(*args: object, **kwargs: object) -> os.stat_result:
+            _, (seq, extra) = real(*args, **kwargs).__reduce__()
+            fields = list(seq)
+            fields[1] = 0  # st_ino, as some network drives report it
+            return os.stat_result(fields, extra)
+
+        return look
+
+    _across_drives(monkeypatch, only=notes)
+    for name in ("lstat", "stat", "fstat"):
+        monkeypatch.setattr(os, name, no_number(getattr(os, name)))
+    outcome = apply_plan(plan, confirmed=True)
+    monkeypatch.undo()
+
+    results = _by_source(outcome.stragglers)
+    assert results[notes] == (ApplyStatus.RENAMED, "ok")
+    assert results[subs] == (ApplyStatus.RENAMED, "ok")
+    assert dests[notes].read_bytes() == b"my notes"
+    assert (dests[subs] / "English.srt").read_bytes() == b"x"
+
+
+def test_a_failed_copy_whose_source_was_replaced_under_its_number_is_kept(
+    show: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    notes = _write(show / "Disc 1" / "notes.txt", b"my notes")
+    plan = _plan(show)
+    [dest] = [s.destination for s in plan.stragglers if s.source == notes]
+    refused: list[Path] = []
+    theirs = b"another program's notes"
+    replace = _replaces(monkeypatch, notes, theirs, "the old number", refused=refused)
+    real_fsync = os.fsync
+
+    def fsync(fd: int) -> None:
+        if os.fstat(fd).st_size == len(b"my notes"):  # the notes' copy
+            replace()
+            raise OSError(errno.EIO, "Input/output error")
+        real_fsync(fd)
+
+    _across_drives(monkeypatch, only=notes)
+    monkeypatch.setattr(os, "fsync", fsync)
     outcome = apply_plan(plan, confirmed=True)
     monkeypatch.undo()
 
     assert _by_source(outcome.stragglers)[notes][0] is ApplyStatus.FAIL
-    assert dest.read_bytes() == b"my notes"
-    assert notes.read_bytes() == b"another program's notes"
-    assert outcome.files_left_behind == (dest,)
+    if refused:  # Windows: the source Apply holds open stays, so its copy is removed
+        assert notes.read_bytes() == b"my notes"
+        assert outcome.files_left_behind == ()
+        assert not dest.exists(follow_symlinks=False)
+        assert not [n for n in os.listdir(dest.parent) if n.startswith(".termrenamer-")]
+        return
+    assert notes.read_bytes() == theirs
+    [left] = outcome.files_left_behind
+    assert left == dest and dest.read_bytes() == b"my notes"
+
+
+@pytest.mark.skipif(
+    WINDOWS,
+    reason=(
+        "Windows gives no change time that a look by name and a look through an open "
+        "file agree on, and a file made again under a removed file's name keeps its "
+        "creation time, so no look tells this replacement from the source"
+    ),
+)
+def test_a_source_replaced_under_its_number_just_before_its_copy_is_not_moved(
+    show: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    notes = _write(show / "Disc 1" / "notes.txt", b"my notes")
+    plan = _plan(show)
+    [dest] = [s.destination for s in plan.stragglers if s.source == notes]
+    refused: list[Path] = []
+    theirs = b"my nites"
+    replace = _replaces(
+        monkeypatch, notes, theirs, "the old number", refused=refused, like=os.lstat(notes)
+    )
+    real_open = os.open
+    done: list[bool] = []
+
+    def open_(path: object, flags: int, *args: object, **kwargs: object) -> int:
+        if not done and os.fspath(path) == str(notes) and not flags & os.O_CREAT:  # type: ignore[call-overload]
+            done.append(True)
+            replace()
+        return real_open(path, flags, *args, **kwargs)  # type: ignore[arg-type]
+
+    _across_drives(monkeypatch, only=notes)
+    monkeypatch.setattr(os, "open", open_)
+    outcome = apply_plan(plan, confirmed=True)
+    monkeypatch.undo()
+
+    status, reason = _by_source(outcome.stragglers)[notes]
+    assert status is ApplyStatus.FAIL
+    assert "the source changed before the copy" in reason
+    assert notes.read_bytes() == theirs
+    assert not dest.exists(follow_symlinks=False)
+    assert all(m.source != notes for m in outcome.moves)
+    assert outcome.files_left_behind == ()
+
+
+def test_a_folder_replaced_under_its_number_during_its_walk_is_left_as_it_is(
+    show: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    subs = show / "Disc 1" / "Subs"
+    english, french = subs / "English.srt", _write(subs / "French.srt", b"fr")
+    plan = _plan(show)
+    [dest] = [s.destination for s in plan.stragglers if s.source == subs]
+    was = os.lstat(subs)
+    theirs = b"another program's subtitles"
+
+    def replace_the_folder() -> None:
+        os.unlink(french)
+        os.rmdir(subs)
+        os.mkdir(subs)
+        _write(french, theirs)
+        _reports_the_number_of(monkeypatch, os.lstat(subs), was)
+
+    real_unlink, real_rename = os.unlink, os.rename
+    done: list[bool] = []
+
+    def after_english(real: Callable[..., None]) -> Callable[..., None]:
+        def call(path: object, *args: object, **kwargs: object) -> None:
+            real(path, *args, **kwargs)
+            if not done and os.fspath(path) == str(english):  # type: ignore[call-overload]
+                done.append(True)
+                replace_the_folder()
+
+        return call
+
+    # English.srt is moved first: by a hard link and an unlink, or on Windows a rename.
+    monkeypatch.setattr(os, "unlink", after_english(real_unlink))
+    monkeypatch.setattr(os, "rename", after_english(real_rename))
+    outcome = apply_plan(plan, confirmed=True)
+    monkeypatch.undo()
+
+    status, reason = _by_source(outcome.stragglers)[subs]
+    assert status is ApplyStatus.FAIL
+    assert "the folder changed during its move" in reason
+    assert french.read_bytes() == theirs
+    assert (dest / "English.srt").read_bytes() == b"x"
+    assert not (dest / "French.srt").exists(follow_symlinks=False)
+    assert all(m.source != french for m in outcome.moves)
 
 
 @pytest.mark.parametrize("path_name", ["link", "copy EXDEV"])
