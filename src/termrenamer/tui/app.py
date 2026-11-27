@@ -307,8 +307,15 @@ class TermRenamerApp(App[None]):
             if all(self._target(a) is not None and view.key_enabled(a) for a in actions):
                 if self._pick is not None and "discard_plan" in actions:
                     key = replace(key, hint="Abandon change")  # what esc does meanwhile
+                if "leave_out" in actions and self._selected_is_left_out():
+                    key = replace(key, hint="Put back")  # what x does to it
                 shown.append(key)
         return shown
+
+    def _selected_is_left_out(self) -> bool:
+        """Whether the Preview's selected file is left out, so ``x`` puts it back."""
+        video = self.query_one(PreviewStage).selected_file
+        return video is not None and video.status is EntryStatus.LEFT_OUT
 
     def _refused_now(self, action: str) -> bool:
         """Whether ``action`` refuses now because an Apply or an Undo runs."""

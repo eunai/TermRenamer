@@ -27,6 +27,7 @@ from .screen_driver import (
     names_in,
     press,
     queue,
+    screen_lines,
     screen_text,
     settings,
     text_of,
@@ -128,6 +129,31 @@ async def test_x_leaves_a_not_recognised_file_out_and_puts_it_back(tmp_path: Pat
     assert "Left out of the Plan: Apply does not touch this file." in left_out
     assert has_row(put_back, "holiday.mkv", "not recognised 1")
     assert "Put back in the Plan." in put_back
+
+
+async def test_a_left_out_file_with_no_new_name_says_it_stays_and_x_offers_put_back(
+    tmp_path: Path,
+) -> None:
+    """A not recognised file has no new name: left out, the footer says it is not
+    renamed, never a name it does not have, and the footer's ``x`` puts it back, as
+    the button says."""
+    app = make_app()
+    async with app.run_test(size=WIDE) as pilot:
+        await queue(pilot, tv_backups(tmp_path))
+        await build(pilot)
+        # Harbour Lights, Night Ferry, holiday.mkv
+        await press(pilot, "down", "down")
+        hints_before = screen_lines(app)[-1]
+        await press(pilot, "x")
+        to = text_of(app, "#stage-lines").splitlines()[1]
+        hints = screen_lines(app)[-1]
+        button = text_of(app, "#leave-out")
+
+    assert "x Leave out" in hints_before
+    assert to.split(maxsplit=1) == ["to", "not renamed · left out, so Apply does not touch it"]
+    assert "None" not in to
+    assert "x Put back" in hints and "x Leave out" not in hints
+    assert button.split() == ["x", "Put", "back"]
 
 
 async def test_x_leaves_a_file_with_no_match_out(tmp_path: Path) -> None:

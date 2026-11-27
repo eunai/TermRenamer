@@ -373,14 +373,19 @@ class PreviewStage(TitleListStage):
         notes.extend(_sidecar_notes(row.sidecars_of(video), moves=why is None))
         note = "".join(f" · {n}" for n in notes)
         to = str(video.destination) if video.destination is not None else "not renamed"
+        named_if_put_back = False
         if video.status is EntryStatus.LEFT_OUT and self._plan is not None:
-            to = str(_name_if_put_back(self._plan, video))
+            back = _name_if_put_back(self._plan, video)
+            # A file with no new name (not recognised, no match) stays where it is.
+            if back is not None:
+                to, named_if_put_back = str(back), True
         if why is None:
             colour = "$warning" if video.status is EntryStatus.NAME_TAKEN else "$accent"
         elif video.status is EntryStatus.READY:
             colour = "$tr-dim"
         elif video.status is EntryStatus.LEFT_OUT:
-            colour = "$tr-dim strike"  # the name it would have, struck through
+            # The name it would have, struck through; "not renamed" when it has none.
+            colour = "$tr-dim strike" if named_if_put_back else "$tr-dim"
         else:
             colour = StatusWord(video.status).style
         return (
