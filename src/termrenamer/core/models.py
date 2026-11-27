@@ -343,3 +343,35 @@ class ApplyOutcome:
 def videos_of(entries: Iterable[PlanEntry]) -> tuple[PlanEntry, ...]:
     """The video entries of ``entries``, without the Sidecars, in their order."""
     return tuple(entry for entry in entries if not entry.is_sidecar)
+
+
+@dataclass(frozen=True, slots=True)
+class UndoOutcome:
+    """Everything one Undo did, in the order it did it.
+
+    ``results`` holds one result per move of the Apply, last move first: ``source`` is
+    the file's new place and ``destination`` its old place. ``RENAMED`` means it went
+    back; ``SKIP`` that a check left it (it changed, or its old place is taken);
+    ``FAIL`` that an error left it. ``moves`` lists every move Undo made.
+    ``folders_made_again`` lists each folder Apply removed that Undo made again, each
+    before the folders inside it; ``folders_removed`` each folder Apply made that Undo
+    left empty and removed. ``files_left_behind`` lists each file Undo made at an old
+    name and could not remove after its move failed, so the file is at its new place
+    too. Each change is listed once its call succeeded.
+    """
+
+    results: tuple[ApplyResult, ...]
+    moves: tuple[Move, ...]
+    folders_made_again: tuple[Path, ...]
+    folders_removed: tuple[Path, ...]
+    files_left_behind: tuple[Path, ...] = ()
+
+    @property
+    def put_back(self) -> int:
+        """How many files went back to their old places."""
+        return sum(1 for r in self.results if r.status is ApplyStatus.RENAMED)
+
+    @property
+    def left(self) -> int:
+        """How many files Undo left at their new places."""
+        return len(self.results) - self.put_back
