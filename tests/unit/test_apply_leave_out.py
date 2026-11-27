@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
-
-import pytest
 
 from termrenamer.core.apply import apply_plan
 from termrenamer.core.models import (
@@ -25,6 +22,7 @@ from termrenamer.core.title_rows import (
     title_rows,
 )
 
+from .links import point_folder_at
 from .test_plan_leave_out import TvStandIn
 
 
@@ -149,7 +147,6 @@ def test_a_title_with_a_file_of_no_match_says_no_match_before_left_out(tmp_path:
     assert [row.status for row in title_rows(plan)] == [EntryStatus.NO_MATCH]
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="symbolic links need privileges on Windows")
 def test_apply_skips_a_video_whose_folder_was_pointed_elsewhere_after_planning(
     tmp_path: Path,
 ) -> None:
@@ -160,7 +157,7 @@ def test_apply_skips_a_video_whose_folder_was_pointed_elsewhere_after_planning(
     for name in ("Show.Name.S01E01.mkv", "Show.Name.S01E02.mkv"):
         (other / name).write_bytes(b"another file")
     folder.rename(tmp_path / "Backups moved")
-    folder.symlink_to(other, target_is_directory=True)
+    point_folder_at(folder, other)
 
     results = apply_plan(plan, confirmed=True).results
 

@@ -6,7 +6,6 @@ Real temporary folders and a stand-in Provider, through :func:`plan_queue` and
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -15,6 +14,8 @@ import pytest
 from termrenamer.core.models import Candidate, EntryStatus, Plan, PlanEntry, PlanOptions, ScanMode
 from termrenamer.core.planning import LeaveOut, PutBack, derive_plan, plan_queue
 from termrenamer.core.policies import NameTakenPolicy
+
+from .links import point_folder_at
 
 PILOT = "Show Name - S01E01 - Pilot"
 
@@ -233,7 +234,6 @@ def test_a_sidecar_cannot_be_left_out_on_its_own_and_only_a_left_out_video_is_pu
         derive_plan(plan, LeaveOut(replace(video, source=tmp_path / "elsewhere.mkv")))
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="symbolic links need privileges on Windows")
 def test_leave_out_changes_the_entry_named_even_when_its_folder_now_points_elsewhere(
     tmp_path: Path,
 ) -> None:
@@ -243,7 +243,7 @@ def test_leave_out_changes_the_entry_named_even_when_its_folder_now_points_elsew
     ).plan
     # After planning, Disc B is swapped for a link to Disc A.
     (tmp_path / "Disc B").rename(tmp_path / "Disc B moved")
-    (tmp_path / "Disc B").symlink_to(tmp_path / "Disc A", target_is_directory=True)
+    point_folder_at(tmp_path / "Disc B", tmp_path / "Disc A")
 
     derived = derive_plan(plan, LeaveOut(_video(plan, "Disc B")))
 
@@ -260,10 +260,9 @@ def _redirect_disc_b_before_disc_a(tmp_path: Path) -> None:
     for name in ("Show.Name.S01E01.mkv", "Show.Name.S01E01.srt"):
         (copy / name).write_bytes((tmp_path / "Disc B" / name).read_bytes())
     (tmp_path / "Disc B").rename(tmp_path / "Disc B moved")
-    (tmp_path / "Disc B").symlink_to(copy, target_is_directory=True)
+    point_folder_at(tmp_path / "Disc B", copy)
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="symbolic links need privileges on Windows")
 def test_a_derived_plan_keeps_the_order_the_build_recorded_when_a_folder_is_redirected(
     tmp_path: Path,
 ) -> None:

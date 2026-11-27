@@ -5,15 +5,14 @@ Real temporary folders and a stand-in Provider, through :func:`plan_queue`.
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass
 from pathlib import Path
-
-import pytest
 
 from termrenamer.core.models import Candidate, EntryStatus, Plan, PlanEntry, PlanOptions, ScanMode
 from termrenamer.core.planning import plan_queue
 from termrenamer.core.policies import NameTakenPolicy
+
+from .links import needs_symlinks
 
 PILOT = "Show Name - S01E01 - Pilot"
 
@@ -159,8 +158,8 @@ def test_a_file_already_at_its_name_is_not_taken_by_itself_under_skip(tmp_path: 
     assert (entry.destination, entry.status) == (entry.source, EntryStatus.READY)
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="symbolic links need privileges on Windows")
 def test_under_skip_a_broken_link_at_the_wanted_name_counts_as_taken(tmp_path: Path) -> None:
+    needs_symlinks(tmp_path)
     (tmp_path / "Show.Name.S01E01.mkv").write_bytes(b"a")
     (tmp_path / f"{PILOT}.mkv").symlink_to(tmp_path / "gone.mkv")
 

@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
-
-import pytest
 
 from termrenamer.core.collisions import allocate_destination
 
@@ -51,7 +48,12 @@ def test_no_os_replace_in_apply_modules() -> None:
     assert "os.replace" not in text
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="case-only rename test needs case-sensitive FS")
 def test_case_only_samefile_skips_suffix(tmp_path: Path) -> None:
-    # Placeholder: on Linux could create Foo.mkv and verify samefile
-    _ = tmp_path
+    source = tmp_path / "show - s01e01 - pilot.mkv"
+    source.write_bytes(b"x")
+    desired = tmp_path / "Show - S01E01 - Pilot.mkv"
+
+    # Where letter case is ignored the desired name is the source itself; elsewhere it is free.
+    got = allocate_destination(desired, source=source, occupied=set())
+
+    assert got == desired

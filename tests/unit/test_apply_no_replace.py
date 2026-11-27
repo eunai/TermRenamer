@@ -17,6 +17,7 @@ from termrenamer.core.models import ApplyResult, ApplyStatus, Candidate, Plan
 from termrenamer.core.moving import Changes, move_no_replace
 from termrenamer.core.planning import plan_queue
 
+from .links import needs_symlinks, point_folder_at
 from .test_plan_queue import TvStandIn
 from .test_plan_stragglers import _options, _provider, _two_discs, _write
 
@@ -98,6 +99,17 @@ def _claims(
         monkeypatch.setattr(os, name, fake)
 
 
+def _across_drives(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every move takes the copy path: a hard link, and on Windows a rename, fails as it
+    does to another drive."""
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise OSError(errno.EXDEV, "Invalid cross-device link")
+
+    monkeypatch.setattr(os, "link", refuse)
+    monkeypatch.setattr(os, "rename", refuse)
+
+
 def _by_source(results: tuple[ApplyResult, ...]) -> dict[Path, tuple[ApplyStatus, str]]:
     return {r.source: (r.status, r.reason) for r in results}
 
@@ -134,8 +146,14 @@ PATHS = {"link": None, "copy EXDEV": errno.EXDEV, "copy ENOTSUP": errno.ENOTSUP}
 def test_nothing_that_appears_at_a_new_name_just_before_it_is_claimed_is_replaced(
     show: Path, monkeypatch: pytest.MonkeyPatch, item: str, kind: str, path_name: str
 ) -> None:
-    if WINDOWS and (kind == "broken link" or path_name == "copy ENOTSUP"):
-        pytest.skip("no symbolic links without privilege; Windows copies only across drives")
+    if WINDOWS and path_name == "copy ENOTSUP":
+        # A hard link that fails on a filesystem without them: Windows renames instead.
+        pytest.skip(
+            "Windows moves a file by rename, so a filesystem with no hard links "
+            "takes no copy path there"
+        )
+    if kind == "broken link":
+        needs_symlinks(show)
     relative, listed_as, data = ITEMS[item]
     source = show.joinpath(*relative.split("/"))
     plan = _plan(show)
@@ -199,7 +217,6 @@ def test_a_case_only_rename_is_made(tmp_path: Path) -> None:
     assert [(m.source, m.destination) for m in changes.moves] == [(source, dest)]
 
 
-@pytest.mark.skipif(WINDOWS, reason="Windows copies only across drives")
 def test_a_copy_whose_source_changes_during_it_fails_and_leaves_the_source(
     show: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -208,15 +225,12 @@ def test_a_copy_whose_source_changes_during_it_fails_and_leaves_the_source(
     [dest] = [s.destination for s in plan.stragglers if s.source == notes]
     real_fsync = os.fsync
 
-    def no_link(*args: object, **kwargs: object) -> None:
-        raise OSError(errno.EXDEV, "Invalid cross-device link")
-
     def fsync(fd: int) -> None:
         if os.fstat(fd).st_size == len(b"my notes"):  # the notes' copy
             notes.write_bytes(b"my notes, and more")
         real_fsync(fd)
 
-    monkeypatch.setattr(os, "link", no_link)
+    _across_drives(monkeypatch)
     monkeypatch.setattr(os, "fsync", fsync)
     outcome = apply_plan(plan, confirmed=True)
     monkeypatch.undo()
@@ -230,7 +244,6 @@ def test_a_copy_whose_source_changes_during_it_fails_and_leaves_the_source(
     assert outcome.files_left_behind == ()
 
 
-@pytest.mark.skipif(WINDOWS, reason="Windows copies only across drives")
 def test_a_failed_copy_that_cannot_be_removed_is_listed_as_left_behind(
     show: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -238,9 +251,6 @@ def test_a_failed_copy_that_cannot_be_removed_is_listed_as_left_behind(
     plan = _plan(show)
     [dest] = [s.destination for s in plan.stragglers if s.source == notes]
     real_unlink, real_fsync = os.unlink, os.fsync
-
-    def no_link(*args: object, **kwargs: object) -> None:
-        raise OSError(errno.EXDEV, "Invalid cross-device link")
 
     def fsync(fd: int) -> None:
         if os.fstat(fd).st_size == len(b"my notes"):  # the notes' copy
@@ -252,7 +262,7 @@ def test_a_failed_copy_that_cannot_be_removed_is_listed_as_left_behind(
             raise PermissionError(errno.EACCES, "Permission denied", str(dest))
         real_unlink(path, *args, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(os, "link", no_link)
+    _across_drives(monkeypatch)
     monkeypatch.setattr(os, "fsync", fsync)
     monkeypatch.setattr(os, "unlink", unlink)
     outcome = apply_plan(plan, confirmed=True)
@@ -444,7 +454,6 @@ def test_a_case_only_rename_whose_new_name_cannot_be_confirmed_fails_and_is_reco
     assert [(m.source, m.destination) for m in changes.moves] == [(source, dest)]
 
 
-@pytest.mark.skipif(WINDOWS, reason="Windows copies only across drives")
 def test_a_copy_whose_source_changes_just_before_its_removal_keeps_the_source(
     show: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -453,9 +462,6 @@ def test_a_copy_whose_source_changes_just_before_its_removal_keeps_the_source(
     [dest] = [s.destination for s in plan.stragglers if s.source == notes]
     real_open, real_close = os.open, os.close
     copies: list[int] = []
-
-    def no_link(*args: object, **kwargs: object) -> None:
-        raise OSError(errno.EXDEV, "Invalid cross-device link")
 
     def open_(path: object, flags: int, *args: object, **kwargs: object) -> int:
         fd = real_open(path, flags, *args, **kwargs)  # type: ignore[arg-type]
@@ -469,7 +475,7 @@ def test_a_copy_whose_source_changes_just_before_its_removal_keeps_the_source(
             copies.remove(fd)
             notes.write_bytes(b"my notes, newer")
 
-    monkeypatch.setattr(os, "link", no_link)
+    _across_drives(monkeypatch)
     monkeypatch.setattr(os, "open", open_)
     monkeypatch.setattr(os, "close", close)
     outcome = apply_plan(plan, confirmed=True)
@@ -483,7 +489,6 @@ def test_a_copy_whose_source_changes_just_before_its_removal_keeps_the_source(
     assert outcome.files_left_behind == ()
 
 
-@pytest.mark.skipif(WINDOWS, reason="Windows copies only across drives")
 def test_a_new_name_made_by_exclusive_create_is_listed_until_its_copy_is_removed(
     show: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -494,9 +499,6 @@ def test_a_new_name_made_by_exclusive_create_is_listed_until_its_copy_is_removed
     made: list[int] = []
     raised: list[int] = []
     closed: list[int] = []
-
-    def no_link(*args: object, **kwargs: object) -> None:
-        raise OSError(errno.EXDEV, "Invalid cross-device link")
 
     def open_(path: object, flags: int, *args: object, **kwargs: object) -> int:
         fd = real_open(path, flags, *args, **kwargs)  # type: ignore[arg-type]
@@ -514,7 +516,7 @@ def test_a_new_name_made_by_exclusive_create_is_listed_until_its_copy_is_removed
         closed.append(fd)
         real_close(fd)
 
-    monkeypatch.setattr(os, "link", no_link)
+    _across_drives(monkeypatch)
     monkeypatch.setattr(os, "open", open_)
     monkeypatch.setattr(os, "fstat", fstat)
     monkeypatch.setattr(os, "close", close)
@@ -549,10 +551,10 @@ def test_a_move_is_kept_whatever_reading_its_new_place_raises(
     assert (notes, dest) in [(m.source, m.destination) for m in outcome.moves]
 
 
-@pytest.mark.skipif(WINDOWS, reason="symbolic links need a privilege on Windows")
 def test_a_link_to_a_folder_is_moved_as_itself_and_never_entered(
     show: Path, tmp_path: Path
 ) -> None:
+    needs_symlinks(tmp_path)
     elsewhere = tmp_path / "Elsewhere"
     _write(elsewhere / "bonus.txt", b"bonus")
     (show / "Disc 1" / "Extras").symlink_to(elsewhere, target_is_directory=True)
@@ -566,7 +568,7 @@ def test_a_link_to_a_folder_is_moved_as_itself_and_never_entered(
     season = show / "Show Name" / "Season 01"
     for moved in (season / "Extras", season / "Subs" / "Linked"):
         assert moved.is_symlink()
-        assert os.readlink(moved) == str(elsewhere)
+        assert os.path.samestat(os.stat(moved), os.stat(elsewhere))
     assert _by_source(outcome.stragglers)[show / "Disc 1" / "Extras"] == (ApplyStatus.RENAMED, "ok")
     assert (elsewhere / "bonus.txt").read_bytes() == b"bonus"
     assert all(elsewhere not in m.source.parents for m in outcome.moves)
@@ -599,6 +601,26 @@ def test_a_junction_is_never_entered(
         assert "junction" in reason
         assert (extras / "behind.txt").read_bytes() == b"behind"
         assert (inner / "behind.txt").read_bytes() == b"behind"
+
+
+@pytest.mark.skipif(not WINDOWS, reason="a junction exists only on Windows")
+def test_a_real_junction_is_moved_as_itself_and_never_entered(show: Path, tmp_path: Path) -> None:
+    elsewhere = tmp_path / "Elsewhere"
+    _write(elsewhere / "bonus.txt", b"bonus")
+    extras = show / "Disc 1" / "Extras"
+    point_folder_at(extras, elsewhere)
+    plan = _plan(show)
+
+    disc_1 = next(f for f in plan.source_folders if f.path == show / "Disc 1")
+    assert extras in disc_1.files
+    outcome = apply_plan(plan, confirmed=True)
+
+    moved = show / "Show Name" / "Season 01" / "Extras"
+    assert os.path.isjunction(moved)
+    assert os.path.samestat(os.stat(moved), os.stat(elsewhere))
+    assert _by_source(outcome.stragglers)[extras] == (ApplyStatus.RENAMED, "ok")
+    assert (elsewhere / "bonus.txt").read_bytes() == b"bonus"
+    assert all(elsewhere not in m.source.parents for m in outcome.moves)
 
 
 def test_apply_returns_its_outcome_with_the_working_folder_inside_a_folder_straggler(
@@ -665,10 +687,7 @@ def test_a_pipe_is_never_copied_and_apply_returns(
     plan = _plan(show)
     subs = show / "Disc 1" / "Subs"
 
-    def no_link(*args: object, **kwargs: object) -> None:
-        raise OSError(errno.EXDEV, "Invalid cross-device link")
-
-    monkeypatch.setattr(os, "link", no_link)
+    _across_drives(monkeypatch)
     outcome = apply_plan(plan, confirmed=True)
     monkeypatch.undo()
 

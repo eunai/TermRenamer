@@ -5,8 +5,11 @@ Driven by keys, read off the screen and the disk.
 
 from __future__ import annotations
 
+import errno
 import os
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -15,6 +18,7 @@ from termrenamer.core.models import EntryStatus
 from termrenamer.tui.dialogs import ApplyConfirm
 from termrenamer.tui.stage import Stage
 
+from .links import point_folder_at
 from .screen_driver import (
     SIZE,
     build,
@@ -226,11 +230,32 @@ async def test_the_footer_strikes_the_name_the_file_would_get_if_put_back(tmp_pa
     assert after.split(maxsplit=1) == ["to", f"{numbered} · left out, so Apply does not touch it"]
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32" or os.geteuid() == 0,
-    reason="needs a folder the test cannot enter (POSIX permissions, not root)",
-)
-async def test_x_keeps_the_plan_when_the_disk_cannot_be_checked(tmp_path: Path) -> None:
+@contextmanager
+def _cannot_be_entered(folder: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """``folder`` cannot be entered: by POSIX permissions where they bind; on Windows, or
+    for root, by a permission error from every look at a name inside it."""
+    if sys.platform != "win32" and os.geteuid() != 0:
+        folder.chmod(0)
+        try:
+            yield
+        finally:
+            folder.chmod(0o755)
+        return
+    real_stat = Path.stat
+
+    def stat(self: Path, *, follow_symlinks: bool = True) -> os.stat_result:
+        if folder in self.parents:
+            raise PermissionError(errno.EACCES, "Permission denied", str(self))
+        return real_stat(self, follow_symlinks=follow_symlinks)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(Path, "stat", stat)
+        yield
+
+
+async def test_x_keeps_the_plan_when_the_disk_cannot_be_checked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     library = tmp_path / "Library"
     library.mkdir()
     app = make_app(loaded=settings(folder_rename=True, tv_root=library))
@@ -238,18 +263,14 @@ async def test_x_keeps_the_plan_when_the_disk_cannot_be_checked(tmp_path: Path) 
         await queue(pilot, tv_backups(tmp_path))
         await build(pilot)
         built = app.plan
-        library.chmod(0)
-        try:
+        with _cannot_be_entered(library, monkeypatch):
             await press(pilot, "x")
             text = screen_text(app)
-        finally:
-            library.chmod(0o755)
 
     assert app.plan is built
     assert "The new names could not be checked on disk:" in text
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="symbolic links need privileges on Windows")
 async def test_x_twice_puts_back_the_same_file_after_its_folder_is_redirected(
     tmp_path: Path,
 ) -> None:
@@ -268,7 +289,7 @@ async def test_x_twice_puts_back_the_same_file_after_its_folder_is_redirected(
         copy.mkdir()
         (copy / "Night Ferry S01E01.mkv").write_bytes(b"Disc B")
         (folder / "Disc B").rename(tmp_path / "Disc B moved")
-        (folder / "Disc B").symlink_to(copy, target_is_directory=True)
+        point_folder_at(folder / "Disc B", copy)
         await press(pilot, "x")
         left_out = [v.source.parent.name for v in app.plan.videos if v.status.value == "left out"]
         await press(pilot, "x")

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -11,6 +10,8 @@ import pytest
 from termrenamer.core.models import Candidate, EntryStatus, Plan, PlanEntry, PlanOptions, ScanMode
 from termrenamer.core.planning import plan_queue
 from termrenamer.util.errors import ProviderError
+
+from .links import needs_symlinks
 
 
 @dataclass
@@ -417,10 +418,10 @@ def test_a_film_candidate_without_a_year_is_dropped(tmp_path: Path) -> None:
     assert plan.entries[0].destination == tmp_path.resolve() / "Harbour Lights (2011).mkv"
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="symbolic links need privileges on Windows")
 def test_a_symlinked_video_is_its_own_file_and_never_stands_in_for_its_target(
     tmp_path: Path,
 ) -> None:
+    needs_symlinks(tmp_path)
     a, b = tmp_path / "A", tmp_path / "B"
     a.mkdir()
     b.mkdir()
