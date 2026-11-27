@@ -3,11 +3,14 @@
 Undo reads nothing to find what to put back: the outcome lists it. It works in this
 order:
 
-1. Each folder Apply removed is made again, each before the folders inside it.
+1. Each folder Apply removed is made again, each before the folders inside it, but
+   none inside a kept folder whose place another folder took.
 2. Each move is put back, last move first. A file goes back only when it is still at its
    new place with the recorded size and modification time, read with ``lstat`` as the
    last call before the move, and only into a folder that is no link and lies behind
-   none. The old name is claimed by the call that makes it
+   none, and, when its folder is one a folder Straggler kept at its old place, only
+   while that folder is still there (:class:`~termrenamer.core.models.KeptFolder`),
+   checked just before the move. The old name is claimed by the call that makes it
    (:func:`~termrenamer.core.moving.move_no_replace`), so nothing there is replaced;
    a case-only rename goes back as a plain rename.
 3. Each folder Apply made is removed when Undo left it empty, each before its parent.
@@ -57,6 +60,7 @@ from termrenamer.core.moving import (
 _LOG = logging.getLogger(__name__)
 
 _STOPPED = "not put back: Undo stopped after an unexpected error"
+_FOLDER_TAKEN = "its folder's old place is taken"
 
 
 def undo_apply(outcome: ApplyOutcome) -> UndoOutcome:
@@ -146,7 +150,9 @@ def _make_folders_again(outcome: ApplyOutcome, changes: Changes) -> list[Path]:
     logged, and the files bound for it are left where they are. A folder of a folder
     Straggler (the Straggler itself or a folder inside it) that exists again goes back
     only when nothing is at its old place, so when one is there, with anything or
-    nothing in it, the folder is taken and its files stay at their new place.
+    nothing in it, the folder is taken and its files stay at their new place. A folder
+    inside a kept folder (:class:`~termrenamer.core.models.KeptFolder`) whose place
+    another folder took is not made, and is taken too.
     """
     stragglers = _folder_stragglers(outcome)
     taken: list[Path] = []
@@ -154,6 +160,15 @@ def _make_folders_again(outcome: ApplyOutcome, changes: Changes) -> list[Path]:
     # reverse wherever the depth is the same.
     for folder in sorted(reversed(outcome.folders_removed), key=lambda path: len(path.parts)):
         if _within(folder, taken):
+            continue
+        if any(
+            folder.parent == kept.path or kept.path in folder.parent.parents
+            for kept in outcome.folders_kept
+            if not _kept_folder_is_there(kept)
+        ):
+            # Inside a folder that took a kept folder's place: nothing goes back into it.
+            _LOG.warning("Undo did not make %s again: %s", folder, _FOLDER_TAKEN)
+            taken.append(folder)
             continue
         if _behind_a_link(folder.parent):
             _LOG.warning("Undo did not make %s again: a link is now on its path", folder)
@@ -182,7 +197,7 @@ def _put_back(
     before the file's move back."""
     new, old = move.destination, move.source
     if _within(old.parent, taken):
-        return _result(move, ApplyStatus.SKIP, "its folder's old place is taken")
+        return _result(move, ApplyStatus.SKIP, _FOLDER_TAKEN)
     if is_case_only_rename(old, new):
         # The folder lists only the old name, as when Apply could not confirm a
         # case-only rename: the file is at its old place already, if it is as recorded.
@@ -207,7 +222,7 @@ def _put_back(
         return _result(move, ApplyStatus.SKIP, linked)
     for kept_folder in kept:
         if _within(old.parent, [kept_folder.path]) and not _kept_folder_is_there(kept_folder):
-            return _result(move, ApplyStatus.SKIP, "its folder's old place is taken")
+            return _result(move, ApplyStatus.SKIP, _FOLDER_TAKEN)
     try:
         move_no_replace(new, old, changes, expected=move.fingerprint)
     except FileExistsError:

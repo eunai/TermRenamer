@@ -386,4 +386,26 @@ def test_a_folder_named_like_a_companion_that_vanishes_during_a_walk_fails_it(
     applied = apply_plan(plan, confirmed=True)
     monkeypatch.undo()
 
-    assert {r.source: r.status for r in applied.stragglers}[subs] is ApplyStatus.FAIL
+    [result] = [r for r in applied.stragglers if r.source == subs]
+    assert result.status is ApplyStatus.FAIL
+    assert "._ordinary" in result.reason
+
+
+def test_undo_makes_no_folder_inside_a_folder_that_took_a_kept_folders_place(
+    tmp_path: Path,
+) -> None:
+    show = _two_discs(tmp_path)
+    subs = show / "Disc 1" / "Subs"
+    _write(subs / "Inner" / "a.srt", b"a")
+    _write(subs / "._lost.srt", b"companion")
+    applied = apply_plan(_plan(show), confirmed=True)
+    assert subs / "Inner" in applied.folders_removed
+    assert subs in [k.path for k in applied.folders_kept]
+
+    subs.rename(tmp_path / "old Subs")
+    subs.mkdir()  # another folder at its place
+    undone = undo_apply(applied)
+
+    assert list(subs.iterdir()) == []
+    assert subs / "Inner" not in undone.folders_made_again
+    assert undone.not_put_back == 2  # English.srt and Inner/a.srt stay at their new place
