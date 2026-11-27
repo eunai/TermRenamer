@@ -72,6 +72,7 @@ def test_the_apply_confirm_shows_a_windows_root_and_a_provider_name_as_they_are(
 async def test_the_header_shows_a_windows_root_and_the_provider_as_they_are() -> None:
     app = make_app()
     async with app.run_test(size=SIZE) as pilot:
+        await pilot.pause()  # the app draws the header again on its first resize
         app.query_one(AppHeader).show(
             mode=ScanMode.TV,
             provider="[$accent]TMDB[/]",

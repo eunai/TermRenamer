@@ -119,6 +119,19 @@ async def test_i_says_why_posters_are_unavailable(tmp_path: Path) -> None:
     assert still_on
 
 
+async def test_why_posters_are_unavailable_is_shown_as_written(tmp_path: Path) -> None:
+    # The reason can hold an import error's text: a Windows path, brackets, a $ word.
+    reason = "cannot load C:\\Python\\[$accent]x[/]\\ [Group] $text \\"
+    app = poster_app(tmp_path, ImageHost(), posters=PosterSupport(reason=reason))
+    async with app.run_test(size=SIZE) as pilot:
+        await press(pilot, "i")
+        message = text_of(app, "#message")
+        await press(pilot, "s")
+        note = text_of(app, "#show-posters-note")
+    assert message == f"Posters are unavailable: {reason}."
+    assert note == f"Unavailable: {reason}."
+
+
 async def test_settings_shows_posters_unavailable_with_the_reason(tmp_path: Path) -> None:
     app = poster_app(tmp_path, ImageHost(), posters=PosterSupport(reason=NOT_INSTALLED))
     async with app.run_test(size=SIZE) as pilot:
@@ -678,7 +691,9 @@ async def test_help_shows_the_provider_credits() -> None:
     assert "https://thetvdb.com/" in text
 
 
-@pytest.mark.parametrize("name", ["C:\\Films\\", "[b]Bold[/b] \\", "A name [/]"])
+@pytest.mark.parametrize(
+    "name", ["C:\\Films\\", "[b]Bold[/b] \\", "A name [/]", "[$accent]x $text"]
+)
 async def test_the_panel_draws_a_name_as_written(tmp_path: Path, name: str) -> None:
     # A Windows folder ends in a backslash, which would escape a closing tag after it.
     app = poster_app(tmp_path, ImageHost())

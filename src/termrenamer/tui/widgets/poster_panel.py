@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.markup import escape
+from textual.content import Content
 from textual.widget import Widget
 from textual.widgets import Static
 from textual.worker import Worker, WorkerState
@@ -74,9 +74,9 @@ class _Fetched:
 
 def placeholder(
     name: str, label: str, width: int = POSTER_WIDTH, height: int = POSTER_HEIGHT
-) -> str:
-    """The panel without an image (Textual markup): a faint dot pattern, with the Title's
-    name and ``label`` in its middle."""
+) -> Content:
+    """The panel without an image: a faint dot pattern, with the Title's name and
+    ``label`` in its middle, each as written."""
     rows = []
     for i in range(height):
         rows.append(
@@ -85,25 +85,27 @@ def placeholder(
                 for j in range(width)
             )
         )
-    lines = [f"[$tr-line]{row}[/]" for row in rows]
+    lines = [Content.from_markup("[$tr-line]$row[/]", row=row) for row in rows]
     middle = height // 2 - 1
 
-    def centred(text: str, style: str) -> str:
+    def centred(text: str, style: str) -> Content:
         cut = text if len(text) <= width - 2 else text[: width - 3] + "…"
         padded = f" {cut} "
         left = (width - len(padded)) // 2
         right = width - left - len(padded)
         row = rows[middle]
-        return (
-            f"[$tr-line]{row[:left]}[/][{style}]{escape(padded)}[/]"
-            f"[$tr-line]{row[left + len(padded) :] if right else ''}[/]"
+        return Content.from_markup(
+            f"[$tr-line]$before[/][{style}]$text[/][$tr-line]$after[/]",
+            before=row[:left],
+            text=padded,
+            after=row[left + len(padded) :] if right else "",
         )
 
     if name:
         lines[middle] = centred(name, "b $foreground")
     if label:
         lines[middle + 1] = centred(label, "$tr-dim")
-    return "\n".join(lines)
+    return Content("\n").join(lines)
 
 
 class PosterView(Vertical):
@@ -320,7 +322,7 @@ class PosterPanel(Vertical):
     ) -> None:
         """Show the Poster the Provider ``provider_id`` gave as ``ref`` (or none) for the
         Title ``name``, with the Provider's name on the border."""
-        self.border_title = escape(provider_name(provider_id))
+        self.border_title = Content(provider_name(provider_id))
         request = PosterRequest(provider_id, ref) if ref else None
         self.view.show(name, request, label=label, download=download)
 
