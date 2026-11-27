@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from types import MappingProxyType
 
 
 class ScanMode(StrEnum):
@@ -12,6 +14,12 @@ class ScanMode(StrEnum):
 
     TV = "tv"
     FILM = "film"
+
+
+PROVIDER_IDS: Mapping[ScanMode, tuple[str, ...]] = MappingProxyType(
+    {ScanMode.TV: ("tmdb", "tvdb"), ScanMode.FILM: ("tmdb", "omdb")}
+)
+"""The Providers each Mode accepts, by id, in the order they are offered."""
 
 
 class FileKind(StrEnum):

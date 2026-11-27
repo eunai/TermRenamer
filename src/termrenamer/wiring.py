@@ -19,7 +19,7 @@ from termrenamer.app_bootstrap import (
     create_metadata_cache,
     where_to_set,
 )
-from termrenamer.core.models import ScanMode
+from termrenamer.core.models import PROVIDER_IDS, ScanMode
 from termrenamer.persistence.cache import SqliteMetadataCache
 from termrenamer.util.errors import ValidationError
 from termrenamer.util.http import HttpClient
@@ -48,11 +48,13 @@ class PlanningWiring:
 
     def keyed_providers(self) -> dict[ScanMode, frozenset[str]]:
         """Return, per Mode, the ids of the Providers whose key is set."""
-        tv = {"tmdb": self.tv_tmdb, "tvdb": self.tv_tvdb}
-        film = {"tmdb": self.film, "omdb": self.film_omdb}
+        providers: dict[ScanMode, dict[str, object | None]] = {
+            ScanMode.TV: {"tmdb": self.tv_tmdb, "tvdb": self.tv_tvdb},
+            ScanMode.FILM: {"tmdb": self.film, "omdb": self.film_omdb},
+        }
         return {
-            ScanMode.TV: frozenset(pid for pid, p in tv.items() if p is not None),
-            ScanMode.FILM: frozenset(pid for pid, p in film.items() if p is not None),
+            mode: frozenset(pid for pid in PROVIDER_IDS[mode] if providers[mode][pid] is not None)
+            for mode in ScanMode
         }
 
     def resolve(self, *, mode: ScanMode, provider_id: str) -> TvLookup | FilmLookup:

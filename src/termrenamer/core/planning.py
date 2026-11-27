@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 
 from termrenamer.api.base import FilmMetadataProvider, TvMetadataProvider
@@ -33,20 +32,12 @@ from termrenamer.core.models import (
 )
 from termrenamer.core.parse import parse_filename, parse_film_filename
 from termrenamer.core.paths import path_key
+from termrenamer.core.progress import PlanListener, TitleLookedUp
 from termrenamer.core.scan import classify, scan
 from termrenamer.core.templates import format_film_destination, format_tv_destination
-from termrenamer.observability.events import ActivityEvent, ActivityEventKind, default_bus
 from termrenamer.util.errors import ParseError
 
 _LOG = logging.getLogger(__name__)
-
-
-def _emit_activity(kind: ActivityEventKind, payload: dict[str, str]) -> None:
-    """Publish a planning-time activity event for today's Activity tab."""
-
-    default_bus().emit(
-        ActivityEvent(kind=kind, timestamp=datetime.now(), payload=payload),
-    )
 
 
 def fingerprint(path: Path) -> PlanFingerprint:
@@ -250,27 +241,6 @@ def _search(lookup: TvLookup | FilmLookup, video: _Video) -> tuple[Candidate, ..
     return tuple(film for film in films if film.year is not None)
 
 
-def _report_found(
-    video: _Video, title: Title, episode_title: str | None, shows_reported: set[Title]
-) -> None:
-    """Tell today's Activity tab about a matched video (the event bus goes with that tab)."""
-    if not isinstance(video.parsed, ParseResult):
-        _emit_activity(ActivityEventKind.FILM_FOUND, {"title": title.name, "year": str(title.year)})
-        return
-    if title not in shows_reported:
-        shows_reported.add(title)
-        _emit_activity(ActivityEventKind.SHOW_FOUND, {"title": title.name})
-    _emit_activity(
-        ActivityEventKind.EPISODE_FOUND,
-        {
-            "show": title.name,
-            "season": f"{video.parsed.season:02d}",
-            "episode": f"{video.parsed.primary_episode:02d}",
-            "title": episode_title or "",
-        },
-    )
-
-
 def _parse(path: Path, mode: ScanMode) -> ParseResult | FilmParseResult:
     if mode is ScanMode.TV:
         return parse_filename(name=path.name, mode=ScanMode.TV)
@@ -307,11 +277,15 @@ def plan_queue(
     sources: Sequence[Path],
     options: PlanOptions,
     provider: TvMetadataProvider | FilmMetadataProvider,
+    *,
+    listener: PlanListener | None = None,
 ) -> PlanBuild:
     """Plan every file of the queued ``sources`` with ``options``, in one Plan.
 
     Returns the Plan and a message for each Source that was skipped (it no longer
-    exists, or it is a file that is not a video).
+    exists, or it is a file that is not a video). ``listener`` is told each event of
+    :mod:`termrenamer.core.progress` as the build runs; an exception it raises stops
+    the build.
     """
     lookup = _lookup(provider, options.mode)
     found, messages = _collect(sources)
@@ -341,6 +315,14 @@ def plan_queue(
         members = groups[key]
         candidates_found = _search(lookup, members[0])
         found_groups.append((members, candidates_found))
+        if listener is not None:
+            listener(
+                TitleLookedUp(
+                    name=members[0].hint,
+                    year=members[0].year_hint,
+                    match=candidates_found[0] if candidates_found else None,
+                )
+            )
         if not candidates_found or not isinstance(lookup, TvLookup):
             continue
         for video in members:
@@ -355,7 +337,6 @@ def plan_queue(
 
     # Names, claimed in source-path order.
     occupied: set[Path] = set()
-    shows_reported: set[Title] = set()
     for video in videos:
         title = title_of[video.path]
         desired = (
@@ -371,7 +352,6 @@ def plan_queue(
         final = allocate_destination(desired, source=video.path, occupied=occupied)
         status = EntryStatus.READY if final == desired else EntryStatus.NAME_TAKEN
         entries.append(_entry(video, destination=final, status=status, title=title))
-        _report_found(video, title, episode_titles.get(video.path), shows_reported)
 
     by_pair: dict[tuple[str, str], PlanEntry] = {}
     for video_entry in sorted(entries, key=lambda e: path_key(e.source)):

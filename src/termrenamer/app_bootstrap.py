@@ -7,6 +7,7 @@ import os
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 
 from dotenv import dotenv_values
@@ -17,6 +18,13 @@ from termrenamer.util.http import HttpClient, HttpClientConfig
 from termrenamer.util.logging import setup_logging
 
 _LOG = logging.getLogger(__name__)
+
+
+class ThemeName(StrEnum):
+    """The screen's palette: the dark or the light teal theme (``TERMRENAMER_THEME``)."""
+
+    DARK = "dark"
+    LIGHT = "light"
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +45,7 @@ class Settings:
     tv_dest_folder: Path | None
     enable_folder_rename: bool
     enable_season_folders: bool
+    theme: ThemeName = ThemeName.DARK
 
     @property
     def has_tmdb_credentials(self) -> bool:
@@ -84,6 +93,17 @@ def _read_bool(env: Mapping[str, str], name: str, default: bool) -> bool:
         return False
     msg = f"Invalid boolean value for {name} (use true/false)"
     raise ValidationError(msg)
+
+
+def _read_theme(env: Mapping[str, str]) -> ThemeName:
+    raw = env.get("TERMRENAMER_THEME")
+    if raw is None or raw.strip() == "":
+        return ThemeName.DARK
+    try:
+        return ThemeName(raw.strip().lower())
+    except ValueError as exc:
+        msg = "Invalid value for TERMRENAMER_THEME (use dark or light)"
+        raise ValidationError(msg) from exc
 
 
 def user_settings_path() -> Path:
@@ -205,6 +225,7 @@ def load_settings(*, env_file: Path | None = None) -> Settings:
 
     enable_folder_rename = _read_bool(env, "TERMRENAMER_ENABLE_FOLDER_RENAME", default=False)
     enable_season_folders = _read_bool(env, "TERMRENAMER_ENABLE_SEASON_FOLDERS", default=False)
+    theme = _read_theme(env)
 
     if not (tmdb_key or tvdb_key or omdb_key):
         variables = "TERMRENAMER_TMDB_API_KEY, TERMRENAMER_TVDB_API_KEY or TERMRENAMER_OMDB_API_KEY"
@@ -226,6 +247,7 @@ def load_settings(*, env_file: Path | None = None) -> Settings:
         tv_dest_folder=tv_dest_folder,
         enable_folder_rename=enable_folder_rename,
         enable_season_folders=enable_season_folders,
+        theme=theme,
     )
 
 
