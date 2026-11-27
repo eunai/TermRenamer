@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import overload
 
@@ -174,6 +174,7 @@ def _entry(
     status: EntryStatus,
     title: Title | None,
     video: PlanEntry | None = None,
+    wanted: Path | None = None,
 ) -> PlanEntry:
     parsed = found.parsed if isinstance(found, _Video) else None
     season = parsed.season if isinstance(parsed, ParseResult) else None
@@ -190,6 +191,7 @@ def _entry(
         episode=episode,
         root=found.root,
         fingerprint=fingerprint(found.path),
+        wanted=wanted,
     )
 
 
@@ -402,23 +404,16 @@ def plan_queue(
 
     title_of = _titles(found_groups)
 
-    # Names, claimed in source-path order by the entries that will be applied.
-    occupied: set[str] = set()
+    # Each video's wanted name; the names are claimed below, with the Sidecars'.
     for video in videos:
         title = title_of[video.path]
-        desired = (
+        wanted = (
             _wanted_name(video, title.match, episode_titles.get(video.path), options)
             if title.match is not None
             else None
         )
-        if desired is None:
-            entries.append(
-                _entry(video, destination=None, status=EntryStatus.NO_MATCH, title=title)
-            )
-            continue
-        final = claim_name(desired, source=video.path, occupied=occupied, policy=options.name_taken)
-        status = EntryStatus.READY if final == desired else EntryStatus.NAME_TAKEN
-        entries.append(_entry(video, destination=final, status=status, title=title))
+        status = EntryStatus.NO_MATCH if wanted is None else EntryStatus.READY
+        entries.append(_entry(video, destination=None, status=status, title=title, wanted=wanted))
 
     by_pair: dict[tuple[str, str], PlanEntry] = {}
     for video_entry in sorted(entries, key=lambda e: path_key(e.source)):
@@ -427,39 +422,26 @@ def plan_queue(
         owner = by_pair.get(_pair_key(sidecar.path)) if sidecar.kind is FileKind.SIDECAR else None
         if owner is None:
             continue
-        # A Sidecar whose video is not applied has its video's status; any other is
-        # tested on its own, after its video.
-        destination = None
-        status = owner.status
-        if owner.destination is not None:
-            desired = owner.destination.with_suffix(sidecar.path.suffix.lower())
-            destination = claim_name(
-                desired, source=sidecar.path, occupied=occupied, policy=options.name_taken
-            )
-            status = EntryStatus.READY if destination == desired else EntryStatus.NAME_TAKEN
         entries.append(
             _entry(
                 sidecar,
-                destination=destination,
-                status=status,
+                destination=None,
+                status=owner.status,
                 title=owner.title,
                 video=owner,
             )
         )
 
-    entries.sort(key=lambda e: path_key(e.source))
     titles = sorted(set(title_of.values()), key=lambda t: (t.name.casefold(), t.year or 0))
+    # Source-path order is fixed here, once; a derived Plan keeps it.
+    entries.sort(key=lambda e: path_key(e.source))
+    # The children of each source folder are recorded once, here; a derived Plan keeps
+    # them, so its Stragglers are worked out without listing a folder again.
     in_folder_source = {path_key(f.path) for f in found if f.in_folder_source}
     folders = _source_folders(
         e.source.parent for e in entries if path_key(e.source) in in_folder_source
     )
-    plan = Plan(
-        options=options,
-        titles=tuple(titles),
-        entries=tuple(entries),
-        stragglers=plan_stragglers(options, entries, folders),
-        source_folders=folders,
-    )
+    plan = _plan_of(options, tuple(titles), _claim_names(entries, options), folders)
     return PlanBuild(plan=plan, messages=tuple(messages))
 
 
@@ -488,3 +470,133 @@ def _source_folders(folders: Iterable[Path]) -> tuple[SourceFolder, ...]:
             )
         )
     return tuple(recorded)
+
+
+def _claim_names(entries: Sequence[PlanEntry], options: PlanOptions) -> tuple[PlanEntry, ...]:
+    """Work out every entry's destination and status by claiming names across the Plan.
+
+    ``entries`` are in source-path order, as the first build fixed it; that order is
+    kept and no source is read again. Videos claim first, then Sidecars, and only
+    entries that will be applied claim a name, so numbering is the same however the
+    Plan was reached. A left out video, and one with no wanted name (no match, not
+    recognised), keeps its status and gets no destination. Each wanted path is tested
+    on disk again. A Sidecar whose video is not applied has its video's status; any
+    other is tested on its own, under its video's new name.
+    """
+    ordered = tuple(entries)
+    occupied: set[str] = set()
+    named: dict[Path, PlanEntry] = {}
+    for entry in ordered:
+        if entry.is_sidecar:
+            continue
+        if entry.status is EntryStatus.LEFT_OUT or entry.wanted is None:
+            named[entry.source] = replace(entry, destination=None)
+            continue
+        final = claim_name(
+            entry.wanted, source=entry.source, occupied=occupied, policy=options.name_taken
+        )
+        status = EntryStatus.READY if final == entry.wanted else EntryStatus.NAME_TAKEN
+        named[entry.source] = replace(entry, destination=final, status=status)
+    for entry in ordered:
+        if not entry.is_sidecar:
+            continue
+        assert entry.video is not None
+        # A Sidecar's ``video`` is its video entry's own ``source``, copied when the
+        # Plan was built, so the key is the Plan's record, not a file on disk.
+        owner = named[entry.video]
+        if owner.destination is None:
+            named[entry.source] = replace(entry, destination=None, status=owner.status)
+            continue
+        desired = owner.destination.with_suffix(entry.source.suffix.lower())
+        final = claim_name(
+            desired, source=entry.source, occupied=occupied, policy=options.name_taken
+        )
+        status = EntryStatus.READY if final == desired else EntryStatus.NAME_TAKEN
+        named[entry.source] = replace(entry, destination=final, status=status)
+    return tuple(named[entry.source] for entry in ordered)
+
+
+def _plan_of(
+    options: PlanOptions,
+    titles: tuple[Title, ...],
+    entries: tuple[PlanEntry, ...],
+    source_folders: tuple[SourceFolder, ...],
+) -> Plan:
+    """The Plan of ``entries`` whose names are claimed: the one place a built or a
+    derived Plan is made.
+
+    Stragglers are worked out here, from the entries and ``source_folders``, the
+    children each source folder had when the Plan was first built; the folders are not
+    read again.
+    """
+    return Plan(
+        options=options,
+        titles=titles,
+        entries=entries,
+        stragglers=plan_stragglers(options, entries, source_folders),
+        source_folders=source_folders,
+    )
+
+
+# --------------------------------------------------------------------------
+# Derive a new Plan from a Plan and a change.
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class LeaveOut:
+    """Leave ``video``, a video entry of the Plan, out of it; its Sidecars follow."""
+
+    video: PlanEntry
+
+
+@dataclass(frozen=True, slots=True)
+class PutBack:
+    """Put ``video``, a left out video entry of the Plan, back in it, with its Sidecars."""
+
+    video: PlanEntry
+
+
+PlanChange = LeaveOut | PutBack
+"""A change the person makes to a Plan on the Preview."""
+
+
+def derive_plan(plan: Plan, change: PlanChange) -> Plan:
+    """The new Plan that ``plan`` becomes with ``change``; ``plan`` itself never changes.
+
+    Destinations and Name taken are worked out again across the whole Plan, in
+    source-path order, as a fresh build would: each wanted path is tested on disk
+    again, a name that only a left out file had claimed is free for the next entry,
+    and a video put back gets the status a fresh Plan gives it. No Provider is asked.
+    The change names its entry of ``plan`` itself, and the entries keep the order of
+    ``plan``: the disk is read again only to test whether a wanted name is taken.
+
+    Raises:
+        ValueError: ``change`` names an entry that is not in ``plan``, a Sidecar, a
+            video that cannot be left out (no match, not recognised, already left
+            out), or for :class:`PutBack` a video that is not left out.
+        OSError: testing a wanted path on disk failed.
+    """
+    video = change.video
+    if video not in plan.entries:
+        msg = f"{video.source} is not in the Plan."
+        raise ValueError(msg)
+    if video.is_sidecar:
+        msg = f"{video.source} cannot be left out: it is a Sidecar, which follows its video."
+        raise ValueError(msg)
+    if isinstance(change, LeaveOut):
+        if video.wanted is None or video.status is EntryStatus.LEFT_OUT:
+            msg = f"{video.source} cannot be left out: it has the status {video.status.value}."
+            raise ValueError(msg)
+        status = EntryStatus.LEFT_OUT
+    else:
+        if video.status is not EntryStatus.LEFT_OUT:
+            msg = f"{video.source} is not left out."
+            raise ValueError(msg)
+        status = EntryStatus.READY  # worked out again when the names are claimed
+    entries = tuple(
+        replace(entry, status=status) if entry == video else entry for entry in plan.entries
+    )
+    return _plan_of(
+        plan.options, plan.titles, _claim_names(entries, plan.options), plan.source_folders
+    )

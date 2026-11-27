@@ -28,11 +28,12 @@ from termrenamer.app_bootstrap import Settings, ThemeName
 from termrenamer.core.apply import apply_plan
 from termrenamer.core.models import (
     ApplyOutcome,
+    EntryStatus,
     Plan,
     PlanOptions,
     ScanMode,
 )
-from termrenamer.core.planning import plan_queue
+from termrenamer.core.planning import LeaveOut, PlanChange, PutBack, derive_plan, plan_queue
 from termrenamer.core.progress import PlanEvent
 from termrenamer.core.queue import SourceQueue
 from termrenamer.session_settings import SessionSettings, locked_message
@@ -364,6 +365,40 @@ class TermRenamerApp(App[None]):
         self.plan = None
         self._show_stage(Stage.QUEUE)
         self.say("Plan discarded. Nothing was renamed.")
+
+    def action_leave_out(self) -> None:
+        """Leave the selected video out of the Plan with its Sidecars, or put it back.
+
+        Either change derives a new Plan, which the Preview shows with the same file
+        selected. A file Apply does not rename anyway changes nothing, and so does a
+        failure to test the new names on disk: the Plan shown stays.
+        """
+        plan = self.plan
+        preview = self.query_one(PreviewStage)
+        video = preview.selected_file
+        if plan is None or video is None or self._applying:
+            return
+        if video.status in (EntryStatus.NO_MATCH, EntryStatus.NOT_RECOGNISED):
+            self.say(
+                "Nothing to leave out: Apply does not rename a file with the status "
+                f"{video.status.value}.",
+                MessageKind.WARNING,
+            )
+            return
+        change: PlanChange
+        if video.status is EntryStatus.LEFT_OUT:
+            change, said = PutBack(video), "Put back in the Plan."
+        else:
+            change = LeaveOut(video)
+            said = "Left out of the Plan: Apply does not touch this file."
+        try:
+            derived = derive_plan(plan, change)
+        except OSError as exc:
+            self.say(f"The new names could not be checked on disk: {exc}", MessageKind.ERROR)
+            return
+        self.plan = derived
+        preview.show_plan(self.plan, keep_selection=True)
+        self.say(said)
 
     def action_apply(self) -> None:
         """Open the Apply confirm; only its yes applies the Plan."""

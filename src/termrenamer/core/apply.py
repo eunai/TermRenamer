@@ -16,6 +16,7 @@ from termrenamer.core.models import (
     ApplyOutcome,
     ApplyResult,
     ApplyStatus,
+    EntryStatus,
     Move,
     Plan,
     PlanEntry,
@@ -248,7 +249,8 @@ def apply_plan(plan: Plan, *, confirmed: bool) -> ApplyOutcome:
 
     Applies the entries that have a destination: ready, and name taken with a numbered
     name (Name taken set to ``suffix``). Reports every other entry (no match, not
-    recognised, name taken under ``skip``) as skipped with its status as the reason.
+    recognised, name taken under ``skip``) as skipped with its status as the reason,
+    and each left out entry as left out; neither is touched.
     Each video is handled before the Sidecars, and a Sidecar is applied only when its
     video was renamed or unchanged in this Apply. Then each Straggler the Plan lists is
     moved to the path the Plan fixed, when at least one entry from its folder moved to
@@ -275,6 +277,17 @@ def apply_plan(plan: Plan, *, confirmed: bool) -> ApplyOutcome:
     applied_sources: set[Path] = set()
 
     for entry in ordered:
+        if entry.status is EntryStatus.LEFT_OUT:
+            # Before every check: a left out file is reported as left out, not skipped.
+            results.append(
+                ApplyResult(
+                    source=entry.source,
+                    destination=None,
+                    status=ApplyStatus.LEFT_OUT,
+                    reason=EntryStatus.LEFT_OUT.value,
+                ),
+            )
+            continue
         if entry.video is not None and entry.video not in applied_sources:
             # The Plan left it without a name (its video's status), or its video was
             # skipped or failed in this Apply.

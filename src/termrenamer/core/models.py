@@ -121,13 +121,15 @@ class PlanFingerprint:
 class EntryStatus(StrEnum):
     """The status of one entry of a Plan: a video or a Sidecar.
 
-    A Sidecar whose video will not be applied has its video's status.
+    A Sidecar whose video will not be applied has its video's status. A left out
+    entry is one the person took out of the Plan; Apply does not touch it.
     """
 
     READY = "ready"
     NAME_TAKEN = "name taken"
     NO_MATCH = "no match"
     NOT_RECOGNISED = "not recognised"
+    LEFT_OUT = "left out"
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,11 +177,14 @@ class Title:
 class PlanEntry:
     """One video or Sidecar of a Plan.
 
-    ``destination`` is ``None`` for an entry that is not applied for want of a name
-    (no match, not recognised). ``video`` is a Sidecar's video, ``None`` for a video.
-    ``root`` is the owning Source's folder, which the templates build under when the
-    Destination root is unset. ``fingerprint`` holds the source's size and
-    modification time at planning time.
+    ``destination`` is ``None`` for an entry that is not applied (no match, not
+    recognised, left out, name taken under ``skip``). ``video`` is a Sidecar's video,
+    ``None`` for a video. ``root`` is the owning Source's folder, which the templates
+    build under when the Destination root is unset. ``fingerprint`` holds the source's
+    size and modification time at planning time. ``wanted`` is the name the templates
+    give a video for its Match, before Name taken numbers or skips it, and ``None``
+    for a Sidecar and for a video with no name (no match, not recognised): deriving a
+    Plan claims names again from it.
     """
 
     source: Path
@@ -191,6 +196,7 @@ class PlanEntry:
     episode: int | None
     root: Path
     fingerprint: PlanFingerprint
+    wanted: Path | None = None
 
     @property
     def is_sidecar(self) -> bool:
@@ -273,6 +279,7 @@ class ApplyStatus(StrEnum):
     UNCHANGED = "unchanged"
     SKIP = "skip"
     FAIL = "fail"
+    LEFT_OUT = "left out"
 
 
 @dataclass(frozen=True, slots=True)

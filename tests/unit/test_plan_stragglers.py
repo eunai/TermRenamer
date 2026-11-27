@@ -5,9 +5,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from termrenamer.core.models import Candidate, Plan, PlanOptions, ScanMode
+import pytest
+
+from termrenamer.core.models import Candidate, Plan, PlanEntry, PlanOptions, ScanMode
 from termrenamer.core.paths import path_key
-from termrenamer.core.planning import plan_queue
+from termrenamer.core.planning import LeaveOut, PutBack, derive_plan, plan_queue
 from termrenamer.core.policies import NameTakenPolicy
 
 from .test_plan_queue import TvStandIn
@@ -304,3 +306,47 @@ def test_two_stragglers_whose_names_differ_only_in_letter_case_never_share_a_pat
         (show / "Disc 1" / "Folder.jpg", season / "Folder.jpg"),
         (show / "Disc 2" / "folder.jpg", season / "folder (1).jpg"),
     ]
+
+
+def _video_in(plan: Plan, folder: str) -> PlanEntry:
+    [video] = [e for e in plan.entries if not e.is_sidecar and e.source.parent.name == folder]
+    return video
+
+
+def test_leaving_out_the_only_video_a_folder_moves_turns_its_stragglers_off_and_back_on(
+    tmp_path: Path,
+) -> None:
+    show = _two_discs(tmp_path)
+    plan = plan_queue([show], _options(), _provider()).plan
+
+    left_out = derive_plan(plan, LeaveOut(_video_in(plan, "Disc 1")))
+    put_back = derive_plan(left_out, PutBack(_video_in(left_out, "Disc 1")))
+
+    season = show / "Show Name" / "Season 01"
+    # Disc 1's children stay; Disc 2's folder.jpg now claims the plain name.
+    assert _stragglers(left_out) == [(show / "Disc 2" / "folder.jpg", season / "folder.jpg")]
+    assert all(s.source != _video_in(plan, "Disc 1").source for s in left_out.stragglers)
+    assert left_out.source_folders == plan.source_folders
+    assert put_back == plan
+
+
+def test_deriving_works_out_the_stragglers_without_reading_a_folder_or_resolving_a_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    show = _two_discs(tmp_path)
+    plan = plan_queue([show], _options(), _provider()).plan
+
+    def no_resolve(self: Path, strict: bool = False) -> Path:
+        raise AssertionError(f"resolved {self} while deriving")
+
+    def no_listing(self: Path) -> object:
+        raise AssertionError(f"listed {self} while deriving")
+
+    monkeypatch.setattr(Path, "resolve", no_resolve)
+    monkeypatch.setattr(Path, "iterdir", no_listing)
+    left_out = derive_plan(plan, LeaveOut(_video_in(plan, "Disc 2")))
+    put_back = derive_plan(left_out, PutBack(_video_in(left_out, "Disc 2")))
+    monkeypatch.undo()
+
+    assert [s.source.parent.name for s in left_out.stragglers] == ["Disc 1"] * 3
+    assert put_back == plan

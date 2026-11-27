@@ -4,7 +4,8 @@
 deriving one both call it; it never lists a folder, so a derived Plan lists Stragglers
 from the children recorded when the first Plan was built. It tests each Straggler's
 wanted path on disk with :func:`~termrenamer.core.collisions.name_is_taken`, as the
-planning test does.
+planning test does, and compares paths by
+:func:`~termrenamer.core.paths.recorded_key`, which reads no disk.
 """
 
 from __future__ import annotations
@@ -15,14 +16,14 @@ from pathlib import Path
 
 from termrenamer.core.collisions import allocate_destination
 from termrenamer.core.models import PlanEntry, PlanOptions, SourceFolder, Straggler
-from termrenamer.core.paths import path_key
+from termrenamer.core.paths import recorded_key
 
 
 def _folder_stays(folder: Path, entry_keys: frozenset[str], target_keys: frozenset[str]) -> bool:
     """Whether a child folder is never a Straggler: it contains an entry of the Plan, or
     it is, contains or lies inside a target folder (a folder an entry of the Plan moves
     into)."""
-    key = path_key(folder)
+    key = recorded_key(folder)
     if any(k.startswith(key + os.sep) for k in entry_keys):
         return True
     return any(
@@ -49,26 +50,26 @@ def plan_stragglers(
         return ()
     entries = tuple(entries)
     applied = [e for e in entries if e.to_apply]
-    claimed = {path_key(e.destination) for e in applied if e.destination is not None}
-    entry_keys = frozenset(path_key(e.source) for e in entries)
+    claimed = {recorded_key(e.destination) for e in applied if e.destination is not None}
+    entry_keys = frozenset(recorded_key(e.source) for e in entries)
     # An entry that already has its name moves into no folder.
     moving = [e for e in applied if not e.has_its_name]
-    target_keys = frozenset(path_key(d.parent) for e in moving if (d := e.destination))
+    target_keys = frozenset(recorded_key(d.parent) for e in moving if (d := e.destination))
 
     target_of: dict[str, Path] = {}
     for dest_folder, folder_key in sorted(
-        {(d.parent, path_key(e.source.parent)) for e in moving if (d := e.destination)},
-        key=lambda pair: path_key(pair[0]),
+        {(d.parent, recorded_key(e.source.parent)) for e in moving if (d := e.destination)},
+        key=lambda pair: recorded_key(pair[0]),
     ):
-        if path_key(dest_folder) != folder_key:
+        if recorded_key(dest_folder) != folder_key:
             target_of.setdefault(folder_key, dest_folder)
 
     wanted: list[tuple[Path, Path]] = []
     for folder in source_folders:
-        target = target_of.get(path_key(folder.path))
+        target = target_of.get(recorded_key(folder.path))
         if target is None:
             continue
-        wanted.extend((f, target) for f in folder.files if path_key(f) not in entry_keys)
+        wanted.extend((f, target) for f in folder.files if recorded_key(f) not in entry_keys)
         wanted.extend(
             (f, target) for f in folder.folders if not _folder_stays(f, entry_keys, target_keys)
         )
@@ -77,5 +78,5 @@ def plan_stragglers(
             source=child,
             destination=allocate_destination(target / child.name, source=child, occupied=claimed),
         )
-        for child, target in sorted(wanted, key=lambda pair: path_key(pair[0]))
+        for child, target in sorted(wanted, key=lambda pair: recorded_key(pair[0]))
     )

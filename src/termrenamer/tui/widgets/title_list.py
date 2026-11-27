@@ -25,6 +25,7 @@ class StatusWord(StrEnum):
     NAME_TAKEN = "name taken"
     NO_MATCH = "no match"
     NOT_RECOGNISED = "not recognised"
+    LEFT_OUT = "left out"
 
     @property
     def colour(self) -> str:
@@ -45,6 +46,7 @@ _COLOURS = {
     StatusWord.NAME_TAKEN: "warning",
     StatusWord.NO_MATCH: "error",
     StatusWord.NOT_RECOGNISED: "error",
+    StatusWord.LEFT_OUT: "tr-dim",
 }
 
 

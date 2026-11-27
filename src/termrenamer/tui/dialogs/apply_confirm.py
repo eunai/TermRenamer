@@ -16,7 +16,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Static
 
 from termrenamer.core.models import EntryStatus, Plan
-from termrenamer.core.paths import path_key
+from termrenamer.core.paths import recorded_key
 from termrenamer.core.title_rows import PlanCounts, sidecars_skipped_alone
 from termrenamer.tui.widgets.action_button import ActionButton
 from termrenamer.tui.words import (
@@ -31,9 +31,10 @@ from termrenamer.tui.words import (
 
 def confirm_lines(plan: Plan) -> tuple[str, ...]:
     """What the confirm says (Textual markup): the videos renamed and where, the videos
-    skipped counted by status, each Sidecar skipped while its video moves, those that
-    already have their names, with Folder rename on the Stragglers to merge and the
-    Titles they go with, and that nothing has been renamed yet."""
+    skipped counted by status, the videos left out, each Sidecar skipped while its
+    video moves, those that already have their names, with Folder rename on the
+    Stragglers to merge and the Titles they go with, and that nothing has been renamed
+    yet."""
     counts = PlanCounts.of(plan)
     root = plan.options.destination_root
     if root is not None:
@@ -42,7 +43,10 @@ def confirm_lines(plan: Plan) -> tuple[str, ...]:
         where = agree(counts.to_rename, "in its own folder", "in their own folders")
     staying = [v for v in plan.videos if why_not_renamed(v) is not None]
     named = [v for v in staying if v.has_its_name]
-    skipped = Counter(v.status for v in staying if not v.has_its_name)
+    left_out = EntryStatus.LEFT_OUT
+    skipped: Counter[EntryStatus] = Counter(
+        v.status for v in staying if not v.has_its_name and v.status is not left_out
+    )
     if skipped:
         reasons = " · ".join(f"{skipped[s]} {s.value}" for s in EntryStatus if skipped[s])
         skip = f"Skip {plural(skipped.total(), 'video')}: {reasons}"
@@ -52,6 +56,12 @@ def confirm_lines(plan: Plan) -> tuple[str, ...]:
         f"[$foreground]Rename {plural(counts.to_rename, 'video')} {escape(where)}.[/]",
         f"[$foreground]{skip}[/]",
     ]
+    if counts.left_out:
+        them = agree(counts.left_out, "it", "them")
+        lines.append(
+            f"[$foreground]Leave out {plural(counts.left_out, 'video')}: "
+            f"Apply does not touch {them}.[/]"
+        )
     for sidecar in sidecars_skipped_alone(plan):
         reason = why_not_renamed(sidecar) or sidecar.status.value
         lines.append(f"[$tr-dim]{escape(sidecar_skipped(sidecar.source, reason))}[/]")
@@ -69,14 +79,14 @@ def _merge_line(plan: Plan) -> str:
     the Stragglers' target folders."""
     if not plan.stragglers:
         return "No Stragglers in this Plan."
-    targets = {path_key(s.destination.parent) for s in plan.stragglers}
+    targets = {recorded_key(s.destination.parent) for s in plan.stragglers}
     names = sorted(
         {
             match_name(e.title, plan.mode)
             for e in plan.entries
             if e.title is not None
             and e.destination is not None
-            and path_key(e.destination.parent) in targets
+            and recorded_key(e.destination.parent) in targets
         },
         key=str.casefold,
     )

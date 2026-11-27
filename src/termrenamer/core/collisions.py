@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from termrenamer.core.paths import path_key
+from termrenamer.core.paths import recorded_key
 from termrenamer.core.policies import NameTakenPolicy
 
 
@@ -38,14 +38,14 @@ def allocate_destination(
 ) -> Path:
     """Pick a destination path, using `` (1)``, `` (2)``, … before the extension if needed.
 
-    ``occupied`` holds the :func:`~termrenamer.core.paths.path_key` of each name already
-    claimed, so two names that differ only in letter case are one path; the name picked
+    ``occupied`` holds the :func:`~termrenamer.core.paths.recorded_key` of each name
+    already claimed, so two names that differ only in letter case are one path; the name picked
     is added to it. Never uses ``os.replace`` for silent overwrite. If ``desired`` exists
     but is the same file as ``source`` (e.g. case-only rename), returns ``desired``.
     """
-    if path_key(desired) in occupied or name_is_taken(desired, source=source):
+    if recorded_key(desired) in occupied or name_is_taken(desired, source=source):
         return _first_free_suffix(desired, source, occupied)
-    occupied.add(path_key(desired))
+    occupied.add(recorded_key(desired))
     return desired
 
 
@@ -53,10 +53,10 @@ def _first_free_suffix(initial: Path, source: Path, occupied: set[str]) -> Path:
     n = 1
     while True:
         candidate = _with_numeric_suffix(initial, n)
-        if path_key(candidate) in occupied or name_is_taken(candidate, source=source):
+        if recorded_key(candidate) in occupied or name_is_taken(candidate, source=source):
             n += 1
             continue
-        occupied.add(path_key(candidate))
+        occupied.add(recorded_key(candidate))
         return candidate
 
 
@@ -70,11 +70,11 @@ def claim_name(
     """Claim ``desired`` for ``source``, or by ``policy`` a numbered name or none.
 
     A name is taken when :func:`name_is_taken` says so or an earlier entry has claimed it
-    (its path key is in ``occupied``). Under ``SUFFIX`` a taken name gives way to the
+    (its key is in ``occupied``). Under ``SUFFIX`` a taken name gives way to the
     first free numbered name; under ``SKIP`` nothing is claimed and ``None`` is returned.
     """
     if policy is NameTakenPolicy.SKIP and (
-        path_key(desired) in occupied or name_is_taken(desired, source=source)
+        recorded_key(desired) in occupied or name_is_taken(desired, source=source)
     ):
         return None
     return allocate_destination(desired, source=source, occupied=occupied)

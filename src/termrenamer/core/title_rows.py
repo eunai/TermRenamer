@@ -1,7 +1,8 @@
 """The rows of a Plan's Title list: one per Title, and one per not recognised video.
 
 A Title's status word is the first that applies: no match (the Title has no Match, or
-any of its files has the status no match), name taken (any file), ready. Counts count
+any of its files has the status no match), left out (every file is left out), name
+taken (any file), ready. Counts count
 videos.
 """
 
@@ -57,9 +58,8 @@ class PlanCounts:
 
     ``to_rename`` counts the videos Apply will rename: ready or name taken, with a
     destination that is not where the video already is. A video that already has its
-    name is not counted as renamed. The other counts count videos by status;
-    ``left_out`` stays 0 until a video can be left out (#27). ``stragglers`` is the
-    one count that is not of videos: the Stragglers the Plan lists, which Apply merges.
+    name is not counted as renamed. The other counts count videos by status, except
+    ``stragglers``: the Stragglers the Plan lists, which Apply merges.
     """
 
     titles: int
@@ -87,7 +87,7 @@ class PlanCounts:
             name_taken=sum(1 for v in videos if v.status is EntryStatus.NAME_TAKEN),
             no_match=sum(1 for v in videos if v.status is EntryStatus.NO_MATCH),
             not_recognised=sum(1 for v in videos if v.status is EntryStatus.NOT_RECOGNISED),
-            left_out=0,
+            left_out=sum(1 for v in videos if v.status is EntryStatus.LEFT_OUT),
             stragglers=len(plan.stragglers),
         )
 
@@ -95,12 +95,14 @@ class PlanCounts:
 @dataclass(frozen=True, slots=True)
 class AppliedCounts:
     """How many videos Apply renamed, left unchanged (already named), skipped and failed,
-    and how many Stragglers it merged, did not merge, and failed to merge."""
+    how many were left out (not counted as skipped), and how many Stragglers it merged,
+    did not merge, and failed to merge."""
 
     renamed: int
     unchanged: int
     skipped: int
     failed: int
+    left_out: int
     stragglers_merged: int
     stragglers_not_merged: int
     stragglers_failed: int
@@ -119,6 +121,7 @@ class AppliedCounts:
             unchanged=statuses.count(ApplyStatus.UNCHANGED),
             skipped=statuses.count(ApplyStatus.SKIP),
             failed=statuses.count(ApplyStatus.FAIL),
+            left_out=statuses.count(ApplyStatus.LEFT_OUT),
             stragglers_merged=outcome.stragglers_merged,
             stragglers_not_merged=len(outcome.stragglers) - outcome.stragglers_merged,
             stragglers_failed=sum(1 for r in outcome.stragglers if r.status is ApplyStatus.FAIL),
@@ -130,6 +133,8 @@ def title_status(title: Title, entries: Sequence[PlanEntry]) -> EntryStatus:
     statuses = {entry.status for entry in entries}
     if title.match is None or EntryStatus.NO_MATCH in statuses:
         return EntryStatus.NO_MATCH
+    if statuses == {EntryStatus.LEFT_OUT}:
+        return EntryStatus.LEFT_OUT
     if EntryStatus.NAME_TAKEN in statuses:
         return EntryStatus.NAME_TAKEN
     return EntryStatus.READY
@@ -167,7 +172,8 @@ def title_rows(plan: Plan) -> tuple[TitleRow, ...]:
 
 def sidecars_skipped_alone(plan: Plan) -> tuple[PlanEntry, ...]:
     """The Sidecars Apply will skip while their videos move: a Sidecar whose own name is
-    taken under Name taken ``skip``."""
+    taken under Name taken ``skip``. A left out Sidecar is never one: its video is left
+    out with it."""
     named = {entry.source for entry in plan.videos if entry.destination is not None}
     return tuple(
         entry for entry in plan.entries if entry.video in named and entry.destination is None
