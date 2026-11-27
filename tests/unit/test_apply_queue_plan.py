@@ -55,7 +55,7 @@ def test_apply_leaves_no_match_and_not_recognised_files_and_their_sidecars(
         (tmp_path / name).write_bytes(b"x")
     (tmp_path / "Show.Name.S01E01.mkv").write_bytes(b"v")
 
-    results = apply_plan(_plan([tmp_path], folder_rename=True), confirmed=True)
+    results = apply_plan(_plan([tmp_path], folder_rename=True), confirmed=True).results
 
     assert _by_name(results) == {
         "Holiday Clip.mkv": (ApplyStatus.SKIP, "not recognised"),
@@ -77,7 +77,7 @@ def test_a_sidecar_is_applied_after_its_video_and_only_when_the_video_moved(
     plan = _plan([tmp_path])
     (tmp_path / "Show.Name.S01E02.mkv").write_bytes(b"changed since planning")
 
-    results = apply_plan(plan, confirmed=True)
+    results = apply_plan(plan, confirmed=True).results
 
     assert [r.source.name for r in results] == [
         "Show.Name.S01E01.mkv",
@@ -101,7 +101,7 @@ def test_an_entry_already_at_its_name_is_unchanged_and_its_sidecar_still_moves(
     (tmp_path / "Show Name - S01E01 - Pilot.mkv").write_bytes(b"v")
     (tmp_path / "Show Name - S01E01 - Pilot.SRT").write_bytes(b"s")
 
-    results = apply_plan(_plan([tmp_path]), confirmed=True)
+    results = apply_plan(_plan([tmp_path]), confirmed=True).results
 
     assert _by_name(results) == {
         "Show Name - S01E01 - Pilot.mkv": (ApplyStatus.UNCHANGED, "already has its name"),
@@ -186,7 +186,7 @@ def test_a_sidecar_changed_since_planning_is_skipped_while_its_video_moves(
     plan = _plan([tmp_path])
     (tmp_path / "Show.Name.S01E01.srt").write_text("edited since planning", encoding="utf-8")
 
-    results = apply_plan(plan, confirmed=True)
+    results = apply_plan(plan, confirmed=True).results
 
     assert _by_name(results) == {
         "Show.Name.S01E01.mkv": (ApplyStatus.RENAMED, "ok"),

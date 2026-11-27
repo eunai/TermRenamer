@@ -11,6 +11,7 @@ and Apply then move under the Title list, as the mockup draws them.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from textual.app import ComposeResult
@@ -59,15 +60,21 @@ details and both actions in the column, the header and footer above and below. B
 this the panel is hidden, as if Posters were off."""
 
 
-def _apply_parts(note_id: str) -> ComposeResult:
+def _apply_parts(button_id: str, note_id: str) -> ComposeResult:
     """The Apply button and its note, for the summary beside the details or under the list."""
-    yield ActionButton("enter", "Apply…", press_key="enter", classes="-strong")
+    yield ActionButton("enter", "Apply…", press_key="enter", id=button_id, classes="-strong")
     yield Static("Nothing moves until you confirm.", id=note_id)
 
 
 class _DetailsScroll(VerticalScroll, can_focus=False):
     """The details column's scroll. It never takes focus, so the arrows reach the app's
     key table even when the column is taller than the screen."""
+
+
+_WAITING_ACTIONS = ("apply", "leave_out", "pick_match")
+"""The actions that wait while a picked Match's episodes are looked up."""
+_WAITING_BUTTONS = ("#apply", "#apply-under", "#leave-out", "#change-match")
+"""Their buttons, off the screen meanwhile."""
 
 
 class PreviewStage(TitleListStage):
@@ -143,6 +150,7 @@ class PreviewStage(TitleListStage):
         self._plan: Plan | None = None
         self._rows: tuple[TitleRow, ...] = ()
         self._file = 0
+        self._looking_up = False
 
     def compose(self) -> ComposeResult:
         with Horizontal():
@@ -160,7 +168,7 @@ class PreviewStage(TitleListStage):
                     )
                 with Vertical(id="preview-summary"):
                     yield Static("", id="summary-counts", classes="summary-counts")
-                    yield from _apply_parts("preview-note")
+                    yield from _apply_parts("apply", "preview-note")
             with Vertical(classes="stage-body"):
                 yield from self.compose_heading()
                 yield TitleList(id="preview-titles")
@@ -168,7 +176,7 @@ class PreviewStage(TitleListStage):
                 with Vertical(id="summary-under"):
                     yield Static("", id="summary-counts-under", classes="summary-counts")
                     with Horizontal(id="summary-under-apply"):
-                        yield from _apply_parts("summary-under-note")
+                        yield from _apply_parts("apply-under", "summary-under-note")
 
     def on_mount(self) -> None:
         # Each button shows once its key's action is built, here or on the app (#28).
@@ -205,6 +213,7 @@ class PreviewStage(TitleListStage):
         """
         kept = self._kept_entry(plan) if keep_selection else None
         self._plan = plan
+        self._show_looking_up(False)
         self._rows = title_rows(plan)
         self._file = 0
         row_index = 0
@@ -233,6 +242,24 @@ class PreviewStage(TitleListStage):
             counts.update(summary)
         self._show_details()
 
+    def mark_looking_up(self) -> None:
+        """Mark the selected Title looking up, while its new Match's episodes are looked
+        up; showing a Plan clears the mark. Apply, Leave out and Change match wait: their
+        keys leave the footer and their buttons the screen."""
+        selected = self.title_list.selected
+        if selected is not None:
+            self.title_list.put_row(replace(selected, status=StatusWord.LOOKING_UP))
+        self._show_looking_up(True)
+        self.changed()
+
+    def _show_looking_up(self, looking_up: bool) -> None:
+        self._looking_up = looking_up
+        for button_id in _WAITING_BUTTONS:
+            self.query_one(button_id).visible = not looking_up
+
+    def key_enabled(self, action: str) -> bool:
+        return not (self._looking_up and action in _WAITING_ACTIONS)
+
     def _kept_entry(self, plan: Plan) -> PlanEntry | None:
         """The entry of ``plan`` with the selected file's recorded source, or ``None``."""
         selected = self.selected_file
@@ -257,6 +284,15 @@ class PreviewStage(TitleListStage):
         self.query_one("#leave-out", ActionButton).update(
             "x  Put back" if left_out else "x  Leave out"
         )
+        # Change match stands out on a row with no match, as in the mockup.
+        row = self.selected_row
+        unmatched = row is not None and row.status in (
+            EntryStatus.NO_MATCH,
+            EntryStatus.NOT_RECOGNISED,
+        )
+        change = self.query_one("#change-match", ActionButton)
+        change.set_class(unmatched, "-strong")
+        change.set_class(not unmatched, "-plain")
         self.changed()
 
     def _keep_mark_in_view(self) -> None:
@@ -384,7 +420,8 @@ def _sidecar_notes(sidecars: tuple[PlanEntry, ...], *, moves: bool) -> list[str]
 
 
 def _summary(counts: PlanCounts) -> str:
-    """The Plan's videos counted by status, on three lines to fit the column."""
+    """The Plan's videos counted by status, on three lines to fit the column, and the
+    Stragglers to merge when there are any."""
 
     def part(n: int, word: StatusWord) -> str:
         return f"[{word.style}]{n} {word.value}[/]"
@@ -398,6 +435,13 @@ def _summary(counts: PlanCounts) -> str:
             part(counts.no_match, StatusWord.NO_MATCH)
             + dot
             + part(counts.not_recognised, StatusWord.NOT_RECOGNISED),
-            part(counts.left_out, StatusWord.LEFT_OUT),
+            part(counts.left_out, StatusWord.LEFT_OUT) + _stragglers_part(counts.stragglers),
         )
     )
+
+
+def _stragglers_part(n: int) -> str:
+    """`` · 2 Stragglers merge`` (Textual markup), or nothing for none."""
+    if not n:
+        return ""
+    return f" [$tr-dim]· {plural(n, 'Straggler')} {agree(n, 'merges', 'merge')}[/]"

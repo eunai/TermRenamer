@@ -16,6 +16,6 @@ def test_apply_creates_destination_tree(tmp_path: Path) -> None:
         _mapping={("show", 1, 1): EpisodeMetadata(show_title="Show", episode_title="Pilot")},
     )
     plan = plan_folder(tmp_path, ScanMode.TV, provider)
-    results = apply_plan(plan, confirmed=True)
+    results = apply_plan(plan, confirmed=True).results
     assert all(r.status is ApplyStatus.RENAMED for r in results)
     assert (tmp_path / "Show" / "Season 01").is_dir()

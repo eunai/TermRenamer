@@ -73,7 +73,8 @@ def test_apply_never_touches_a_left_out_video_or_its_two_sidecars(tmp_path: Path
     folder = _show(tmp_path)
     plan = _left_out_pilot(_plan(folder))
 
-    results = apply_plan(plan, confirmed=True)
+    outcome = apply_plan(plan, confirmed=True)
+    results = outcome.results
 
     assert _contents(folder) == {
         "Show.Name.S01E01.mkv": b"pilot",
@@ -88,8 +89,15 @@ def test_apply_never_touches_a_left_out_video_or_its_two_sidecars(tmp_path: Path
         "Show.Name.S01E01.srt": (ApplyStatus.LEFT_OUT, "left out"),
         "Show.Name.S01E02.mkv": (ApplyStatus.RENAMED, "ok"),
     }
-    assert AppliedCounts.of(plan, results) == AppliedCounts(
-        renamed=1, unchanged=0, skipped=0, failed=0, left_out=1
+    assert AppliedCounts.of(plan, outcome) == AppliedCounts(
+        renamed=1,
+        unchanged=0,
+        skipped=0,
+        failed=0,
+        left_out=1,
+        stragglers_merged=0,
+        stragglers_not_merged=0,
+        stragglers_failed=0,
     )
 
 
@@ -154,7 +162,7 @@ def test_apply_skips_a_video_whose_folder_was_pointed_elsewhere_after_planning(
     folder.rename(tmp_path / "Backups moved")
     folder.symlink_to(other, target_is_directory=True)
 
-    results = apply_plan(plan, confirmed=True)
+    results = apply_plan(plan, confirmed=True).results
 
     videos = {r.source.name: (r.status, r.reason) for r in results if r.source.suffix == ".mkv"}
     assert videos == {

@@ -180,12 +180,19 @@ async def test_no_other_key_at_the_preview_renames_anything(tmp_path: Path) -> N
     async with app.run_test(size=SIZE) as pilot:
         await queue(pilot, folder)
         await build(pilot)
-        for key in ("y", "space", "b", "t", "x", "u", "left", "right", "i"):
+        for key in ("y", "space", "b", "x", "u", "left", "right", "i"):
             await press(pilot, key)
             await app.workers.wait_for_complete()
             assert app.stage is Stage.PREVIEW
             assert app.screen is app.screen_stack[0]
             assert names_in(folder) == _BEFORE
+        # t opens the Match picker, and Escape closes it.
+        await press(pilot, "t")
+        assert app.screen is not app.screen_stack[0]
+        await press(pilot, "escape")
+        assert app.stage is Stage.PREVIEW
+        assert app.screen is app.screen_stack[0]
+        assert names_in(folder) == _BEFORE
 
 
 async def test_y_or_enter_in_the_confirm_applies_and_shows_the_counts(tmp_path: Path) -> None:
@@ -227,7 +234,7 @@ async def test_n_at_the_applied_stage_starts_a_new_batch_with_an_empty_queue(
         text = screen_text(app)
         assert app.stage is Stage.QUEUE
         assert app.queue.sources == ()
-        assert app.results is None
+        assert app.outcome is None
     assert "Nothing queued yet" in text
     assert "● Queue" in text
 

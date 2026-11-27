@@ -4,123 +4,72 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
 from pathlib import Path
 
-from termrenamer.core.collisions import allocate_destination, name_is_taken
 from termrenamer.core.models import (
+    ApplyOutcome,
     ApplyResult,
     ApplyStatus,
     EntryStatus,
     Plan,
     PlanEntry,
+    Straggler,
 )
-from termrenamer.core.paths import path_key
+from termrenamer.core.moving import Changes, is_folder, leave_folder, move_no_replace
+from termrenamer.core.paths import claim_key, path_key
 from termrenamer.core.planning import fingerprint
 from termrenamer.util.errors import ValidationError
 
 _LOG = logging.getLogger(__name__)
 
+_TAKEN = "destination exists at apply time"
+_STOPPED = "not applied: Apply stopped after an unexpected error"
 
-def _remove_empty_source_dirs(applied_source_parents: set[Path]) -> None:
+
+def _move(source: Path, dest: Path, changes: Changes) -> tuple[ApplyStatus, str]:
+    """Make ``dest``'s folder and move ``source`` there without replacing anything:
+    Apply's one move, for entries and Stragglers alike."""
+    try:
+        changes.make_folders(dest.parent)
+    except OSError as exc:
+        return ApplyStatus.FAIL, f"mkdir failed: {exc}"
+    try:
+        move_no_replace(source, dest, changes)
+    except FileExistsError:
+        return ApplyStatus.SKIP, _TAKEN
+    except OSError as exc:
+        return ApplyStatus.FAIL, f"rename/move failed: {exc}"
+    return ApplyStatus.RENAMED, "ok"
+
+
+def _remove_empty_source_dirs(applied_source_parents: set[Path], changes: Changes) -> None:
     """Remove source directories that are empty after moves (deepest first).
 
     Never deletes non-empty directories or files. Failures are logged, not raised.
-    If the process cwd is inside a directory being removed, chdir to the parent first
-    (same idea as anipyrenamer).
+    When the working folder is a directory being removed or inside it, it moves to the
+    parent first (same idea as anipyrenamer). Each folder removed is recorded in
+    ``changes``.
     """
-    cwd = Path.cwd().resolve()
-    for dir_path in sorted(applied_source_parents, key=lambda p: len(p.parts), reverse=True):
-        if not dir_path.exists() or not dir_path.is_dir():
-            continue
+    for dir_path in sorted(applied_source_parents, key=lambda p: (-len(p.parts), path_key(p))):
         try:
-            if any(dir_path.iterdir()):
+            if not is_folder(dir_path, os.lstat(dir_path)) or any(dir_path.iterdir()):
                 continue
-        except OSError as exc:
-            _LOG.warning("Skipping source directory cleanup for %s: %s", dir_path, exc)
-            continue
-
-        try:
-            resolved_dir = dir_path.resolve()
-        except OSError:
-            resolved_dir = dir_path
-        if resolved_dir == cwd:
-            try:
-                os.chdir(str(dir_path.parent))
-                cwd = Path.cwd().resolve()
-            except OSError as exc:
-                _LOG.warning(
-                    "Could not leave source directory %s before cleanup: %s",
-                    dir_path,
-                    exc,
-                )
-                continue
-
-        try:
+            leave_folder(dir_path)
             dir_path.rmdir()
         except OSError as exc:
             _LOG.warning("Skipping source directory cleanup for %s: %s", dir_path, exc)
-
-
-def _kept_in_place(child: Path, entry_keys: frozenset[str], target_keys: frozenset[str]) -> bool:
-    """Whether the Straggler merge must leave ``child`` where it is.
-
-    That is a file of the Plan or a folder holding one, and a folder that is,
-    contains or lies inside a target folder (a folder an entry of the Plan moves into).
-    """
-    key = path_key(child)
-    if any(k == key or k.startswith(key + os.sep) for k in entry_keys):
-        return True
-    return any(
-        t == key or t.startswith(key + os.sep) or key.startswith(t + os.sep) for t in target_keys
-    )
-
-
-def _merge_stragglers(
-    merge_pairs: set[tuple[Path, Path]],
-    occupied: set[Path],
-    entry_keys: frozenset[str],
-    target_keys: frozenset[str],
-) -> set[Path]:
-    """After planned moves, move any remaining children into destination folders.
-
-    Uses the same `` (1)`` / `` (2)`` collision policy as planning. What
-    :func:`_kept_in_place` names is never moved this way. Log-only on failures.
-    Returns old parents that may now be empty.
-    """
-    maybe_empty: set[Path] = set()
-    for old_p, new_p in sorted(
-        merge_pairs,
-        key=lambda t: (path_key(t[0]), path_key(t[1])),
-    ):
-        if not old_p.exists() or not old_p.is_dir():
             continue
-        try:
-            children = sorted(old_p.iterdir(), key=lambda p: p.name.casefold())
-        except OSError as exc:
-            _LOG.warning("Cannot list %s for merge: %s", old_p, exc)
-            continue
-        children = [c for c in children if not _kept_in_place(c, entry_keys, target_keys)]
-        if not children:
-            continue
-        try:
-            new_p.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            _LOG.warning("Cannot create merge destination %s: %s", new_p, exc)
-            continue
-        for child in children:
-            desired = new_p / child.name
-            final = allocate_destination(desired, source=child, occupied=occupied)
-            try:
-                _rename_or_move(child, final)
-            except OSError as exc:
-                _LOG.warning("Merge move failed %s -> %s: %s", child, final, exc)
-                continue
-        maybe_empty.add(old_p)
-    return maybe_empty
+        changes.folders_removed.append(dir_path)
 
 
-def _apply_entry(entry: PlanEntry) -> ApplyResult:
+def _unreadable(exc: OSError) -> tuple[ApplyStatus, str]:
+    """The result of a source that could not be read: gone, or failing."""
+    if isinstance(exc, FileNotFoundError):
+        return ApplyStatus.SKIP, "stale: source missing"
+    return ApplyStatus.FAIL, f"cannot read the source: {exc}"
+
+
+def _apply_entry(entry: PlanEntry, changes: Changes) -> ApplyResult:
     """Rename one entry after the checks; touch nothing when a check fails."""
     source = entry.source
     dest = entry.destination
@@ -130,9 +79,10 @@ def _apply_entry(entry: PlanEntry) -> ApplyResult:
 
     if dest is None:
         return result(ApplyStatus.SKIP, entry.status.value)
-    if not source.exists():
-        return result(ApplyStatus.SKIP, "stale: source missing")
-    current_fp = fingerprint(source)
+    try:
+        current_fp = fingerprint(source)
+    except OSError as exc:
+        return result(*_unreadable(exc))
     if (
         current_fp.size != entry.fingerprint.size
         or current_fp.mtime_ns != entry.fingerprint.mtime_ns
@@ -140,48 +90,75 @@ def _apply_entry(entry: PlanEntry) -> ApplyResult:
         return result(ApplyStatus.SKIP, "stale: source changed since plan")
     if entry.has_its_name:
         return result(ApplyStatus.UNCHANGED, "already has its name")
-    if name_is_taken(dest, source=source):
-        return result(ApplyStatus.SKIP, "destination exists at apply time")
-    try:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        return result(ApplyStatus.FAIL, f"mkdir failed: {exc}")
-    try:
-        _rename_or_move(source, dest)
-    except OSError as exc:
-        return result(ApplyStatus.FAIL, f"rename/move failed: {exc}")
-    return result(ApplyStatus.RENAMED, "ok")
+    return result(*_move(source, dest, changes))
 
 
-def apply_plan(plan: Plan, *, confirmed: bool) -> list[ApplyResult]:
-    """Execute a Plan exactly as previewed.
+def _apply_straggler(straggler: Straggler, moved_out: set[str], changes: Changes) -> ApplyResult:
+    """Move one Straggler to the path the Plan fixed, when an entry left its folder."""
+    source, dest = straggler.source, straggler.destination
+
+    def result(status: ApplyStatus, reason: str) -> ApplyResult:
+        return ApplyResult(source=source, destination=dest, status=status, reason=reason)
+
+    if str(source.parent) not in moved_out:
+        return result(ApplyStatus.SKIP, "nothing moved out of its folder")
+    try:
+        os.lstat(source)
+    except OSError as exc:
+        return result(*_unreadable(exc))
+    return result(*_move(source, dest, changes))
+
+
+def _stopped_by(source: Path, dest: Path | None, exc: Exception) -> ApplyResult:
+    """The result of the item an unexpected error stopped Apply at; the error is logged
+    with its traceback."""
+    _LOG.error("Apply stopped at %s by an unexpected error", source, exc_info=exc)
+    return ApplyResult(
+        source=source,
+        destination=dest,
+        status=ApplyStatus.FAIL,
+        reason=f"unexpected error: {exc!r}",
+    )
+
+
+def apply_plan(plan: Plan, *, confirmed: bool) -> ApplyOutcome:
+    """Execute a Plan exactly as previewed; no file or folder of a source folder that it
+    does not list is moved (a folder Straggler moves with what it holds at Apply).
 
     Applies the entries that have a destination: ready, and name taken with a numbered
     name (Name taken set to ``suffix``). Reports every other entry (no match, not
     recognised, name taken under ``skip``) as skipped with its status as the reason,
     and each left out entry as left out; neither is touched.
     Each video is handled before the Sidecars, and a Sidecar is applied only when its
-    video was renamed or unchanged in this Apply. While the Plan was built with Folder
-    rename on, the files left in a folder that a video moved out of are merged into the
-    video's new folder, except files of the Plan.
+    video was renamed or unchanged in this Apply. Then each Straggler the Plan lists is
+    moved to the path the Plan fixed, when at least one entry from its folder moved to
+    another folder in this Apply and the Straggler still exists. Last, the source folders
+    those moves emptied are removed. No move replaces anything (see
+    :func:`~termrenamer.core.moving.move_no_replace`).
+
+    An error reading or moving a file becomes that item's result. Any other error is
+    logged with its traceback and fails its item, and Apply stops: every item after it
+    is skipped as not applied, no folder is removed, and the outcome so far is returned.
 
     Args:
         plan: The Plan the Preview showed.
         confirmed: Must be True or :class:`ValidationError` is raised.
 
     Returns:
-        One result per entry: videos in source-path order, then Sidecars.
+        The outcome: each entry's and each Straggler's result, every move, the
+        folders made and removed, and any file left behind.
     """
     if not confirmed:
         msg = "Apply refused: user confirmation is required before filesystem changes"
         raise ValidationError(msg)
 
     ordered = sorted(plan.entries, key=lambda e: (e.is_sidecar, path_key(e.source)))
+    changes = Changes()
     results: list[ApplyResult] = []
-    applied_source_parents: set[Path] = set()
-    merge_pairs: set[tuple[Path, Path]] = set()
-    occupied: set[Path] = set()
+    emptied: set[Path] = set()
+    moved_out: set[str] = set()
     applied_sources: set[Path] = set()
+    stopped = False
 
     for entry in ordered:
         if entry.status is EntryStatus.LEFT_OUT:
@@ -195,48 +172,60 @@ def apply_plan(plan: Plan, *, confirmed: bool) -> list[ApplyResult]:
                 ),
             )
             continue
+        if stopped:
+            results.append(_skipped(entry.source, entry.destination, _STOPPED))
+            continue
         if entry.video is not None and entry.video not in applied_sources:
             # The Plan left it without a name (its video's status), or its video was
             # skipped or failed in this Apply.
             not_named = entry.destination is None
             reason = entry.status.value if not_named else "video not applied"
-            results.append(
-                ApplyResult(
-                    source=entry.source,
-                    destination=entry.destination,
-                    status=ApplyStatus.SKIP,
-                    reason=reason,
-                ),
-            )
+            results.append(_skipped(entry.source, entry.destination, reason))
             continue
-        outcome = _apply_entry(entry)
+        try:
+            outcome = _apply_entry(entry, changes)
+        except Exception as exc:
+            outcome, stopped = _stopped_by(entry.source, entry.destination, exc), True
         results.append(outcome)
         if outcome.status in (ApplyStatus.RENAMED, ApplyStatus.UNCHANGED):
             applied_sources.add(entry.source)
         if outcome.status is not ApplyStatus.RENAMED or entry.destination is None:
             continue
-        dest = entry.destination
-        occupied.add(dest)
-        if entry.source.parent != dest.parent:
-            applied_source_parents.add(entry.source.parent)
-            if plan.options.folder_rename:
-                merge_pairs.add((entry.source.parent, dest.parent))
+        # As the Plan judged it: a source folder by its recorded path, "another folder"
+        # by the claim key.
+        if claim_key(entry.source.parent) != claim_key(entry.destination.parent):
+            emptied.add(entry.source.parent)
+            moved_out.add(str(entry.source.parent))
 
-    if merge_pairs:
-        entry_keys = frozenset(path_key(e.source) for e in plan.entries)
-        target_keys = frozenset(
-            path_key(e.destination.parent) for e in plan.entries if e.destination
-        )
-        applied_source_parents |= _merge_stragglers(merge_pairs, occupied, entry_keys, target_keys)
+    stragglers = []
+    for straggler in plan.stragglers:
+        if stopped:
+            stragglers.append(_skipped(straggler.source, straggler.destination, _STOPPED))
+            continue
+        try:
+            result = _apply_straggler(straggler, moved_out, changes)
+        except Exception as exc:
+            result, stopped = _stopped_by(straggler.source, straggler.destination, exc), True
+        stragglers.append(result)
+        if result.status is ApplyStatus.RENAMED:
+            emptied.add(straggler.source.parent)
 
-    _remove_empty_source_dirs(applied_source_parents)
+    if not stopped:
+        try:
+            _remove_empty_source_dirs(emptied, changes)
+        except Exception:
+            # The outcome is returned whatever the clean-up does.
+            _LOG.exception("Removing the emptied source folders stopped")
 
-    return results
+    return ApplyOutcome(
+        results=tuple(results),
+        stragglers=tuple(stragglers),
+        moves=tuple(changes.moves),
+        folders_created=tuple(changes.folders_created),
+        folders_removed=tuple(changes.folders_removed),
+        files_left_behind=tuple(changes.files_left_behind),
+    )
 
 
-def _rename_or_move(source: Path, dest: Path) -> None:
-    """Prefer ``Path.rename``; fall back to ``shutil.move`` for cross-device moves."""
-    try:
-        source.rename(dest)
-    except OSError:
-        shutil.move(str(source), str(dest))
+def _skipped(source: Path, dest: Path | None, reason: str) -> ApplyResult:
+    return ApplyResult(source=source, destination=dest, status=ApplyStatus.SKIP, reason=reason)

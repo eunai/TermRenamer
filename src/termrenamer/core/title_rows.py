@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from termrenamer.core.models import (
-    ApplyResult,
+    ApplyOutcome,
     ApplyStatus,
     EntryStatus,
     Plan,
@@ -54,11 +54,12 @@ class TitleRow:
 
 @dataclass(frozen=True, slots=True)
 class PlanCounts:
-    """What a Plan holds, counted in videos (Sidecars are not counted).
+    """What a Plan holds, counted in videos (Sidecars are not counted), and its Stragglers.
 
     ``to_rename`` counts the videos Apply will rename: ready or name taken, with a
     destination that is not where the video already is. A video that already has its
-    name is not counted as renamed. The other counts count videos by status.
+    name is not counted as renamed. The other counts count videos by status, except
+    ``stragglers``: the Stragglers the Plan lists, which Apply merges.
     """
 
     titles: int
@@ -69,6 +70,7 @@ class PlanCounts:
     no_match: int
     not_recognised: int
     left_out: int
+    stragglers: int
 
     @classmethod
     def of(cls, plan: Plan) -> PlanCounts:
@@ -86,30 +88,43 @@ class PlanCounts:
             no_match=sum(1 for v in videos if v.status is EntryStatus.NO_MATCH),
             not_recognised=sum(1 for v in videos if v.status is EntryStatus.NOT_RECOGNISED),
             left_out=sum(1 for v in videos if v.status is EntryStatus.LEFT_OUT),
+            stragglers=len(plan.stragglers),
         )
 
 
 @dataclass(frozen=True, slots=True)
 class AppliedCounts:
     """How many videos Apply renamed, left unchanged (already named), skipped and failed,
-    and how many were left out (not counted as skipped)."""
+    how many were left out (not counted as skipped), and how many Stragglers it merged,
+    did not merge, and failed to merge."""
 
     renamed: int
     unchanged: int
     skipped: int
     failed: int
     left_out: int
+    stragglers_merged: int
+    stragglers_not_merged: int
+    stragglers_failed: int
+
+    @property
+    def anything_failed(self) -> bool:
+        """Whether a video or a Straggler failed."""
+        return bool(self.failed or self.stragglers_failed)
 
     @classmethod
-    def of(cls, plan: Plan, results: Sequence[ApplyResult]) -> AppliedCounts:
+    def of(cls, plan: Plan, outcome: ApplyOutcome) -> AppliedCounts:
         videos = {entry.source for entry in plan.videos}
-        statuses = [r.status for r in results if r.source in videos]
+        statuses = [r.status for r in outcome.results if r.source in videos]
         return cls(
             renamed=statuses.count(ApplyStatus.RENAMED),
             unchanged=statuses.count(ApplyStatus.UNCHANGED),
             skipped=statuses.count(ApplyStatus.SKIP),
             failed=statuses.count(ApplyStatus.FAIL),
             left_out=statuses.count(ApplyStatus.LEFT_OUT),
+            stragglers_merged=outcome.stragglers_merged,
+            stragglers_not_merged=len(outcome.stragglers) - outcome.stragglers_merged,
+            stragglers_failed=sum(1 for r in outcome.stragglers if r.status is ApplyStatus.FAIL),
         )
 
 

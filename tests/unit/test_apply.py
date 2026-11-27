@@ -30,7 +30,7 @@ def test_apply_moves_files(tmp_path: Path) -> None:
         _mapping={("show", 1, 1): EpisodeMetadata(show_title="Show", episode_title="Pilot")},
     )
     plan = plan_folder(tmp_path, ScanMode.TV, provider)
-    results = apply_plan(plan, confirmed=True)
+    results = apply_plan(plan, confirmed=True).results
     assert all(r.status is ApplyStatus.RENAMED for r in results)
     assert not vid.exists()
     assert any(p.exists() for p in tmp_path.rglob("*.mkv"))
@@ -44,7 +44,7 @@ def test_apply_skips_stale_source(tmp_path: Path) -> None:
     )
     plan = plan_folder(tmp_path, ScanMode.TV, provider)
     vid.unlink()
-    results = apply_plan(plan, confirmed=True)
+    results = apply_plan(plan, confirmed=True).results
     assert results[0].status is ApplyStatus.SKIP
 
 
@@ -63,11 +63,12 @@ def test_apply_operation_order_lexical(tmp_path: Path) -> None:
 
 def test_remove_empty_source_dirs_skips_non_empty(tmp_path: Path) -> None:
     from termrenamer.core.apply import _remove_empty_source_dirs
+    from termrenamer.core.moving import Changes
 
     d = tmp_path / "keep"
     d.mkdir()
     (d / "file.txt").write_text("x", encoding="utf-8")
-    _remove_empty_source_dirs({d})
+    _remove_empty_source_dirs({d}, Changes())
     assert d.is_dir()
     assert (d / "file.txt").exists()
 
@@ -98,7 +99,7 @@ def test_apply_merge_stragglers_moves_extra_files_to_dest_parent(
     )
     assert len(plan.entries) == 1
     main_dest = plan.entries[0].destination
-    results = apply_plan(plan, confirmed=True)
+    results = apply_plan(plan, confirmed=True).results
     assert [r.status for r in results] == [ApplyStatus.RENAMED]
     nfo_gone = (base / "extra.nfo").exists()
     assert not nfo_gone
@@ -109,9 +110,10 @@ def test_apply_merge_stragglers_moves_extra_files_to_dest_parent(
 
 def test_remove_empty_source_dirs_deepest_first(tmp_path: Path) -> None:
     from termrenamer.core.apply import _remove_empty_source_dirs
+    from termrenamer.core.moving import Changes
 
     deep = tmp_path / "x" / "y" / "z"
     deep.mkdir(parents=True)
     parents = {tmp_path / "x" / "y" / "z", tmp_path / "x" / "y", tmp_path / "x"}
-    _remove_empty_source_dirs(parents)
+    _remove_empty_source_dirs(parents, Changes())
     assert not (tmp_path / "x").exists()
