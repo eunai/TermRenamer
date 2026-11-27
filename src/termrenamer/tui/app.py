@@ -95,6 +95,11 @@ _PICK = "pick"
 _UNDO = "undo"
 """The worker that undoes the last Apply."""
 
+_REFUSED_WHILE_APPLYING = frozenset({"apply", "pick_match", "leave_out", "discard_plan"})
+"""The actions that refuse while an Apply runs; the footer leaves their keys out."""
+_REFUSED_WHILE_UNDOING = frozenset({"undo", "new_batch"})
+"""The actions that refuse while an Undo runs; the footer leaves their keys out."""
+
 
 def _start_folder() -> Path:
     """The folder the file and folder dialogs open in: the working folder, or the home
@@ -282,18 +287,34 @@ class TermRenamerApp(App[None]):
     # -------------------------------------------------------------------- keys
 
     def footer_keys(self) -> list[keys.Key]:
-        """The keys that work at the current Stage right now, in the table's order."""
+        """The keys that work at the current Stage right now, in the table's order.
+
+        A key whose action refuses while an Apply or an Undo runs, or that the lock
+        refuses, is left out until it works again.
+        """
         view = self.stage_view
         shown = []
         for key in keys.KEYS:
             if self.stage not in key.stages or not key.bindings:
                 continue
             actions = [action for _name, action in key.bindings]
+            if key.guarded and self.session_settings.locked:
+                continue  # refused with the lock's message
+            if any(self._refused_now(a) for a in actions):
+                continue
             if all(self._target(a) is not None and view.key_enabled(a) for a in actions):
                 if self._pick is not None and "discard_plan" in actions:
                     key = replace(key, hint="Abandon change")  # what esc does meanwhile
                 shown.append(key)
         return shown
+
+    def _refused_now(self, action: str) -> bool:
+        """Whether ``action`` refuses now because an Apply or an Undo runs."""
+        if self._applying:
+            return action in _REFUSED_WHILE_APPLYING
+        if self._undoing:
+            return action in _REFUSED_WHILE_UNDOING
+        return False
 
     def _locked_message(self, what: str) -> str:
         """Why ``what`` (such as "Mode") cannot change now that the settings are locked."""
@@ -674,6 +695,7 @@ class TermRenamerApp(App[None]):
         self.session_settings.lock()
         self.say("Applying the Plan…")
         self._apply(plan)
+        self._refresh_chrome()
 
     @work(thread=True, exclusive=True, group="batch", exit_on_error=False, name=_APPLY)
     def _apply(self, plan: Plan) -> tuple[Plan, ApplyOutcome]:
@@ -788,6 +810,7 @@ class TermRenamerApp(App[None]):
         self.session_settings.lock()
         self.say("Putting the files back…")
         self._undo(outcome)
+        self._refresh_chrome()
 
     @work(thread=True, exclusive=True, group="batch", exit_on_error=False, name=_UNDO)
     def _undo(self, outcome: ApplyOutcome) -> tuple[ApplyOutcome, UndoOutcome]:

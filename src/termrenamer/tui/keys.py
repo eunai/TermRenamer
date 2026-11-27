@@ -8,6 +8,11 @@ but Help lists every key. So a ticket that builds a key's action adds a method
 
 Order matters twice: the footer lists a Stage's keys in this order, and a key pressed
 runs the first entry for that key whose Stages hold the current one.
+
+When the footer is too narrow for every key that works, it drops hints by
+:func:`drop_rank` until the rest fit: first the keys of :data:`DROPPED_FIRST`, in that
+order, then the selection keys, then the Stage's own keys from the last listed. Help
+is never dropped, as it lists every key.
 """
 
 from __future__ import annotations
@@ -57,6 +62,38 @@ class Key:
         if self.stages == _ALL:
             return "Any"
         return ", ".join(self.stage_names)
+
+
+DROPPED_FIRST = (
+    "toggle_posters",
+    "open_logs",
+    "change_provider",
+    "change_mode",
+    "open_settings",
+    "quit",
+)
+"""The actions whose hints a narrow footer drops first, in this order: each works at
+every Stage it is listed, and Help names it."""
+
+SELECTION = ("select_previous", "previous_file")
+"""The selection keys' first actions, ``↑↓`` then ``←→``, dropped after
+:data:`DROPPED_FIRST`."""
+
+NEVER_DROPPED = "open_help"
+"""Help's action: its hint stays however narrow the footer is."""
+
+
+def drop_rank(key: Key, position: int) -> int | None:
+    """When a narrow footer drops ``key``, the ``position``-th hint it lists: lower goes
+    first, and ``None`` is never."""
+    action = key.bindings[0][1] if key.bindings else ""
+    if action == NEVER_DROPPED:
+        return None
+    if action in DROPPED_FIRST:
+        return DROPPED_FIRST.index(action)
+    if action in SELECTION:
+        return len(DROPPED_FIRST) + SELECTION.index(action)
+    return len(DROPPED_FIRST) + len(SELECTION) + 1000 - position
 
 
 def _bound(key: str, action: str) -> tuple[tuple[str, str], ...]:

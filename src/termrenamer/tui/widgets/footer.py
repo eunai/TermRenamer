@@ -6,13 +6,14 @@ import logging
 from collections.abc import Sequence
 from enum import StrEnum
 
+from rich.cells import cell_len
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.content import Content
 from textual.markup import escape
 from textual.widgets import Static
 
-from termrenamer.tui.keys import Key
+from termrenamer.tui.keys import Key, drop_rank
 
 
 class MessageKind(StrEnum):
@@ -40,23 +41,45 @@ class MessageKind(StrEnum):
         }.get(self, logging.INFO)
 
 
-def hints_markup(hints: Sequence[tuple[str, str]], width: int | None = None) -> str:
-    """Each key and its label, as ``(key, label)`` pairs; as many as fit in ``width``."""
-    out: list[str] = []
-    used = 1
-    for display, hint in hints:
-        cells = len(display) + 1 + len(hint)
-        if width is not None and used + cells > width - 1:
+def hints_markup(hints: Sequence[tuple[str, str]]) -> str:
+    """Each key and its label, as ``(key, label)`` pairs."""
+    return "  ".join(
+        f"[b $accent]{escape(display)}[/] [$foreground]{escape(hint)}[/]" for display, hint in hints
+    )
+
+
+_GAP = 2
+"""The cells between two hints."""
+
+
+def fitting(shown: Sequence[Key], width: int) -> list[Key]:
+    """The keys of ``shown`` whose hints fit in ``width`` cells, in their order.
+
+    Hints are dropped by :func:`~termrenamer.tui.keys.drop_rank` until the rest fit;
+    Help's stays even when it alone does not fit.
+    """
+
+    def cells(key: Key) -> int:
+        return cell_len(key.display) + 1 + cell_len(key.hint)
+
+    kept = list(shown)
+    ranks = {id(key): drop_rank(key, position) for position, key in enumerate(shown)}
+    droppable = sorted(
+        (key for key in kept if ranks[id(key)] is not None), key=lambda k: ranks[id(k)] or 0
+    )
+    for key in droppable:
+        if sum(cells(k) for k in kept) + _GAP * (len(kept) - 1) <= width:
             break
-        out.append(f"[b $accent]{escape(display)}[/] [$foreground]{escape(hint)}[/]")
-        used += cells + 2
-    return "  ".join(out)
+        kept.remove(key)
+    return kept
 
 
 _MESSAGE_ROWS = 2
 """The message line and the rule above it."""
 _KEY_ROWS = 1
 """The key hints."""
+_HINTS_PADDING = 2
+"""The key hints' cells of padding, one each side."""
 
 FOOTER_FIXED_ROWS = _MESSAGE_ROWS + _KEY_ROWS
 """The footer's rows besides the Stage's lines."""
@@ -113,6 +136,7 @@ class AppFooter(Vertical):
         area.display = bool(lines)
 
     def show_keys(self, keys: Sequence[Key]) -> None:
+        """Show the hints of ``keys`` that fit, by the key table's rule for a narrow footer."""
         hints = self.query_one("#key-hints", Static)
-        pairs = [(key.display, key.hint) for key in keys]
-        hints.update(hints_markup(pairs, self.size.width or self.app.size.width))
+        width = (self.size.width or self.app.size.width) - _HINTS_PADDING
+        hints.update(hints_markup([(key.display, key.hint) for key in fitting(keys, width)]))
