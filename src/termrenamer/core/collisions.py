@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from termrenamer.core.policies import CollisionPolicy
+
 
 def _same_entry(source: Path, path: Path) -> bool:
     """Whether ``path`` names the same directory entry as ``source``, links not followed."""
@@ -60,3 +62,23 @@ def _first_free_suffix(initial: Path, source: Path, occupied: set[Path]) -> Path
             continue
         occupied.add(candidate)
         return candidate
+
+
+def claim_name(
+    desired: Path,
+    *,
+    source: Path,
+    occupied: set[Path],
+    policy: CollisionPolicy,
+) -> Path | None:
+    """Claim ``desired`` for ``source``, or by ``policy`` a numbered name or none.
+
+    A name is taken when :func:`name_is_taken` says so or an earlier entry has claimed it
+    (it is in ``occupied``). Under ``SUFFIX`` a taken name gives way to the first free
+    numbered name; under ``SKIP`` nothing is claimed and ``None`` is returned.
+    """
+    if policy is CollisionPolicy.SKIP and (
+        desired in occupied or name_is_taken(desired, source=source)
+    ):
+        return None
+    return allocate_destination(desired, source=source, occupied=occupied)

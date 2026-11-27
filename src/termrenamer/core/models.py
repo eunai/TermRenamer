@@ -8,6 +8,8 @@ from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
 
+from termrenamer.core.policies import CollisionPolicy
+
 
 class ScanMode(StrEnum):
     """User-selected library mode."""
@@ -135,7 +137,8 @@ class PlanOptions:
     The session's settings owner makes them with the settings' rules applied:
     ``destination_root`` is the Destination root for ``mode``, and is ``None`` while
     ``folder_rename`` is off; ``season_folders`` holds only in TV Mode with
-    ``folder_rename`` on.
+    ``folder_rename`` on. ``name_taken`` is the Name taken setting: a file whose new
+    name is taken gets a number (``SUFFIX``) or is not applied (``SKIP``).
     """
 
     mode: ScanMode
@@ -143,6 +146,7 @@ class PlanOptions:
     destination_root: Path | None
     folder_rename: bool
     season_folders: bool
+    name_taken: CollisionPolicy = CollisionPolicy.SUFFIX
 
 
 @dataclass(frozen=True, slots=True)

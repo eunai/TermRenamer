@@ -1,4 +1,4 @@
-"""Settings: one form with the two Destination roots, Folder rename, Season folder and Theme.
+"""Settings: one form with the Destination roots, Folder rename, Season folder, Name taken, Theme.
 
 Every value is read from and written to the session's settings owner; a change lasts
 until the app quits, and the User settings file is never written. Season folder
@@ -7,6 +7,8 @@ cannot be turned on while Folder rename is off.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from enum import StrEnum
 from pathlib import Path
 
 from textual import events, on
@@ -20,6 +22,7 @@ from textual.widgets import Input, Static, Switch
 
 from termrenamer.app_bootstrap import ThemeName
 from termrenamer.core.models import ScanMode
+from termrenamer.core.policies import CollisionPolicy
 from termrenamer.session_settings import SessionSettings
 from termrenamer.tui.keys import VIEW_HINTS
 from termrenamer.tui.widgets.action_button import ActionButton
@@ -30,15 +33,18 @@ from termrenamer.util.errors import ValidationError
 _ROOTS = {"tv-root": ScanMode.TV, "film-root": ScanMode.FILM}
 
 
-class ThemeChoice(Static, can_focus=True):
-    """The Theme row's value: ``dark`` or ``light``; enter or space switches it."""
+class Choice(Static, can_focus=True):
+    """A row's value picked from a few words, such as ``dark`` or ``light``.
+
+    ``enter`` or space steps to the next word; the row then posts :class:`Choice.Switched`.
+    """
 
     BINDINGS = [
         Binding("enter", "switch", show=False),
         Binding("space", "switch", show=False),
     ]
 
-    def __init__(self, value: ThemeName, **kwargs: object) -> None:
+    def __init__(self, value: StrEnum, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self.value = value
 
@@ -47,18 +53,18 @@ class ThemeChoice(Static, can_focus=True):
 
     def _draw(self) -> None:
         parts = []
-        for theme in ThemeName:
-            if theme is self.value:
-                parts.append(f"[b $tr-on-accent on $accent] {theme.value} [/]")
+        for word in type(self.value):
+            if word is self.value:
+                parts.append(f"[b $tr-on-accent on $accent] {word.value} [/]")
             else:
-                parts.append(f"[$tr-dim on $tr-button] {theme.value} [/]")
+                parts.append(f"[$tr-dim on $tr-button] {word.value} [/]")
         self.update(" ".join(parts))
 
     def action_switch(self) -> None:
-        names = list(ThemeName)
-        self.value = names[(names.index(self.value) + 1) % len(names)]
+        words = list(type(self.value))
+        self.value = words[(words.index(self.value) + 1) % len(words)]
         self._draw()
-        self.post_message(self.Switched())
+        self.post_message(self.Switched(self))
 
     async def _on_click(self, event: events.Click) -> None:
         event.stop()
@@ -66,7 +72,15 @@ class ThemeChoice(Static, can_focus=True):
         self.action_switch()
 
     class Switched(Message):
-        """The person switched the Theme."""
+        """The person switched the row's value."""
+
+        def __init__(self, choice: Choice) -> None:
+            super().__init__()
+            self.choice = choice
+
+        @property
+        def control(self) -> Choice:
+            return self.choice
 
 
 class SettingsView(Screen[None]):
@@ -144,12 +158,12 @@ class SettingsView(Screen[None]):
     SettingsView .setting-value.-on {
         color: $success;
     }
-    SettingsView #season-note {
+    SettingsView .setting-note {
         color: $tr-dim;
         padding: 0 0 0 2;
         margin: -1 0 1 0;
     }
-    SettingsView ThemeChoice {
+    SettingsView Choice {
         width: auto;
     }
     SettingsView #settings-message {
@@ -200,10 +214,22 @@ class SettingsView(Screen[None]):
                 yield Static("  Season folder", classes="setting-label")
                 yield Switch(owner.season_folders, id="season-folder")
                 yield Static(classes="setting-value", id="season-folder-value")
-            yield Static("Season folder works only while Folder rename is on.", id="season-note")
+            yield Static(
+                "Season folder works only while Folder rename is on.",
+                id="season-note",
+                classes="setting-note",
+            )
+            with Horizontal(classes="setting-row"):
+                yield Static("  Name taken", classes="setting-label")
+                yield Choice(owner.name_taken, id="name-taken")
+            yield Static(
+                "suffix adds a number such as (1); skip leaves the file where it is.",
+                id="name-taken-note",
+                classes="setting-note",
+            )
             with Horizontal(classes="setting-row"):
                 yield Static("  Theme", classes="setting-label")
-                yield ThemeChoice(owner.theme, id="theme")
+                yield Choice(owner.theme, id="theme")
             yield Static("", id="settings-message")
             yield ActionButton(
                 "esc", "Close", press_key="escape", id="settings-close", classes="-plain"
@@ -295,15 +321,25 @@ class SettingsView(Screen[None]):
             self._say(str(exc))
         self._show_switches()
 
-    @on(ThemeChoice.Switched)
-    def _theme_switched(self) -> None:
-        choice = self.query_one(ThemeChoice)
+    @on(Choice.Switched, "#name-taken")
+    def _name_taken_switched(self, event: Choice.Switched) -> None:
+        value = event.choice.value
+        assert isinstance(value, CollisionPolicy)
+        self._switch(event.choice, "Name taken", lambda: self._owner.set_name_taken(value))
+
+    @on(Choice.Switched, "#theme")
+    def _theme_switched(self, event: Choice.Switched) -> None:
+        value = event.choice.value
+        assert isinstance(value, ThemeName)
+        self._switch(event.choice, "Theme", lambda: self._owner.set_theme(value))
+
+    def _switch(self, choice: Choice, label: str, change: Callable[[], object]) -> None:
         try:
-            self._owner.set_theme(choice.value)
+            change()
         except ValidationError as exc:
             self._say(str(exc))
             return
-        self._say(f"Theme: {choice.value.value}.")
+        self._say(f"{label}: {choice.value.value}.")
 
     def action_close(self) -> None:
         for input_id in _ROOTS:

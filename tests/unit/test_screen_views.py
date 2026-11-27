@@ -9,6 +9,7 @@ from textual.widgets import Input, Switch
 
 from termrenamer.app_bootstrap import ThemeName
 from termrenamer.core.models import ScanMode
+from termrenamer.core.policies import CollisionPolicy
 from termrenamer.tui.keys import KEYS
 from termrenamer.tui.stage import Stage
 from termrenamer.tui.views import HelpView, LogsView, SettingsView
@@ -26,7 +27,7 @@ from .screen_driver import (
 )
 
 
-async def test_s_opens_settings_with_its_five_rows_and_escape_closes_it() -> None:
+async def test_s_opens_settings_with_its_six_rows_and_escape_closes_it() -> None:
     app = make_app(loaded=settings(folder_rename=True, tv_root=Path("/media/Shows")))
     async with app.run_test(size=SIZE) as pilot:
         await press(pilot, "s")
@@ -39,11 +40,13 @@ async def test_s_opens_settings_with_its_five_rows_and_escape_closes_it() -> Non
         "Film Destination root",
         "Folder rename",
         "Season folder",
+        "Name taken",
         "Theme",
     ):
         assert label in text
     assert "/media/Shows" in text
     assert "dark" in text and "light" in text
+    assert "suffix" in text and "skip" in text
 
 
 async def test_a_destination_root_typed_in_settings_is_saved_to_the_settings_owner() -> None:
@@ -95,7 +98,7 @@ async def test_the_theme_row_switches_between_dark_and_light_and_discards_nothin
         assert app.theme == "termrenamer-dark"
         await press(pilot, "s")
         # Season folder is skipped: it is unavailable while Folder rename is off.
-        await press(pilot, "down", "down", "down")
+        await press(pilot, "down", "down", "down", "down")
         assert app.focused is app.screen.query_one("#theme")
         await press(pilot, "enter")
         assert app.theme == "termrenamer-light"
@@ -180,3 +183,37 @@ async def test_a_season_folder_loaded_on_while_folder_rename_is_off_is_off() -> 
         assert season.value is owner.season_folders is False
         assert owner.plan_options().season_folders is False
         assert text_of(app, "#season-folder-value") == "off"
+
+
+async def test_the_name_taken_row_switches_between_suffix_and_skip() -> None:
+    app = make_app(loaded=settings(name_taken=CollisionPolicy.SKIP))
+    async with app.run_test(size=SIZE) as pilot:
+        await press(pilot, "s")
+        # Season folder is skipped: it is unavailable while Folder rename is off.
+        await press(pilot, "down", "down", "down")
+        assert app.focused is app.screen.query_one("#name-taken")
+        assert app.screen.query_one("#name-taken").value is CollisionPolicy.SKIP  # type: ignore[attr-defined]
+        await press(pilot, "enter")
+        assert app.session_settings.name_taken is CollisionPolicy.SUFFIX
+        assert "Name taken: suffix." in text_of(app, "#settings-message")
+        await press(pilot, "space")
+        assert app.session_settings.name_taken is CollisionPolicy.SKIP
+        await press(pilot, "escape")
+        assert app.session_settings.plan_options().name_taken is CollisionPolicy.SKIP
+
+
+async def test_name_taken_changed_in_settings_discards_the_plan_and_keeps_the_queue(
+    tmp_path: Path,
+) -> None:
+    folder = tv_backups(tmp_path)
+    app = make_app()
+    async with app.run_test(size=SIZE) as pilot:
+        await queue(pilot, folder)
+        await build(pilot)
+        assert app.plan is not None
+        await press(pilot, "s", "down", "down", "down", "enter", "escape")
+        assert app.session_settings.name_taken is CollisionPolicy.SKIP
+        assert app.stage is Stage.QUEUE
+        assert app.plan is None
+        assert app.queue.sources == (folder.resolve(),)
+        assert "Plan discarded: Name taken changed." in text_of(app, "#message")

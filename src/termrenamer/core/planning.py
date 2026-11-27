@@ -14,7 +14,7 @@ from pathlib import Path
 
 from termrenamer.api.base import FilmMetadataProvider, TvMetadataProvider
 from termrenamer.api.lookup import FilmLookup, TvLookup
-from termrenamer.core.collisions import allocate_destination
+from termrenamer.core.collisions import claim_name
 from termrenamer.core.models import (
     Candidate,
     EntryStatus,
@@ -335,7 +335,7 @@ def plan_queue(
 
     title_of = _titles(found_groups)
 
-    # Names, claimed in source-path order.
+    # Names, claimed in source-path order by the entries that will be applied.
     occupied: set[Path] = set()
     for video in videos:
         title = title_of[video.path]
@@ -349,7 +349,7 @@ def plan_queue(
                 _entry(video, destination=None, status=EntryStatus.NO_MATCH, title=title)
             )
             continue
-        final = allocate_destination(desired, source=video.path, occupied=occupied)
+        final = claim_name(desired, source=video.path, occupied=occupied, policy=options.name_taken)
         status = EntryStatus.READY if final == desired else EntryStatus.NAME_TAKEN
         entries.append(_entry(video, destination=final, status=status, title=title))
 
@@ -366,7 +366,9 @@ def plan_queue(
         status = owner.status
         if owner.destination is not None:
             desired = owner.destination.with_suffix(sidecar.path.suffix.lower())
-            destination = allocate_destination(desired, source=sidecar.path, occupied=occupied)
+            destination = claim_name(
+                desired, source=sidecar.path, occupied=occupied, policy=options.name_taken
+            )
             status = EntryStatus.READY if destination == desired else EntryStatus.NAME_TAKEN
         entries.append(
             _entry(
