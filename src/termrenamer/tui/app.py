@@ -219,15 +219,20 @@ class TermRenamerApp(App[None]):
             yield ModeProviderBar(id="mode-bar", keyed=self._wiring.keyed_providers())
         yield Footer()
 
-    def action_toggle_mode(self) -> None:
+    def _refused_while_locked(self, what: str) -> bool:
+        """Say so and refuse while a Plan is being built or applied."""
         if self.session_settings.locked:
-            self._log_line(_LOCKED_MESSAGE.format(what="Mode"))
+            self._log_line(_LOCKED_MESSAGE.format(what=what))
+            return True
+        return False
+
+    def action_toggle_mode(self) -> None:
+        if self._refused_while_locked("Mode"):
             return
         self.query_one("#mode-bar", ModeProviderBar).toggle_mode()
 
     def action_toggle_provider(self) -> None:
-        if self.session_settings.locked:
-            self._log_line(_LOCKED_MESSAGE.format(what="Provider"))
+        if self._refused_while_locked("Provider"):
             return
         self.query_one("#mode-bar", ModeProviderBar).cycle_provider()
 
@@ -246,8 +251,7 @@ class TermRenamerApp(App[None]):
 
     def action_open_settings(self) -> None:
         """Push the full-screen :class:`SettingsScreen` (TV / Film destination tabs)."""
-        if self.session_settings.locked:
-            self._log_line(_LOCKED_MESSAGE.format(what="Settings"))
+        if self._refused_while_locked("Settings"):
             return
         self.push_screen(SettingsScreen())
 

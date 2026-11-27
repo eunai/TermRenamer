@@ -14,17 +14,11 @@ from termrenamer.core.models import (
     EntryStatus,
     Plan,
     PlanEntry,
-    PlanFingerprint,
 )
-from termrenamer.core.planning import planning_order_key
+from termrenamer.core.planning import fingerprint, planning_order_key
 from termrenamer.util.errors import ValidationError
 
 _LOG = logging.getLogger(__name__)
-
-
-def _stat_fingerprint(path: Path) -> PlanFingerprint:
-    st = path.stat()
-    return PlanFingerprint(path=path, size=st.st_size, mtime_ns=int(st.st_mtime_ns))
 
 
 def _remove_empty_source_dirs(applied_source_parents: set[Path]) -> None:
@@ -81,7 +75,7 @@ def _kept_in_place(child: Path, entry_keys: frozenset[str], target_keys: frozens
     )
 
 
-def _merge_stray_folder_contents(
+def _merge_stragglers(
     merge_pairs: set[tuple[Path, Path]],
     occupied: set[Path],
     entry_keys: frozenset[str],
@@ -93,7 +87,7 @@ def _merge_stray_folder_contents(
     :func:`_kept_in_place` names is never moved this way. Log-only on failures.
     Returns old parents that may now be empty.
     """
-    extra_empty_candidates: set[Path] = set()
+    maybe_empty: set[Path] = set()
     for old_p, new_p in sorted(
         merge_pairs,
         key=lambda t: (str(t[0]).casefold(), str(t[1]).casefold()),
@@ -121,8 +115,8 @@ def _merge_stray_folder_contents(
             except OSError as exc:
                 _LOG.warning("Merge move failed %s -> %s: %s", child, final, exc)
                 continue
-        extra_empty_candidates.add(old_p)
-    return extra_empty_candidates
+        maybe_empty.add(old_p)
+    return maybe_empty
 
 
 _NOT_APPLIED_REASON: dict[EntryStatus, str] = {
@@ -143,7 +137,7 @@ def _apply_entry(entry: PlanEntry) -> ApplyResult:
         return result(ApplyStatus.SKIP, _NOT_APPLIED_REASON.get(entry.status, entry.status.value))
     if not source.exists():
         return result(ApplyStatus.SKIP, "stale: source missing")
-    current_fp = _stat_fingerprint(source)
+    current_fp = fingerprint(source)
     if (
         current_fp.size != entry.fingerprint.size
         or current_fp.mtime_ns != entry.fingerprint.mtime_ns
@@ -223,9 +217,7 @@ def apply_plan(plan: Plan, *, confirmed: bool) -> list[ApplyResult]:
         target_keys = frozenset(
             str(e.destination.parent).casefold() for e in plan.entries if e.destination
         )
-        applied_source_parents |= _merge_stray_folder_contents(
-            merge_pairs, occupied, entry_keys, target_keys
-        )
+        applied_source_parents |= _merge_stragglers(merge_pairs, occupied, entry_keys, target_keys)
 
     _remove_empty_source_dirs(applied_source_parents)
 

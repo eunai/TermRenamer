@@ -48,7 +48,8 @@ def _emit_activity(kind: ActivityEventKind, payload: dict[str, str]) -> None:
     )
 
 
-def _fingerprint(path: Path) -> PlanFingerprint:
+def fingerprint(path: Path) -> PlanFingerprint:
+    """The source's size and modification time, as planning records them and Apply checks."""
     st = path.stat()
     return PlanFingerprint(path=path, size=st.st_size, mtime_ns=int(st.st_mtime_ns))
 
@@ -189,7 +190,7 @@ def _entry(
         season=season,
         episode=episode,
         root=found.root,
-        fingerprint=_fingerprint(found.path),
+        fingerprint=fingerprint(found.path),
     )
 
 
@@ -203,23 +204,23 @@ def _titles(
     """
     merged: dict[str, tuple[list[_Video], tuple[Candidate, ...]]] = {}
     unmatched: list[list[_Video]] = []
-    for members, results in found_groups:
-        if not results:
+    for members, candidates_found in found_groups:
+        if not candidates_found:
             unmatched.append(members)
-        elif results[0].id in merged:
-            merged[results[0].id][0].extend(members)
+        elif candidates_found[0].id in merged:
+            merged[candidates_found[0].id][0].extend(members)
         else:
-            merged[results[0].id] = (list(members), results)
+            merged[candidates_found[0].id] = (list(members), candidates_found)
 
     title_of: dict[Path, Title] = {}
-    for members, results in merged.values():
-        match = results[0]
+    for members, candidates_found in merged.values():
+        match = candidates_found[0]
         title = Title(
             name=match.name,
             year=match.year,
             seasons=_seasons(members),
             match=match,
-            candidates=results[1:],
+            candidates=candidates_found[1:],
         )
         title_of.update((v.path, title) for v in members)
     for members in unmatched:
@@ -346,14 +347,14 @@ def plan_queue(
     episode_titles: dict[Path, str | None] = {}
     for key in sorted(groups):
         members = groups[key]
-        results = _search(lookup, members[0])
-        found_groups.append((members, results))
-        if not results or not isinstance(lookup, TvLookup):
+        candidates_found = _search(lookup, members[0])
+        found_groups.append((members, candidates_found))
+        if not candidates_found or not isinstance(lookup, TvLookup):
             continue
         for video in members:
             assert isinstance(video.parsed, ParseResult)
             episode_titles[video.path] = lookup.episode_title(
-                show_id=results[0].id,
+                show_id=candidates_found[0].id,
                 season=video.parsed.season,
                 episode=video.parsed.primary_episode,
             )

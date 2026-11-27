@@ -258,10 +258,10 @@ class SettingsScreen(Screen[None]):
             return
         label = "TV" if kind == "tv" else "Film"
         if trimmed:
-            self._log(f"[dim]Saved {label} destination → {trimmed}[/dim]")
+            self._log(f"[dim]Saved {label} Destination root → {trimmed}[/dim]")
         else:
-            self._log(f"[dim]Cleared {label} destination override[/dim]")
-        self._show_save_toast(f"{label} destination saved")
+            self._log(f"[dim]Cleared {label} Destination root[/dim]")
+        self._show_save_toast(f"{label} Destination root saved")
 
     def _show_save_toast(self, message: str) -> None:
         toast = self.query_one("#settings-save-toast", Static)

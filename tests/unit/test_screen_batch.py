@@ -12,7 +12,7 @@ from textual.widgets import Input, RichLog, TabbedContent
 
 from termrenamer.api.tmdb import StaticFilmMetadataProvider, StaticTvMetadataProvider
 from termrenamer.app_bootstrap import Settings
-from termrenamer.core.models import Candidate, EpisodeMetadata, ScanMode
+from termrenamer.core.models import ApplyResult, Candidate, EpisodeMetadata, Plan, ScanMode
 from termrenamer.tui.app import TermRenamerApp
 from termrenamer.tui.screens import SettingsScreen
 from termrenamer.wiring import PlanningWiring
@@ -244,3 +244,48 @@ async def test_a_destination_root_is_ignored_while_folder_rename_is_off(tmp_path
         assert app.current_plan.options.season_folders is False
         [entry] = app.current_plan.entries
         assert entry.destination == tmp_path.resolve() / "Show Name - S01E01 - Pilot.mkv"
+
+
+@pytest.mark.asyncio
+async def test_settings_mode_and_provider_cannot_change_while_a_plan_is_applied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from termrenamer.core import apply as core_apply
+
+    (tmp_path / "Show.Name.S01E01.mkv").write_bytes(b"a")
+    started, release = threading.Event(), threading.Event()
+
+    def blocking_apply(plan: Plan, *, confirmed: bool) -> list[ApplyResult]:
+        started.set()
+        release.wait(timeout=10)
+        return core_apply.apply_plan(plan, confirmed=confirmed)
+
+    monkeypatch.setattr("termrenamer.tui.app.apply_plan", blocking_apply)
+    app = TermRenamerApp(wiring=_wiring(), settings=_settings(tmp_path, folder_rename=False))
+    async with app.run_test(size=_SIZE) as pilot:
+        await _show_logs(app, pilot)
+        app._on_folder_picked(tmp_path)
+        await _build(app, pilot)
+        app._apply_current_plan()
+        for _ in range(200):
+            if started.is_set():
+                break
+            await pilot.pause(0.05)
+        assert started.is_set()
+        try:
+            for key in ("m", "p", "ctrl+comma"):
+                await pilot.press(key)
+                await pilot.pause()
+            assert app.scan_mode is ScanMode.TV
+            assert app.provider_id == "tmdb"
+            assert not isinstance(app.screen, SettingsScreen)
+            assert _log_text(app).count("cannot change while a Plan is being built") == 3
+        finally:
+            release.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert (tmp_path / "Show Name - S01E01 - Pilot.mkv").is_file()
+        await pilot.press("m")
+        await pilot.pause()
+        assert app.scan_mode is ScanMode.FILM
