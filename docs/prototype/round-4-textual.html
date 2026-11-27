@@ -1,0 +1,1016 @@
+<!-- THROWAWAY PROTOTYPE, round four. One terminal-UI mockup for TermRenamer, meant to be buildable in Textual today:
+     spotlight (Spotlight), round three's `under` with the owner's changes: no small squares in the title list, the queue drawn
+     as today's app draws it, today's textual-fspicker file browser, and round three's `stack` Settings layout.
+     Inspiration only: this page is not part of the app and none of its code goes into it. -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TermRenamer round four: Spotlight</title>
+<style>
+  html, body { margin: 0; }
+  body { background: #1b1b1e; color: #ddd; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; padding: 24px 16px 110px; }
+  html[data-theme="light"] body { background: #e9e9ec; color: #222; }
+  .win { width: max-content; margin: 0 auto; border-radius: 8px; overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,.45); background: #2b2b2f; }
+  html[data-theme="light"] .win { background: #cfcfd4; box-shadow: 0 8px 30px rgba(0,0,0,.18); }
+  .win:focus-within { outline: 3px solid #f5a623; outline-offset: 3px; }
+  .win-title { font-size: 12px; padding: 6px 10px; color: #aaa; display: flex; gap: 10px; align-items: center; }
+  html[data-theme="light"] .win-title { color: #444; }
+  .dots { letter-spacing: 3px; color: #777; }
+  .term { position: relative; font-family: Menlo, "SF Mono", "DejaVu Sans Mono", Consolas, "Liberation Mono", monospace; font-size: 13px; line-height: 16px;
+          background: var(--bg); color: var(--fg); outline: none; cursor: default; user-select: none; }
+  .row { white-space: pre; height: 16px; }
+  .row span { display: inline-block; height: 16px; vertical-align: top; }
+  .term [data-a] { cursor: pointer; }
+  .term img.poster { position: absolute; display: block; margin: 0; padding: 0; border: 0; object-fit: cover; pointer-events: none; }
+  .notes { max-width: 940px; margin: 20px auto 0; font-size: 14px; line-height: 1.5; }
+  .notes h2 { font-size: 18px; margin: 0 0 4px; }
+  .notes h3 { font-size: 14px; margin: 12px 0 2px; }
+  .notes ul { margin: 2px 0; padding-left: 20px; }
+  .notes code { font-family: Menlo, monospace; font-size: 12px; }
+  .notes a { color: inherit; }
+  .notes .tag { color: #d0389e; font-weight: 600; }
+  .hint { font-size: 12px; opacity: .75; text-align: center; margin-top: 6px; }
+
+  /* ---- palette: round three's `under`, dark ground with a teal accent (not gruvbox) ---- */
+  html[data-theme="dark"]  { --bg:#101315; --fg:#e2e6e9; --dim:#7f8a92; --ln:#343c42; --acc:#5fd4c4; --ok:#7bd88f; --warn:#f2c35b; --err:#ff7b72; --nb:#f08cff; --hd:#181c1f; --pan:#15191c; --hl:#1d3533; --trk:#2a3136; --in:#0a0c0e; --btn:#222a2e; --mod:#1b2125; --onacc:#06110f; --shd:#3a4348; --shb:#13171a; --fld:#0a0c0e; }
+  html[data-theme="light"] { --bg:#f6f7f5; --fg:#1d2124; --dim:#5b646b; --ln:#b9c0bf; --acc:#00756b; --ok:#23733a; --warn:#8a5700; --err:#b72f27; --nb:#a0198a; --hd:#e4e8e6; --pan:#edefec; --hl:#cde7e2; --trk:#d3d8d6; --in:#ffffff; --btn:#dbe1df; --mod:#ffffff; --onacc:#ffffff; --shd:#b3b9b8; --shb:#eceeec; --fld:#e4e8e6; }
+
+  .fg{color:var(--fg)} .dim{color:var(--dim)} .ln{color:var(--ln)} .acc{color:var(--acc)} .ok{color:var(--ok)} .warn{color:var(--warn)}
+  .err{color:var(--err)} .nb{color:var(--nb)} .trk{color:var(--trk)}
+  .bd{font-weight:700} .s{text-decoration:line-through} .u{text-decoration:underline}
+  .b-hd{background:var(--hd)} .b-pan{background:var(--pan)} .b-in{background:var(--in)} .b-btn{background:var(--btn)} .b-mod{background:var(--mod)}
+  .b-trk{background:var(--trk)} .b-hl{background:var(--hl)}
+  .sh{color:var(--shd)} .b-shb{background:var(--shb)} .b-fld{background:var(--fld)}
+  .b-acc{background:var(--acc);color:var(--onacc)} .b-ok{background:var(--ok);color:var(--onacc)}
+</style>
+</head>
+<body>
+<div class="win">
+  <div class="win-title"><span class="dots">●●●</span><span id="wtitle">termrenamer · 120 × 36</span></div>
+  <div class="term" tabindex="0" aria-label="Terminal mockup"></div>
+</div>
+<div class="hint">Click the terminal to give it focus; its keys work only while it has focus.</div>
+<div class="notes" id="notes"></div>
+
+<script>
+(function () {
+  "use strict";
+  var W = 120, H = 36;
+
+  /* ================= grid ================= */
+  var S, ACTS, POSTERS, BLOCK;
+  function newScreen() {
+    S = { ch: [], cl: [], ac: [] }; ACTS = []; POSTERS = [];
+    for (var r = 0; r < H; r++) { S.ch.push(new Array(W).fill(" ")); S.cl.push(new Array(W).fill("")); S.ac.push(new Array(W).fill(-1)); }
+  }
+  function reg(fn) { if (!fn) return -1; ACTS.push(fn); return ACTS.length - 1; }
+  function put(r, c, text, cls, fn) {
+    var a = [...String(text)];
+    if (r < 0 || r >= H) return c + a.length;
+    var k = reg(fn);
+    for (var ch of a) { if (c >= 0 && c < W) { S.ch[r][c] = ch; S.cl[r][c] = cls || ""; S.ac[r][c] = k; } c++; }
+    return c;
+  }
+  function len(s) { return [...String(s)].length; }
+  function fit(s, w) { var a = [...String(s)]; if (w <= 0) return ""; if (a.length <= w) return a.join("") + " ".repeat(w - a.length); return a.slice(0, w - 1).join("") + "…"; }
+  function cut(s, w) { var a = [...String(s)]; return a.length <= w ? a.join("") : a.slice(0, Math.max(0, w - 1)).join("") + "…"; }
+  function rfit(s, w) { s = cut(s, w); return " ".repeat(w - len(s)) + s; }
+  function mid(s, w) { s = cut(s, w); var l = Math.floor((w - len(s)) / 2); return " ".repeat(l) + s + " ".repeat(w - len(s) - l); }
+  function fill(r, c, h, w, cls, fn) { for (var i = r; i < r + h; i++) put(i, c, " ".repeat(w), cls, fn); }
+  function hl(r, c, w) { if (r < 0 || r >= H) return; for (var i = c; i < c + w && i < W; i++) S.cl[r][i] = (S.cl[r][i] + " b-hl").trim(); }
+  function segs(r, c, list) { list.forEach(function (s) { c = put(r, c, s[0], s[1], s[2]); }); return c; }
+  function segw(list) { return list.reduce(function (n, x) { return n + len(x[0]); }, 0); }
+  var BX = { single: "┌┐└┘─│", round: "╭╮╰╯─│", heavy: "┏┓┗┛━┃", double: "╔╗╚╝═║" };
+  function box(r, c, h, w, cls, kind) {
+    var b = BX[kind || "single"];
+    put(r, c, b[0] + b[4].repeat(w - 2) + b[1], cls);
+    for (var i = 1; i < h - 1; i++) { put(r + i, c, b[5], cls); put(r + i, c + w - 1, b[5], cls); }
+    put(r + h - 1, c, b[2] + b[4].repeat(w - 2) + b[3], cls);
+  }
+  function vline(c, r0, r1, cls, ch) { for (var r = r0; r <= r1; r++) put(r, c, ch || "│", cls || "ln"); }
+  function tag(r, c, bg) { return put(r, c, "not built", "nb" + (bg ? " " + bg : "")); }
+  function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  function inter(a, b) { return a && b && a.r < b.r + b.h && b.r < a.r + a.h && a.c < b.c + b.w && b.c < a.c + a.w; }
+  function posterOn() { return proto.poster !== "off"; }
+
+  /* A poster is an <img> laid over a rectangle of blank cells, as a terminal image protocol would draw it. */
+  function poster(r, c, w, h, t, bg) {
+    var p = t ? posterOf(t) : { src: null, label: "", cls: "dim" };
+    var hide = ui.modal === "picker" || inter(BLOCK, { r: r, c: c, w: w, h: h });
+    var fn = (ST === "preview" && t && !ui.modal && !SET) ? function () { A.picker(); } : null;
+    if (p.src && !hide) { fill(r, c, h, w, bg || "", fn); POSTERS.push({ r: r, c: c, w: w, h: h, src: p.src }); return; }
+    for (var i = 0; i < h; i++) {
+      var s = "";
+      for (var j = 0; j < w; j++) s += (i % 2 === 1 && (j + (i % 4 === 1 ? 0 : 2)) % 4 === 1) ? "·" : " ";
+      put(r + i, c, s, "ln" + (bg ? " " + bg : ""), fn);
+    }
+    if (p.label && !hide) { var lr = r + Math.floor(h / 2) - 1; put(lr, c + Math.floor((w - len(p.label) - 2) / 2), " " + p.label + " ", p.cls + " bd", fn); }
+  }
+
+  function flush() {
+    var html = "";
+    for (var r = 0; r < H; r++) {
+      html += '<div class="row">';
+      var c = 0;
+      while (c < W) {
+        var cl = S.cl[r][c], a = S.ac[r][c], t = "";
+        while (c < W && S.cl[r][c] === cl && S.ac[r][c] === a) { t += S.ch[r][c]; c++; }
+        html += "<span" + (cl ? ' class="' + cl + '"' : "") + (a >= 0 ? ' data-a="' + a + '"' : "") + ">" + esc(t) + "</span>";
+      }
+      html += "</div>";
+    }
+    var term = document.querySelector(".term");
+    term.innerHTML = html;
+    var rows = term.querySelectorAll(".row"), bad = [];
+    rows.forEach(function (row, i) { if ([...row.textContent].length !== W) bad.push(i); });
+    POSTERS.forEach(function (p) {
+      for (var i = 0; i < p.h; i++) for (var j = 0; j < p.w; j++) if (S.ch[p.r + i][p.c + j] !== " ") { if (bad.indexOf("poster") < 0) bad.push("poster"); }
+    });
+    document.documentElement.setAttribute("data-grid", rows.length === H && !bad.length ? "ok" : "bad: " + (rows.length !== H ? rows.length + " rows " : "") + bad.join(","));
+    var rb = rows[0].getBoundingClientRect(), cw = rb.width / W, chh = rb.height;
+    POSTERS.forEach(function (p) {
+      var img = document.createElement("img");
+      img.className = "poster"; img.alt = ""; img.src = "posters/" + p.src + ".jpg";
+      img.style.left = (p.c * cw) + "px"; img.style.top = (p.r * chh) + "px";
+      img.style.width = (p.w * cw) + "px"; img.style.height = (p.h * chh) + "px";
+      term.appendChild(img);
+    });
+  }
+
+  /* ================= sample data ================= */
+  function p2(n) { return (n < 10 ? "0" : "") + n; }
+  function ext(f) { return f.slice(f.lastIndexOf(".")); }
+  function E(dir, from, s, e, title, fl) { fl = fl || ""; return { dir: dir, from: from, s: s, e: e, title: title, side: fl.indexOf("side") >= 0, taken: fl.indexOf("taken") >= 0, miss: fl.indexOf("miss") >= 0 }; }
+  var HL1 = "Harbour Lights Season 1/", HL2 = "Harbour Lights Season 2/";
+  var TV = [
+    { key: "hl", name: "Harbour Lights", poster: "steamboat-bill-jr", files: [
+      E(HL1, "Harbour Lights S01E01.mkv", 1, 1, "The Tide Comes In"), E(HL1, "Harbour Lights S01E01.srt", 1, 1, "The Tide Comes In", "side"),
+      E(HL1, "Harbour Lights S01E02.mkv", 1, 2, "Salt and Rope"), E(HL1, "Harbour Lights S01E03.mkv", 1, 3, "The Lamp Room"),
+      E(HL1, "Harbour Lights S01E03 copy.mkv", 1, 3, "The Lamp Room (1)", "taken"), E(HL2, "Harbour Lights S02E01.mkv", 2, 1, "Low Water"),
+      E(HL2, "Harbour Lights S02E02.mkv", 2, 2, "The Long Night"), E(HL2, "Harbour Lights S02E02.nfo", 2, 2, "The Long Night", "side")] },
+    { key: "nl", name: "Northern Line", poster: "the-general", files: [E("", "Northern Line 1x04.mkv", 1, 4, "Last Train")] },
+    { key: "sb", name: "Signal Box", poster: "metropolis", files: [E("Signal Box/", "Signal Box S01E01.mkv", 1, 1, "First Shift"), E("Signal Box/", "Signal Box S01E02.mkv", 1, 2, "Points and Levers"), E("Signal Box/", "Signal Box S01E03.mkv", 1, 3, "Fog on the Line")] },
+    { key: "ck", name: "Copper Kettle", poster: "the-kid", files: [E("Copper Kettle Season 2/", "Copper Kettle S02E05.mkv", 2, 5, "Market Day"), E("Copper Kettle Season 2/", "Copper Kettle S02E06.mkv", 2, 6, "The Long Table")] },
+    { key: "gr", name: "Glasshouse Row", poster: "caligari", files: [E("Glasshouse Row/", "Glasshouse Row S01E01.mkv", 1, 1, "Seedlings"), E("Glasshouse Row/", "Glasshouse Row S01E02.mkv", 1, 2, "Frost Warning"), E("Glasshouse Row/", "Glasshouse Row S01E02.srt", 1, 2, "Frost Warning", "side")] },
+    { key: "pl", name: "Paper Lanterns", poster: "safety-last", files: [E("", "Paper Lanterns S03E01.mkv", 3, 1, "The Night Market")] },
+    { key: "nf", name: "Night Ferry", poster: "phantom-of-the-opera", files: [E("Night Ferry/", "Night Ferry S01E01.mkv", 1, 1, "Cast Off"), E("Night Ferry/", "Night Ferry S01E02.mkv", 1, 2, "The Crossing")] },
+    { key: "qr", name: "Quiet Rivers", poster: null, files: [E("", "Quiet Rivers S01E01.mkv", 1, 1, null, "miss")] },
+  ];
+  var gi = 0; TV.forEach(function (t) { t.files.forEach(function (f) { f.g = gi++; }); });
+  /* While the Plan is built, a title not yet found still shows as its Source. */
+  var SRCNAME = { ck: "Copper Kettle Season 2/", gr: "Glasshouse Row/", pl: "Paper Lanterns S03E01.mkv", nf: "Night Ferry/", qr: "Quiet Rivers S01E01.mkv" };
+  /* The nine queued Sources, before anything is looked up. */
+  var SOURCES = [
+    { name: "Harbour Lights Season 1/", n: 7, dir: true }, { name: "Harbour Lights Season 2/", n: 3, dir: true },
+    { name: "Signal Box/", n: 3, dir: true }, { name: "Copper Kettle Season 2/", n: 2, dir: true },
+    { name: "Glasshouse Row/", n: 3, dir: true }, { name: "Night Ferry/", n: 2, dir: true },
+    { name: "Northern Line 1x04.mkv", n: 1 }, { name: "Paper Lanterns S03E01.mkv", n: 1 }, { name: "Quiet Rivers S01E01.mkv", n: 1 },
+  ];
+  var SRCFILES = SOURCES.reduce(function (n, s) { return n + s.n; }, 0);
+  /* What the file browser lists at ~/Backups/TV: name, size in bytes, modified time (as textual-fspicker shows them, folders first). */
+  var BROWSE = [
+    { name: "..", dir: true, size: 352, time: "2026-11-20 19:42:10" },
+    { name: "Copper Kettle Season 2", dir: true, size: 128, time: "2026-10-04 21:15:33" },
+    { name: "Glasshouse Row", dir: true, size: 160, time: "2026-09-28 18:02:47" },
+    { name: "Harbour Lights Season 1", dir: true, size: 288, time: "2026-11-02 20:31:05" },
+    { name: "Harbour Lights Season 2", dir: true, size: 160, time: "2026-11-02 20:44:19" },
+    { name: "Night Ferry", dir: true, size: 128, time: "2026-08-15 22:10:58" },
+    { name: "Signal Box", dir: true, size: 160, time: "2026-10-19 17:26:40" },
+    { name: "Northern Line 1x04.mkv", dir: false, size: 1503238553, time: "2026-07-30 23:08:12" },
+    { name: "Paper Lanterns S03E01.mkv", dir: false, size: 1288490188, time: "2026-09-02 20:55:21" },
+    { name: "Quiet Rivers S01E01.mkv", dir: false, size: 1395864371, time: "2026-10-11 21:37:09" },
+  ];
+  function browseList() { return ui.addKind === "file" ? BROWSE : BROWSE.filter(function (b) { return b.dir; }); }
+  function F(from, fl) { return E("", from, 0, 0, null, fl); }
+  var FILM = [
+    { key: "me", name: "Metropolis", year: 1927, poster: "metropolis", files: [F("Metropolis 1927.mkv"), F("Metropolis 1927.srt", "side")] },
+    { key: "ge", name: "The General", year: 1926, poster: "the-general", files: [F("The General 1926.mkv")] },
+    { key: "sj", name: "Sherlock Jr.", year: 1924, poster: "sherlock-jr", files: [F("Sherlock Jr 1924.mp4")] },
+    { key: "ca", name: "The Cabinet of Dr. Caligari", year: 1920, poster: "caligari", files: [F("The Cabinet of Dr Caligari 1920.mkv")] },
+    { key: "sl", name: "Safety Last!", year: 1923, poster: "safety-last", files: [F("Safety Last 1923.mkv")] },
+    { key: "gd", name: "The Gold Rush", year: 1925, poster: "gold-rush", files: [F("The Gold Rush 1925.mkv")] },
+    { key: "ki", name: "The Kid", year: 1921, poster: "the-kid", files: [F("The Kid 1921.mkv"), F("The Kid 1921 copy.mkv", "taken")] },
+    { key: "ph", name: "Phantom", year: null, poster: null, files: [F("Phantom 1925.mkv", "miss")] },
+  ];
+  var CANDS = {
+    qr: [{ t: "Quiet River (2015)", img: "gold-rush", show: "Quiet River" }, { t: "The Quiet Rivers (2021)", img: "sherlock-jr", show: "The Quiet Rivers" }],
+    ph: [{ t: "The Phantom of the Opera (1925)", img: "phantom-of-the-opera", base: "The Phantom of the Opera (1925)" }, { t: "Phantom (1922)", img: null, base: "Phantom (1922)" }],
+  };
+  var SPK = { TV: [2, 4, 5, 7, 8, 6, 9, 8, 7, 9, 8, 6, 7, 5, 6, 8, 7, 5, 4, 3, 2], Film: [3, 5, 7, 8, 6, 7, 5, 4, 3, 2] };
+
+  /* ================= prototype-local UI state (never the flow state) ================= */
+  var ui = { out: {}, pick: {}, set: { tv: "~/Media/TV", film: "~/Media/Films", fr: true, sf: true },
+    prov: { TV: "TMDB", Film: "TMDB" }, modal: null, pc: 0, sc: 0, back: null, flash: "", amode: null,
+    ti: { TV: 0, Film: 0 }, fi: 0, qi: 0, tok: 0, self: false, last: null,
+    addKind: "dir", addFrom: "empty", bi: 3 };
+  var ST = "empty", MODE = "TV", SET = false;
+
+  function titles() { return ST === "empty" || ST === "adding" ? [] : MODE === "Film" ? FILM : TV; }
+  function selT() { var T = titles(); return T.length ? T[Math.min(ui.ti[MODE], T.length - 1)] : null; }
+  function selF() { var t = selT(); return t ? t.files[Math.min(ui.fi, t.files.length - 1)] : null; }
+  function prov() { return ui.prov[MODE]; }
+  function root() { return MODE === "Film" ? ui.set.film : ui.set.tv; }
+  function pickOf(t) { return ui.pick[t.key]; }
+  function disp(t) { return t.year ? t.name + " (" + t.year + ")" : t.name; }
+  function plural(n, w) { return n + " " + w + (n === 1 ? "" : "s"); }
+  function bIdx(t) { return ST === "building" ? TV.indexOf(t) : -1; }
+  /* the name a row shows: a title, or its Source while it waits for its lookup */
+  function label(t) { var i = bIdx(t); return i > 3 ? SRCNAME[t.key] : disp(t); }
+  function known(t) { var i = bIdx(t); return i >= 0 ? i < 3 : !!(t.poster || pickOf(t)); }
+  function info(t) {
+    var i = bIdx(t);
+    if (i === 3) return "1 of 2 files looked up";
+    if (i > 3) return plural(t.files.length, "file");
+    var pk = pickOf(t);
+    if (pk) return "matched by hand";
+    if (MODE === "Film") return (t.year ? t.year + " · " : "") + plural(t.files.length, "file");
+    var ss = {}; t.files.forEach(function (f) { ss[f.s] = 1; });
+    return (t.poster ? plural(Object.keys(ss).length, "season") + " · " : "") + plural(t.files.length, "file");
+  }
+  function fromPath(f) { return MODE === "Film" ? "~/Backups/Films/" + f.from : "~/Backups/TV/" + f.dir + f.from; }
+  function toPath(t, f) {
+    var pk = pickOf(t), name, folder;
+    if (f.miss && !pk) return null;
+    if (MODE === "Film") {
+      var base = pk ? pk.base : disp(t);
+      name = base + (f.taken ? " (1)" : "") + ext(f.from);
+      return ui.set.fr ? ui.set.film + "/" + base + "/" + name : "~/Backups/Films/" + name;
+    }
+    var show = pk ? pk.show : t.name;
+    name = show + " - S" + p2(f.s) + "E" + p2(f.e) + (f.title ? " - " + f.title : "") + ext(f.from);
+    folder = ui.set.fr ? ui.set.tv + "/" + show + (ui.set.sf ? "/Season " + p2(f.s) : "") + "/" : "~/Backups/TV/" + f.dir;
+    return folder + name;
+  }
+  function fStat(t, f) {
+    if (ST === "queued") return "queued";
+    if (ST === "building") return f.g < 13 ? "found" : f.g === 13 ? "looking up" : "waiting";
+    var out = ui.out[f.from], pk = pickOf(t);
+    if (ST === "preview") return out ? "left out" : f.miss ? (pk ? "picked" : "no match") : f.taken ? "name taken" : "ready";
+    if (ST === "applied") return out ? "left out" : (f.miss && !pk) ? "skipped" : "renamed";
+    return "";
+  }
+  function tStat(t) {
+    if (ST === "queued") return "queued";
+    if (ST === "building") { var i = TV.indexOf(t); return i < 3 ? "found" : i === 3 ? "looking up" : "waiting"; }
+    var ss = t.files.map(function (f) { return fStat(t, f); });
+    function has(w) { return ss.indexOf(w) >= 0; }
+    if (ss.every(function (s) { return s === "left out"; })) return "left out";
+    if (ST === "preview") return has("no match") ? "no match" : has("name taken") ? "name taken" : has("picked") ? "picked" : "ready";
+    return has("skipped") ? "skipped" : "renamed";
+  }
+  var STC = { queued: "dim", found: "ok", "looking up": "warn", waiting: "dim", ready: "ok", "name taken": "warn", "no match": "err", "left out": "dim", picked: "acc", renamed: "ok", skipped: "warn" };
+  function counts() {
+    var c = { total: 0 }; Object.keys(STC).forEach(function (k) { c[k] = 0; });
+    titles().forEach(function (t) { t.files.forEach(function (f) { c[fStat(t, f)]++; c.total++; }); });
+    c.good = c.ready + c["name taken"] + c.picked;
+    return c;
+  }
+  function tCounts(t) { var c = {}; Object.keys(STC).forEach(function (k) { c[k] = 0; }); t.files.forEach(function (f) { c[fStat(t, f)]++; }); return c; }
+  function tSummary(t) {
+    var c = tCounts(t), out = [];
+    ["found", "looking up", "waiting", "ready", "picked", "name taken", "no match", "left out", "renamed", "skipped"].forEach(function (k) { if (c[k]) out.push([c[k] + " " + k, STC[k]]); });
+    return out;
+  }
+  function posterOf(t) {
+    if (ST === "building") { var i = TV.indexOf(t); return i < 3 ? { src: t.poster } : i === 3 ? { src: null, label: "looking up…", cls: "warn" } : { src: null, label: "waiting", cls: "dim" }; }
+    var pk = pickOf(t);
+    if (pk) return pk.img ? { src: pk.img } : { src: null, label: "no poster", cls: "dim" };
+    if (t.poster) return { src: t.poster };
+    return ST === "applied" ? { src: null, label: "skipped", cls: "warn" } : { src: null, label: "no match", cls: "err" };
+  }
+  /* gauges: lookups done, matched / unmatched, lookups per second */
+  function gauges() {
+    var c = counts(), tot = MODE === "Film" ? 10 : 21;
+    if (ST === "building") return { done: 13, total: 21, matched: 13, unmatched: 0, out: 0, spark: SPK.TV.slice(0, 13), rate: "7/s" };
+    var sp = SPK[MODE], avg = (sp.reduce(function (a, b) { return a + b; }, 0) / sp.length).toFixed(1) + "/s";
+    if (ST === "applied") return { done: tot, total: tot, matched: c.renamed, unmatched: c.skipped, out: c["left out"], spark: sp, rate: avg };
+    return { done: tot, total: tot, matched: c.good, unmatched: c["no match"], out: c["left out"], spark: sp, rate: avg };
+  }
+  var BL = "▁▂▃▄▅▆▇█";
+  function spark(data, w) {
+    var s = "", ch = function (v) { return BL[Math.min(7, Math.round(v / 9 * 7))]; };
+    if (ST === "building") { var n = Math.max(1, Math.round(w * data.length / 21)); for (var j = 0; j < n; j++) s += ch(data[Math.floor(j * data.length / n)]); return s + " ".repeat(w - n); }
+    for (var i = 0; i < w; i++) s += ch(data[Math.floor(i * data.length / w)]);
+    return s;
+  }
+  function bar(n, total, w) { if (!n || !total) return ""; return "█".repeat(Math.max(1, Math.round(n / total * w))); }
+  function prog(r, c, w, done, total, bg, ch) {
+    var n = total ? Math.round(done / total * w) : 0; ch = ch || "━";
+    put(r, c, ch.repeat(n), "acc" + (bg ? " " + bg : "")); put(r, c + n, ch.repeat(w - n), "trk" + (bg ? " " + bg : ""));
+  }
+  /* file cells for one title: one cell per file, its colour its status; a Sidecar is a half cell */
+  function cells(r, x, t, o) {
+    var T = titles(), ti = T.indexOf(t), f = selF(), prevS = null, w = o.w || 2, B = o.bg ? " " + o.bg : "";
+    t.files.forEach(function (ff, j) {
+      if (MODE === "TV" && ff.s !== prevS) {
+        if (prevS !== null) x += o.gap || 2;
+        if (o.lab) x = put(r + (o.tall ? 1 : 0), x, known(t) ? "S" + p2(ff.s) : "S··", "dim" + B) + 1;
+        prevS = ff.s;
+      }
+      var cl = STC[fStat(t, ff)] + B, fn = function () { A.selF(ti, j); };
+      if (o.tall) { put(r, x, (ff.side ? " " : "█").repeat(w), cl, fn); put(r + 1, x, (ff.side ? "▄" : "█").repeat(w), cl, fn); }
+      else put(r, x, (ff.side ? "▄" : "█").repeat(w), cl, fn);
+      if (ff === f && t === selT()) put(r + (o.tall ? 2 : 1), x, "▔".repeat(w), "acc" + B);
+      x += w + 1;
+    });
+    return x;
+  }
+  /* footer: the selected file's current name and new name */
+  function fileInfo() {
+    if (ST === "queued") {
+      var q = SOURCES[ui.qi];
+      return { a: "path", b: "", from: "~/Backups/TV/" + q.name, fcls: "fg", to: (q.dir ? "folder" : "file") + " · queued · nothing looked up yet", tcls: "dim", note: "" };
+    }
+    var t = selT(), f = selF();
+    if (!t || !f) return null;
+    var to = toPath(t, f), s = fStat(t, f), o = { a: "from", b: "to", from: fromPath(f), fcls: "fg", to: "", tcls: "acc", note: "" };
+    if (s === "found") { o.to = to; o.tcls = "dim"; }
+    else if (s === "looking up") { o.to = "looking up on " + prov() + "…"; o.tcls = "warn"; }
+    else if (s === "waiting") { o.to = "waiting for its lookup"; o.tcls = "dim"; }
+    else if (s === "no match") { o.to = prov() + ": " + (MODE === "Film" ? "Movie not found." : "Episode not found."); o.tcls = "err"; o.note = "t picks a match"; }
+    else if (s === "left out") { o.to = to || "unmatched"; o.tcls = "dim s"; o.note = "left out: Apply skips it"; }
+    else if (s === "name taken") { o.to = to; o.tcls = "warn"; o.note = "name taken, gets (1)"; }
+    else if (s === "picked") { o.to = to; o.note = "match picked by hand"; }
+    else if (s === "ready") { o.to = to; o.note = f.side ? "Sidecar, moves with its video" : ""; }
+    else if (s === "renamed") { o.a = "was"; o.b = "now"; o.to = to; o.tcls = "ok"; }
+    else if (s === "skipped") { o.a = "was"; o.b = "now"; o.to = "unmatched: no metadata found (not renamed)"; o.tcls = "warn"; }
+    return o;
+  }
+  function footer(kcls, lcls, hbg, pbg, labcls) {
+    var fi = fileInfo(), c;
+    if (fi) {
+      fill(33, 0, 2, W, pbg);
+      put(33, 2, fit(fi.a, 4), (labcls || "dim") + " " + pbg); put(33, 7, fit(fi.from, 111), fi.fcls + " " + pbg);
+      put(34, 2, fit(fi.b, 4), (labcls || "dim") + " " + pbg); c = put(34, 7, cut(fi.to, fi.note ? 109 - len(fi.note) : 111), fi.tcls + " " + pbg);
+      if (fi.note) put(34, c + 2, fi.note, "dim " + pbg);
+    }
+    hints(35, kcls, lcls, hbg);
+  }
+  function hintItems() {
+    if (ui.modal === "picker") return [[posterOn() ? "←→" : "↑↓", "Choose"], ["1-3", "Pick"], ["enter", "Use this match"], ["/", "Type a title"], ["esc", "Close", function () { ui.modal = null; }]];
+    if (ui.modal) return [["y", "Yes"], ["n", "No", function () { ui.modal = null; }]];
+    if (ST === "adding") return [["↑↓", "Move"], ["enter", ui.addKind === "file" ? "Open" : "Select", A.choose_src], ["esc", "Cancel", A.closeBrowser], [".", "Hidden files"], ["?", "Help", A.help], ["q", "Quit", A.quit]];
+    if (SET) return [["↑↓", "Move"], ["enter", "Edit or toggle"], ["esc", "Close Settings", A.closeSettings], ["?", "Help", A.help], ["q", "Quit", A.quit]];
+    var sel = ["↑↓←→", "Select"];
+    return {
+      empty: [["a", "Add file", A.addFile], ["f", "Add folder", A.addFolder], ["p", "Provider", A.prov], ["s", "Settings", A.settings], ["?", "Help", A.help], ["q", "Quit", A.quit]],
+      queued: [["↑↓", "Source"], ["b", "Build Plan", A.build], ["a", "Add file", A.addFile], ["f", "Add folder", A.addFolder], ["c", "Clear queue", A.clear], ["p", "Provider", A.prov], ["s", "Settings", A.settings], ["?", "Help", A.help], ["q", "Quit", A.quit]],
+      building: [sel, ["i", "Poster", A.poster], ["esc", "Cancel Plan", A.cancel], ["?", "Help", A.help], ["q", "Quit", A.quit]],
+      preview: [sel, ["enter", "Apply…", A.apply], ["t", "Match", A.picker], ["x", "Leave out", A.out], ["i", "Poster", A.poster], ["m", "Mode", A.mode], ["p", "Provider", A.prov], ["esc", "Cancel", A.cancel], ["s", "Settings", A.settings], ["?", "Help", A.help], ["q", "Quit", A.quit]],
+      applied: [sel, ["u", "Undo", A.undo], ["n", "New batch", A.newBatch], ["i", "Poster", A.poster], ["s", "Settings", A.settings], ["?", "Help", A.help], ["q", "Quit", A.quit]],
+    }[ST];
+  }
+  function hints(r, kcls, lcls, bg) {
+    fill(r, 0, 1, W, bg); var c = 1;
+    hintItems().forEach(function (it) {
+      if (c + len(it[0]) + len(it[1]) + 1 > W - 1) return;
+      c = put(r, c, it[0], kcls, it[2]); c = put(r, c, " " + it[1], lcls, it[2]); c += 2;
+    });
+  }
+  function flashAt(r, c, w, cls) { if (ui.flash) put(r, c, fit(ui.flash, w), cls || "acc"); }
+  /* header: name, Mode tabs, Provider, Destination root */
+  function header(modeOn, modeOff) {
+    fill(0, 0, 1, W, "b-hd");
+    put(0, 2, "TermRenamer", "acc b-hd bd");
+    var c = put(0, 18, "Mode ", "dim b-hd");
+    c = put(0, c, " TV ", MODE === "TV" ? modeOn : modeOff, A.mode); c = put(0, c, " Film ", MODE === "Film" ? modeOn : modeOff, A.mode);
+    c = put(0, c + 4, "Provider ", "dim b-hd"); put(0, c, " " + prov() + " ▾ ", "acc b-btn", A.prov);
+    var hs = [["Destination root ", "dim b-hd"], [root() + "/", "fg b-hd"]];
+    segs(0, W - 2 - segw(hs), hs);
+  }
+  /* the four stages: index of the current one */
+  var STAGES = ["Queue", "Plan", "Preview", "Applied"];
+  function stageNow() { return { empty: 0, adding: 0, queued: 0, building: 1, preview: 2, applied: 3 }[ST]; }
+  function emptyPrompt(r, boxed, bcls, bg, bandH) {
+    var w = 46, c0 = Math.floor((W - w) / 2), B = bg ? " " + bg : "";
+    if (bg) fill(r - 2, 0, bandH, W, bg);
+    if (boxed) box(r - 2, c0, 11, w, bcls || "ln", "round");
+    put(r, c0 + 1, mid("Nothing queued yet", w - 2), "fg bd" + B);
+    put(r + 2, c0 + 1, mid("Add your backup files or folders.", w - 2), "dim" + B);
+    var b1 = " a  Add file ", b2 = " f  Add folder ", bc = Math.floor((W - len(b1) - len(b2) - 3) / 2);
+    var c = put(r + 5, bc, b1, "b-btn acc", A.addFile); put(r + 5, c + 3, b2, "b-btn acc", A.addFolder);
+  }
+
+  /* ================= actions (shared flow; layouts are not shared) ================= */
+  function go(s) { ui.self = true; ui.modal = null; proto.setState(s); ui.self = false; }
+  function redraw() { proto.rerender(); }
+  function flash(t) { ui.flash = t; }
+  var A = {
+    addFile: function () { openBrowser("file"); },
+    addFolder: function () { openBrowser("dir"); },
+    /* choosing in the browser: the prototype queues all nine sample Sources at once */
+    choose_src: function () {
+      var b = browseList()[ui.bi];
+      flash((b && b.name !== ".." ? "Queued " + b.name + (b.dir ? "/" : "") + "." : "Queued ~/Backups/TV/.") + " (Prototype: the queue holds the nine sample Sources.)");
+      ui.qi = 0; go("queued");
+    },
+    closeBrowser: function () { flash(""); go(ui.addFrom === "queued" ? "queued" : "empty"); },
+    clear: function () { if (proto.state === "queued") { flash("Queue cleared."); go("empty"); } else flash("Clear the queue before a Plan is built."); },
+    build: function () {
+      if (proto.state !== "queued") { flash(proto.state === "empty" ? "Add a Source first." : "The Plan is already built."); return; }
+      flash("Building the Plan…"); ui.ti.TV = 0; ui.fi = 0; go("building");
+      var tok = ++ui.tok;
+      setTimeout(function () { if (ui.tok === tok && proto.state === "building") { flash("Plan built. Check each poster, then enter to Apply."); go("preview"); } }, 2500);
+    },
+    cancel: function () { var s = proto.state; if (s === "building" || s === "preview" || s === "preview-film") { ui.tok++; flash("Plan cancelled. Nothing was renamed."); go("queued"); } },
+    apply: function () { var s = proto.state; if (s === "preview" || s === "preview-film") ui.modal = "confirm"; else if (s === "queued") flash("Build the Plan first (b)."); },
+    confirm: function () { ui.amode = MODE; flash("Applied. Nothing failed."); go("applied"); },
+    mode: function () {
+      var s = proto.state;
+      if (s === "preview") { flash("Mode: Film. Film Preview of ~/Backups/Films/."); ui.fi = 0; go("preview-film"); }
+      else if (s === "preview-film") { flash("Mode: TV."); ui.fi = 0; go("preview"); }
+      else flash("Mode switches between TV and Film on the Preview in this prototype.");
+    },
+    prov: function () { var o = MODE === "TV" ? ["TMDB", "TheTVDB"] : ["TMDB", "OMDb"]; ui.prov[MODE] = o[(o.indexOf(ui.prov[MODE]) + 1) % 2]; flash("Provider: " + ui.prov[MODE] + " (" + MODE + " accepts " + o.join(" and ") + ")."); },
+    settings: function () { ui.back = proto.state; ui.sc = 0; flash(""); go("settings"); },
+    closeSettings: function () { flash("Settings saved to the User settings file."); go(ui.back && ui.back !== "settings" ? ui.back : "preview"); },
+    help: function () { flash("Help would open here with every key (not drawn in this prototype)."); },
+    quit: function () { flash("q quits TermRenamer (does nothing in the prototype)."); },
+    poster: function () { var on = posterOn(); flash(on ? "Poster panel hidden (i shows it)." : "Poster panel shown."); proto.setPoster(on ? "off" : "on"); },
+    out: function () {
+      var f = selF(); if (!f || ST !== "preview") { flash("Leave a file out on the Preview."); return; }
+      if (ui.out[f.from]) { delete ui.out[f.from]; flash("Put back in the Plan."); } else { ui.out[f.from] = 1; flash("Left out of the Plan: Apply skips this file."); }
+    },
+    picker: function () { if (ST !== "preview" || !selT()) { flash("Pick a match on the Preview."); return; } ui.modal = "picker"; ui.pc = 0; },
+    choose: function (i) {
+      var t = selT(), L = cands(t), it = L[i]; if (!it) return;
+      ui.modal = null;
+      if (it.typed) { flash("Typing a title searches " + prov() + " again (input not built)."); return; }
+      if (it.cur) { flash("Kept the current match."); return; }
+      ui.pick[t.key] = it; flash(t.name + " now matches " + it.t + ".");
+    },
+    undo: function () { if (proto.state === "applied") ui.modal = "undo"; },
+    undoYes: function () { flash("Put every file back where it was (not built)."); go("queued"); },
+    newBatch: function () { if (proto.state === "applied") { ui.out = {}; ui.pick = {}; flash("Ready for a new batch."); go("empty"); } },
+    selT: function (i) { ui.ti[MODE] = i; ui.fi = 0; },
+    selF: function (i, j) { ui.ti[MODE] = i; ui.fi = j; },
+    selQ: function (i) { ui.qi = i; },
+    selB: function (i) { if (ui.bi === i) A.choose_src(); else ui.bi = i; },
+  };
+  function openBrowser(kind) {
+    var s = proto.state;
+    if (s !== "empty" && s !== "queued") { flash("Add Sources before the Plan is built (cancel the Plan first)."); return; }
+    ui.addKind = kind; ui.addFrom = s; ui.bi = kind === "file" ? 7 : 3; flash(""); go("adding");
+  }
+  function cands(t) {
+    var L = (CANDS[t.key] || [{ t: disp(t) + " (current)", img: t.poster, cur: true }]).slice();
+    L.push({ t: "Type a title", typed: true });
+    return L;
+  }
+  var NSET = 5;
+  function toggleSetting(i) {
+    if (i === 2) ui.set.fr = !ui.set.fr;
+    else if (i === 3) { if (!ui.set.fr) flash("Season folder needs Folder rename on."); else ui.set.sf = !ui.set.sf; }
+    else if (i === 4) { flash(posterOn() ? "Posters hidden." : "Posters shown."); proto.setPoster(posterOn() ? "off" : "on"); }
+    else flash("Editing the " + (i ? "Film" : "TV") + " Destination root: type a path, enter to save (fixed sample here).");
+  }
+
+  /* ================= keys ================= */
+  function modalKey(k) {
+    if (ui.modal === "confirm") { if (k === "y" || k === "Enter") A.confirm(); else if (k === "n" || k === "Escape") ui.modal = null; return true; }
+    if (ui.modal === "undo") { if (k === "y") A.undoYes(); else if (k === "n" || k === "Escape") ui.modal = null; return true; }
+    if (ui.modal === "picker") {
+      var n = cands(selT()).length;
+      if (k === "ArrowRight" || k === "l" || k === "ArrowDown" || k === "j") ui.pc = (ui.pc + 1) % n;
+      else if (k === "ArrowLeft" || k === "h" || k === "ArrowUp" || k === "k") ui.pc = (ui.pc + n - 1) % n;
+      else if (k === "Enter") A.choose(ui.pc);
+      else if (k === "/") ui.pc = n - 1;
+      else if (k >= "1" && k <= "9" && +k <= n) A.choose(+k - 1);
+      else if (k === "Escape" || k === "t") ui.modal = null;
+      return true;
+    }
+    return false;
+  }
+  function settingsKey(k) {
+    if (k === "ArrowDown" || k === "j" || k === "Tab") ui.sc = (ui.sc + 1) % NSET;
+    else if (k === "ArrowUp" || k === "k") ui.sc = (ui.sc + NSET - 1) % NSET;
+    else if (k === "Enter" || k === " ") toggleSetting(ui.sc);
+    else if (k === "Escape" || k === "s") A.closeSettings();
+    else if (k === "i") A.poster();
+    else if (k === "?") A.help();
+    else if (k === "q") A.quit();
+    else return false;
+    return true;
+  }
+  function browserKey(k) {
+    var n = browseList().length;
+    if (k === "ArrowDown" || k === "j") ui.bi = Math.min(n - 1, ui.bi + 1);
+    else if (k === "ArrowUp" || k === "k") ui.bi = Math.max(0, ui.bi - 1);
+    else if (k === "Home") ui.bi = 0;
+    else if (k === "End") ui.bi = n - 1;
+    else if (k === "Enter") A.choose_src();
+    else if (k === "Escape") A.closeBrowser();
+    else if (k === ".") flash("Shows hidden files (none in this folder).");
+    else if (k === "?") A.help();
+    else return false;
+    return true;
+  }
+  function mainKey(k) {
+    var T = titles(), t = selT();
+    if (ST === "queued" && (k === "ArrowDown" || k === "j")) { ui.qi = Math.min(SOURCES.length - 1, ui.qi + 1); return true; }
+    if (ST === "queued" && (k === "ArrowUp" || k === "k")) { ui.qi = Math.max(0, ui.qi - 1); return true; }
+    if (ST !== "queued") {
+      if (k === "ArrowDown" || k === "j") { if (T.length) A.selT(Math.min(T.length - 1, ui.ti[MODE] + 1)); return true; }
+      if (k === "ArrowUp" || k === "k") { if (T.length) A.selT(Math.max(0, ui.ti[MODE] - 1)); return true; }
+      if (k === "ArrowRight" || k === "l") { if (t) ui.fi = Math.min(t.files.length - 1, ui.fi + 1); return true; }
+      if (k === "ArrowLeft" || k === "h") { if (t) ui.fi = Math.max(0, ui.fi - 1); return true; }
+    }
+    var m = { a: A.addFile, f: A.addFolder, c: A.clear, b: A.build, Enter: A.apply, Escape: A.cancel, m: A.mode, p: A.prov, s: A.settings, "?": A.help, q: A.quit, u: A.undo, n: A.newBatch, t: A.picker, x: A.out, i: A.poster }[k];
+    if (!m) return false; m(); return true;
+  }
+  function onKey(e) {
+    if (e.metaKey || e.ctrlKey || e.altKey || e.key === "[" || e.key === "]") return;
+    var k = e.key, done;
+    if (ui.modal) done = modalKey(k);
+    else if (SET) done = settingsKey(k);
+    else if (ST === "adding") done = browserKey(k);
+    else done = mainKey(k);
+    if (done) { e.preventDefault(); redraw(); }
+  }
+
+  /* ================= dialogs (positioned in whole cells) ================= */
+  function confirmLines() {
+    var c = counts(), L = [];
+    L.push(["Rename " + plural(c.good, "file") + " under " + root() + "/", "fg"]);
+    L.push(["Skip " + c["no match"] + " with no match · " + c["left out"] + " left out", "fg"]);
+    L.push([MODE === "TV" ? "Merge 2 Stragglers (Harbour Lights)" : "No Stragglers in this Plan", "dim"]);
+    L.push(["Nothing has been renamed yet.", "warn"]);
+    return L;
+  }
+  function dlgConfirm(R) {
+    fill(R.r, R.c, R.h, R.w, "b-mod"); box(R.r, R.c, R.h, R.w, "acc b-mod", "round");
+    put(R.r, R.c + 2, " Apply the Plan? ", "fg b-mod bd");
+    confirmLines().forEach(function (l, i) { put(R.r + 2 + i, R.c + 3, fit(l[0], R.w - 6), l[1] + " b-mod"); });
+    var cc = put(R.r + R.h - 3, R.c + 3, " y  Apply ", "b-acc bd", A.confirm);
+    put(R.r + R.h - 3, cc + 2, " n  Back ", "b-btn fg", function () { ui.modal = null; });
+  }
+  function dlgUndo(R) {
+    fill(R.r, R.c, R.h, R.w, "b-mod"); box(R.r, R.c, R.h, R.w, "acc b-mod", "round");
+    var cc = put(R.r, R.c + 2, " Undo the last Apply?  ", "fg b-mod bd"); cc = tag(R.r, cc, "b-mod"); put(R.r, cc, " ", "b-mod");
+    var c = counts();
+    [["Put " + plural(c.renamed, "file") + " back where they were.", "fg"], [MODE === "TV" ? "The 2 Stragglers go back too." : "", "dim"], [MODE === "TV" ? "The six removed folders are made again." : "", "dim"]]
+      .forEach(function (l, i) { put(R.r + 2 + i, R.c + 3, fit(l[0], R.w - 6), l[1] + " b-mod"); });
+    cc = put(R.r + R.h - 3, R.c + 3, " y  Put back ", "b-acc bd", A.undoYes);
+    put(R.r + R.h - 3, cc + 2, " n  Keep ", "b-btn fg", function () { ui.modal = null; });
+  }
+  var PICK = { r: 3, c: 14, h: 29, w: 92 }, PICKTXT = { r: 8, c: 30, h: 15, w: 60 };
+  function pickRect() { return posterOn() ? PICK : PICKTXT; }
+  function dlgPicker() {
+    var R = pickRect(), t = selT(), L = cands(t);
+    fill(R.r, R.c, R.h, R.w, "b-mod"); box(R.r, R.c, R.h, R.w, "acc b-mod", "double");
+    var cc = put(R.r, R.c + 2, " Pick a match for " + t.name + " · " + prov() + "  ", "fg b-mod bd"); cc = tag(R.r, cc, "b-mod"); put(R.r, cc, " ", "b-mod");
+    put(R.r + 2, R.c + 3, fit(pickOf(t) ? "Now: " + pickOf(t).t : t.poster ? "Now: " + disp(t) : "No match found.", R.w - 6), "dim b-mod");
+    if (!posterOn()) {
+      // posters hidden: the candidates as a plain list
+      L.forEach(function (it, i) {
+        var rr = R.r + 4 + i * 2, on = i === ui.pc, fn = function () { if (ui.pc === i) A.choose(i); else ui.pc = i; };
+        put(rr, R.c + 2, " ".repeat(R.w - 4), "b-mod", fn);
+        put(rr, R.c + 3, on ? "▸" : " ", "acc b-mod", fn);
+        put(rr, R.c + 5, it.typed ? "/" : String(i + 1), "acc b-mod bd", fn);
+        put(rr, R.c + 9, fit(it.t, R.w - 14), (on ? "fg bd" : "fg") + " b-mod", fn);
+        if (on) hl(rr, R.c + 2, R.w - 4);
+      });
+      put(R.r + R.h - 3, R.c + 3, fit("↑↓ choose · 1-" + L.length + " or enter use it · / type · esc close", R.w - 6), "dim b-mod");
+      return;
+    }
+    L.forEach(function (it, i) {
+      var sx = R.c + 3 + i * 29, on = i === ui.pc, fn = function () { if (ui.pc === i) A.choose(i); else ui.pc = i; };
+      box(R.r + 4, sx + 2, 17, 22, on ? "acc b-mod" : "ln b-mod", on ? "heavy" : "single");
+      if (it.img) { fill(R.r + 5, sx + 3, 15, 20, "b-mod", fn); POSTERS.push({ r: R.r + 5, c: sx + 3, w: 20, h: 15, src: it.img }); }
+      else {
+        for (var i2 = 0; i2 < 15; i2++) put(R.r + 5 + i2, sx + 3, i2 % 2 ? " ·   ·   ·   ·   · " : "                    ", "ln b-mod", fn);
+        if (it.typed) { put(R.r + 11, sx + 4, fit(" " + (MODE === "Film" ? "Phantom" : t.name) + "▏", 18), "fg b-in", fn); put(R.r + 13, sx + 4, mid("type, then enter", 18), "dim b-mod", fn); }
+        else put(R.r + 12, sx + 3, mid("no poster", 20), "dim b-mod bd", fn);
+      }
+      var m = /^(.*) (\(\d{4}\)(?: \(current\))?)$/.exec(it.t) || [null, it.t, ""];
+      put(R.r + 22, sx, mid(m[1], 26), (on ? "fg bd" : "dim") + " b-mod", fn);
+      put(R.r + 23, sx, mid(m[2], 26), "dim b-mod", fn);
+      put(R.r + 24, sx, mid(it.typed ? "/" : String(i + 1), 26), "acc b-mod", fn);
+    });
+    put(R.r + 26, R.c + 3, fit("←→ choose · 1-" + L.length + " or enter use it · / type a title · esc close", R.w - 6), "dim b-mod");
+  }
+  function drawDialogs(rect) {
+    if (ui.modal === "confirm") dlgConfirm(rect);
+    if (ui.modal === "undo") dlgUndo(rect);
+    if (ui.modal === "picker") dlgPicker();
+  }
+  /* Settings fields: tall (label over input) or wide (label beside input). Five fields: today's four and Show posters. */
+  function settingsForm(r, c, w, bg, wide) {
+    var B = bg ? " " + bg : "", lw = wide ? 24 : 0;
+    function row(i) { return wide ? r + [0, 2, 4, 6, 9][i] : r + [0, 3, 6, 8, 11][i]; }
+    [["TV Destination root", ui.set.tv], ["Film Destination root", ui.set.film]].forEach(function (fl, i) {
+      var rr = row(i), on = ui.sc === i, fn = function () { ui.sc = i; };
+      put(rr, c, (on ? "▸ " : "  ") + fl[0], (on ? "acc" : "fg") + B, fn);
+      put(wide ? rr : rr + 1, c + (wide ? lw : 2), fit(" " + fl[1] + (on ? "▏" : ""), w - (wide ? lw : 2) - 2), "fg b-in" + (on ? " u" : ""), fn);
+    });
+    function sw(i, label, on, dis) {
+      var rr = row(i), sel = ui.sc === i, fn = function () { ui.sc = i; toggleSetting(i); };
+      put(rr, c, (sel ? "▸ " : "  ") + label, (dis ? "dim" : sel ? "acc" : "fg") + B, fn);
+      var x = c + (wide ? lw : 26);
+      if (on) { put(rr, x, "   ", "b-trk", fn); put(rr, x + 3, "   ", dis ? "b-trk" : "b-acc", fn); }
+      else { put(rr, x, "   ", "b-btn", fn); put(rr, x + 3, "   ", "b-trk", fn); }
+      return put(rr, x + 7, dis ? "unavailable" : on ? "on" : "off", (dis ? "dim" : on ? "ok" : "dim") + B, fn);
+    }
+    sw(2, "Folder rename", ui.set.fr, false);
+    sw(3, "Season folder", ui.set.sf, !ui.set.fr);
+    put(row(3) + 1, c + 2, fit("Season folder works only while Folder rename is on.", w - 4), "dim" + B);
+    var e = sw(4, "Show posters", posterOn(), false); tag(row(4), e + 3, bg);
+  }
+
+  var D = {};
+  function notes(o) {
+    return "<h2>" + o.name + "</h2><p>" + o.idea + "</p>" +
+      "<p><b>Keys.</b> " + o.keys + "</p>" +
+      "<p><b>Tagged <span class=\"tag\">not built</span>.</b> " + o.nb + "</p>" +
+      "<p><b>File browser.</b> " + o.browser + "</p>" +
+      "<p>The TV posters are placeholders borrowed from public-domain films; see <a href=\"posters/CREDITS.md\">posters/CREDITS.md</a>.</p>" +
+      "<h3>What keeps this buildable in Textual</h3><ul>" + o.tx.map(function (x) { return "<li>" + x + "</li>"; }).join("") + "</ul>";
+  }
+  var KEYS = "<code>↑↓</code> title (a Source while queued) · <code>←→</code> file · <code>a</code> add file · <code>f</code> add folder (each opens the file browser) · <code>c</code> clear the queue · <code>b</code> build the Plan · " +
+    "<code>enter</code> Apply, then <code>y</code>/<code>n</code> · <code>esc</code> cancel the Plan · <code>t</code> poster picker (<code>←→</code>, <code>1</code>-<code>3</code>, <code>enter</code>, <code>/</code>, <code>esc</code>) · " +
+    "<code>x</code> leave the file out · <code>i</code> hide or show the poster panel · <code>m</code> Mode · <code>p</code> Provider · <code>s</code> Settings (<code>↑↓</code>, <code>enter</code>, <code>esc</code>) · <code>u</code> undo the last Apply · <code>n</code> new batch · <code>?</code> help · <code>q</code> quit. ";
+  var NB = "the poster (on its frame), pick a different match (the <code>t</code> button and the picker), leave a file out (the <code>x</code> button), lookup progress (beside the lookup gauge while building), undo the last Apply (applied) and the Show posters setting.";
+  var RULE = "Poster rules: one poster on the main view, in a fixed rectangle, never in a scrolling container, nothing drawn over it, nothing animated; it only swaps image when the selection changes, and hiding the panel removes the image. The picker is a <code>ModalScreen</code> with at most three fixed posters (a plain <code>OptionList</code> when posters are hidden), and the main poster is drawn blank while it is open.";
+  var STAGE_TX = "Stages row: a one-line <code>Static</code> (or a <code>Horizontal</code> of <code>Label</code>s) restyled when the stage changes; each stage mounts only the widgets it needs, so the early screens are nearly empty.";
+
+  /* =====================================================================
+     SPOTLIGHT · round three's `under`. Left: the framed poster with the
+        selected title's details under it. Right: the title list (no small
+        squares). Gauges in a thin strip above the footer.
+     ===================================================================== */
+  function stagesUnder() {
+    var now = stageNow(), c = 2;
+    STAGES.forEach(function (s, i) {
+      if (i) c = put(1, c + 1, "────", "ln") + 1;
+      var m = i < now ? "✓" : i === now ? "●" : "○", cl = i < now ? "ok" : i === now ? "acc bd" : "dim";
+      c = put(1, c, m + " " + s, cl);
+    });
+    var right = ST === "empty" ? "" : ST === "queued" || ST === "adding" ? (ui.addFrom === "queued" || ST === "queued" ? plural(SOURCES.length, "Source") : "") : titles().length + " titles · " + counts().total + " files";
+    put(1, W - 2 - len(right), right, "dim");
+    put(2, 0, "─".repeat(W), "ln");
+  }
+  /* Queued: the queue as today's app draws it, a Tree headed "Queue" with one leaf per Source (name, then its path dimmed). */
+  function drawQueue() {
+    var x0 = 26, w0 = 68, c;
+    put(7, x0, "▼ ", "acc"); put(7, x0 + 2, "Queue", "fg bd");
+    SOURCES.forEach(function (q, i) {
+      var rr = 8 + i, sel = i === ui.qi, fn = function () { A.selQ(i); }, nm = q.dir ? q.name.slice(0, -1) : q.name;
+      put(rr, x0 - 2, " ".repeat(w0 + 4), "", fn);
+      put(rr, x0 - 2, sel ? "▌" : " ", "acc", fn);
+      put(rr, x0, i === SOURCES.length - 1 ? "└── " : "├── ", "ln", fn);
+      c = put(rr, x0 + 4, nm, "fg" + (q.dir ? " bd" : ""), fn);
+      if (q.dir) c = put(rr, c, "/", "fg", fn);
+      put(rr, c + 2, cut(q.dir ? "~/Backups/TV/" + nm : "~/Backups/TV", x0 + w0 - c - 2), "dim", fn);
+      if (sel) hl(rr, x0 - 2, w0 + 4);
+    });
+    put(19, x0 - 2, "─".repeat(w0 + 4), "ln");
+    var b1 = " b  Build the Plan ", b2 = " c  Clear the queue ", bc = Math.floor((W - len(b1) - len(b2) - 3) / 2);
+    c = put(21, bc, b1, "b-acc bd", A.build); put(21, c + 3, b2, "b-btn fg", A.clear);
+    var a1 = " a  Add file ", a2 = " f  Add folder ", ac = Math.floor((W - len(a1) - len(a2) - 3) / 2);
+    c = put(23, ac, a1, "b-btn acc", A.addFile); put(23, c + 3, a2, "b-btn acc", A.addFolder);
+    put(26, 0, mid("Nothing is looked up until you build the Plan.", W), "dim");
+    flashAt(32, 2, 116);
+    footer("acc b-hd bd", "fg b-hd", "b-hd", "b-pan");
+  }
+  /* A modal screen dims what is under it: every cell keeps its glyph and takes the dim colours. */
+  function shade() {
+    for (var r = 0; r < H; r++) for (var c = 0; c < W; c++) {
+      var cl = S.cl[r][c]; S.cl[r][c] = /\bb-/.test(cl) ? "sh b-shb" : "sh"; S.ac[r][c] = -1;
+    }
+  }
+  /* The file browser: textual-fspicker's SelectDirectory (folders) or FileOpen (files), redrawn in this palette.
+     As the real one: 80% of the screen, centred; a list of icon, name, size and modified time; an input and two buttons along the bottom. */
+  var BR = { r: 4, c: 12, h: 28, w: 96 };
+  function drawBrowser() {
+    var R = BR, isFile = ui.addKind === "file", L = browseList(), B = " b-mod", x1 = R.c + R.w - 1;
+    fill(R.r, R.c, R.h, R.w, "b-mod");
+    box(R.r, R.c, R.h, R.w, "acc" + B);
+    put(R.r, R.c + 2, " " + (isFile ? "Open" : "Select directory") + " ", "fg bd" + B);
+    var lr = R.r + 2;
+    if (isFile) {
+      // FileOpen shows the current folder over the list, with a rule under it
+      put(R.r + 1, R.c + 2, rfit("~/Backups/TV", R.w - 4), "fg" + B);
+      put(R.r + 2, R.c + 1, "─".repeat(R.w - 2), "acc" + B);
+      lr = R.r + 4;
+    }
+    L.forEach(function (b, i) {
+      var rr = lr + i, on = i === ui.bi, fn = function () { A.selB(i); }, cl = on ? " b-acc bd" : B;
+      if (on) put(rr, R.c + 3, " ".repeat(R.w - 6), cl, fn);
+      put(rr, R.c + 4, b.dir ? "■" : "□", (on ? "" : b.dir ? "warn" : "dim") + cl, fn);
+      put(rr, R.c + 7, fit(b.name, 52), (on ? "" : "fg") + cl, fn);
+      put(rr, R.c + 60, rfit(b.size, 12), (on ? "" : "dim") + cl, fn);
+      put(rr, R.c + 73, b.time, (on ? "" : "dim") + cl, fn);
+      if (!on) put(rr, R.c + 3, " ", B, fn);
+    });
+    // input bar: SelectDirectory shows the current folder, FileOpen a file name to type
+    var ir = R.r + R.h - 5, iw = 59;
+    fill(ir, R.c + 1, 3, iw, "b-fld");
+    if (isFile) put(ir + 1, R.c + 3, "▏", "acc b-fld");
+    else put(ir + 1, R.c + 3, fit("~/Backups/TV", iw - 4), "fg b-fld");
+    [[isFile ? "Open" : "Select", A.choose_src, R.c + 61], ["Cancel", A.closeBrowser, R.c + 78]].forEach(function (bt) {
+      fill(ir, bt[2], 3, 16, "b-btn", bt[1]);
+      put(ir, bt[2], "▔".repeat(16), "ln b-btn", bt[1]); put(ir + 2, bt[2], "▁".repeat(16), "ln b-btn", bt[1]);
+      put(ir + 1, bt[2], mid(bt[0], 16), "fg bd b-btn", bt[1]);
+    });
+  }
+  D.spotlight = {
+    dialog: { r: 8, c: 46, h: 11, w: 62 },
+    draw: function () {
+      var T = titles(), t = selT(), f = selF(), c, r, pv = ST === "preview" && !SET, PO = posterOn();
+      header("b-acc bd", "fg b-hd");
+      stagesUnder();
+      if (ST === "empty") { emptyPrompt(13); flashAt(32, 2, 116); footer("acc b-hd bd", "fg b-hd", "b-hd", "b-pan"); return; }
+
+      if (ST === "queued") { drawQueue(); return; }
+      if (ST === "adding") {
+        // the screen it was opened from, dimmed behind the modal, then the browser over it
+        ST = ui.addFrom; if (ST === "queued") drawQueue(); else { emptyPrompt(13); footer("acc b-hd bd", "fg b-hd", "b-hd", "b-pan"); } ST = "adding";
+        shade(); drawBrowser();
+        hints(35, "acc b-hd bd", "fg b-hd", "b-hd");
+        return;
+      }
+      if (SET) {
+        // Settings: round three's `stack` layout, a wide form alone in the middle of the screen
+        put(5, 30, "Settings", "fg bd"); put(6, 30, "Saved to the User settings file.", "dim");
+        settingsForm(9, 30, 70, "", true);
+        put(23, 30, " esc  Close ", "b-btn fg", A.closeSettings);
+        flashAt(32, 2, 116);
+        footer("acc b-hd bd", "fg b-hd", "b-hd", "b-pan");
+        return;
+      }
+
+      // left column: the framed poster, the selected title under it
+      var LW = 38;
+      vline(LW, 3, 29);
+      var dr;
+      if (PO) {
+        box(3, 3, 19, 26, "ln");
+        poster(4, 4, 24, 17, t);
+        put(3, 5, " " + prov() + " ", "dim"); tag(3, 17);
+        dr = 23;
+      } else dr = 4;
+      if (t) {
+        var s = tStat(t), ti = T.indexOf(t);
+        put(dr, 3, fit(label(t), LW - 5), "fg bd");
+        c = put(dr + 1, 3, s, STC[s] + " bd"); put(dr + 1, c, fit(" · " + info(t), LW - 3 - c), "dim");
+        if (!PO) {
+          var cc = 3, sm = tSummary(t); if (sm.length > 1) sm.forEach(function (x, i) { if (i) cc = put(dr + 3, cc, " · ", "dim"); cc = put(dr + 3, cc, x[0], x[1]); });
+          cells(dr + 5, 3, t, { w: 2, tall: true, lab: true });
+        } else cells(dr + 3, 3, t, { w: 2, lab: true });
+        var ar = PO ? dr + 5 : dr + 10;
+        if (pv) {
+          c = put(ar, 3, " t  Change match ", s === "no match" ? "b-acc bd" : "b-btn fg", A.picker); tag(ar, c + 1);
+          c = put(ar + (PO ? 1 : 2), 3, f && ui.out[f.from] ? " x  Put back     " : " x  Leave out    ", "b-btn fg", A.out); tag(ar + (PO ? 1 : 2), c + 1);
+        } else if (ST === "applied" && t.key === "hl") put(ar, 3, "2 Stragglers merged", "dim");
+      }
+
+      // right column: the title list
+      var X = LW + 2, RW = W - X - 2;
+      {
+        var step = PO ? 2 : 3;
+        put(4, X + 2, "Titles", "fg bd"); put(4, X + RW - 3, rfit(T.length, 3), "dim");
+        put(5, X, "─".repeat(RW + 1), "ln");
+        T.forEach(function (tt, i) {
+          var rr = 7 + i * step, sel = tt === t, st = tStat(tt), fn = function () { A.selT(i); };
+          put(rr, X, " ".repeat(RW + 1), "", fn);
+          put(rr, X, sel ? "▌" : " ", "acc", fn);
+          put(rr, X + 3, fit(label(tt), 27), (sel ? "fg bd" : st === "waiting" ? "dim" : "fg"), fn);
+          put(rr, X + 32, fit(st, 11), STC[st], fn);
+          put(rr, X + 44, rfit(tt.files.length, 3), "dim", fn);
+          if (sel) hl(rr, X, RW + 1);
+        });
+        // the stage's summary and its next step: under the list, or under the details when the poster is hidden
+        var sx = PO ? X + 3 : 3, sr = PO ? 24 : 22, nw = PO ? RW - 3 : LW - 5, cn = counts();
+        if (PO) put(22, X, "─".repeat(RW + 1), "ln"); else put(20, 0, "─".repeat(LW), "ln");
+        if (ST === "building") {
+          put(sr, sx, "13 of 21 files looked up", "fg"); put(sr + 1, sx, "on " + prov() + "…", "dim");
+          put(sr + 3, sx, " esc  Cancel the Plan ", "b-btn fg", A.cancel);
+        } else if (ST === "preview") {
+          var sm = [[cn.good + " ready", "ok"], [" · ", "dim"], [cn["name taken"] + " name taken", "warn"], [" · ", "dim"], [cn["no match"] + " no match", "err"]];
+          if (PO) segs(sr, sx, sm); else { segs(sr, sx, sm.slice(0, 1)); segs(sr + 1, sx, sm.slice(2)); }
+          put(PO ? sr + 1 : sr + 2, sx, fit(cn["left out"] + " left out" + (MODE === "TV" ? " · 2 Stragglers merge" : ""), nw), "dim");
+          c = put(sr + 4, sx, " enter  Apply… ", "b-acc bd", A.apply);
+          if (PO) put(sr + 4, c + 2, "Nothing moves until you confirm.", "dim"); else put(sr + 6, sx, "Nothing moves until you confirm.", "dim");
+        } else if (ST === "applied") {
+          segs(sr, sx, [[cn.renamed + " renamed", "ok"], [" · ", "dim"], [(cn.skipped + cn["left out"]) + " skipped", "warn"], [" · 0 failed", "dim"]]);
+          if (MODE === "TV") put(sr + 1, sx, fit(PO ? "2 Stragglers merged · 6 emptied folders removed" : "2 Stragglers merged", nw), "dim");
+          c = put(sr + 3, sx, " u  Undo last Apply ", "b-btn fg", A.undo); tag(sr + 3, c + 1);
+          put(sr + (PO ? 3 : 5), PO ? c + 12 : sx, " n  New batch ", "b-btn fg", A.newBatch);
+        }
+      }
+
+      // strip: gauge, matches, lookups per second
+      put(30, 0, "─".repeat(LW) + "┴" + "─".repeat(W - LW - 1), "ln");
+      var g = gauges();
+      put(31, 2, "lookups", "dim"); prog(31, 10, 16, g.done, g.total); put(31, 27, rfit(g.done + "/" + g.total, 5), "fg");
+      if (ST === "building") tag(31, 33);
+      put(31, 44, "matched", "dim"); put(31, 52, fit(bar(g.matched, g.total, 16), 16), "ok"); put(31, 69, rfit(g.matched, 2), "fg");
+      put(31, 74, "unmatched", "dim"); put(31, 84, fit(bar(g.unmatched, g.total, 16), 2), "err"); put(31, 87, String(g.unmatched), "fg");
+      put(31, 91, "lookups/s", "dim"); put(31, 101, spark(g.spark, 10), "acc"); put(31, 112, fit(g.rate, 7), "fg");
+      put(32, 0, "─".repeat(W), "ln");
+      if (ui.flash) { put(32, 2, " " + cut(ui.flash, 112) + " ", "acc"); }
+      footer("acc b-hd bd", "fg b-hd", "b-hd", "b-pan");
+    },
+    notes: function () {
+      return notes({
+        name: "Spotlight",
+        idea: "Round three's list on the right, finished: the screen starts as a centred prompt, the queue appears as today's app shows it, then the framed poster with the selected title's details fills a narrow left column while a plain title list (name, status word, file count) fills the right, with the gauges in a thin strip above the footer.",
+        keys: KEYS + "In the file browser: <code>↑↓</code> move, <code>enter</code> choose, <code>esc</code> cancel. Click a Source, a title, a file cell, a button, a browser row, the Mode tabs or the Provider; click the poster on the Preview to open the picker.",
+        nb: NB,
+        browser: "The file browser is today's <code>textual-fspicker</code> dialog (<code>SelectDirectory</code> for <code>f</code>, <code>FileOpen</code> for <code>a</code>) in this palette; it lists a fixed sample of <code>~/Backups/TV</code> (folders only in <code>SelectDirectory</code>, as the real one), the highlight moves, and choosing anything queues all nine sample Sources at once.",
+        tx: [
+          "Layout: a <code>Horizontal</code> of two <code>Vertical</code>s (38 columns and the rest) over a one-line strip, swapped per stage with a <code>ContentSwitcher</code>.",
+          STAGE_TX,
+          "Queue: today's <code>Tree</code> (<code>#source-tree</code>), root \"Queue\", one leaf per Source labelled with Rich markup (bold name, dim path), above two rows of <code>Button</code>s.",
+          "File browser: the <code>textual-fspicker</code> package the app already uses, unchanged (<code>SelectDirectory</code> and <code>FileOpen</code> are <code>ModalScreen</code>s); only the theme's colours change. The real dialog draws emoji folder and page icons, two cells wide; the mockup draws <code>■</code> and <code>□</code> in their place.",
+          "Poster: a <code>textual-image</code> <code>Image</code> in a fixed 24 × 17 container with a border; <code>i</code> sets <code>display: none</code> on the container and the details move up.",
+          "Title list: a <code>ListView</code> of one-line <code>ListItem</code>s (name, coloured status word, file count).",
+          "Strip: <code>ProgressBar</code> for lookups, block bars in a <code>Static</code> for matched and unmatched, <code>Sparkline</code> for lookups per second.",
+          "Settings: its own <code>Screen</code> with two <code>Input</code>s and three <code>Switch</code>es in one centred column; confirm and undo are <code>ModalScreen</code>s aligned over the list, clear of the poster.",
+          "Footer: two <code>Static</code> lines for the selected file over Textual's <code>Footer</code>.",
+          RULE,
+        ],
+      });
+    },
+  };
+
+  /* ================= entry point called by the bar ================= */
+  var NAMES = { spotlight: "Spotlight" };
+  window.renderDesign = function (variant, state) {
+    if (!D[variant]) variant = "spotlight";
+    var key = variant + "|" + state;
+    if (ui.last !== key && !ui.self) {
+      ui.modal = null;
+      if (ui.last && ui.last.split("|")[1] !== state) { ui.tok++; ui.flash = ""; }
+      if (state === "applied") ui.amode = null;
+      if (state === "settings") ui.back = null;
+      if (state === "adding") { ui.addKind = "dir"; ui.addFrom = "empty"; ui.bi = 3; }
+    }
+    if (ui.last && ui.last.split("|")[0] !== variant) ui.flash = "";
+    ui.last = key;
+    SET = state === "settings";
+    var bg = SET ? (ui.back && ui.back !== "settings" ? ui.back : "preview") : state;
+    MODE = bg === "preview-film" || (bg === "applied" && ui.amode === "Film") ? "Film" : "TV";
+    ST = bg === "preview-film" ? "preview" : bg;
+    if (SET) ui.modal = null;
+    var t = selT(); if (t) ui.fi = Math.max(0, Math.min(ui.fi, t.files.length - 1));
+    BLOCK = ui.modal === "picker" ? pickRect() : ui.modal ? D[variant].dialog : null;
+    newScreen();
+    D[variant].draw();
+    drawDialogs(D[variant].dialog);
+    flush();
+    document.getElementById("notes").innerHTML = D[variant].notes();
+    document.getElementById("wtitle").textContent = "termrenamer · 120 × 36 · " + NAMES[variant];
+  };
+
+  var term = document.querySelector(".term");
+  term.addEventListener("keydown", onKey);
+  term.addEventListener("click", function (e) {
+    var t = e.target.closest("[data-a]"); if (!t) return;
+    var fn = ACTS[+t.getAttribute("data-a")]; if (fn) { fn(); redraw(); }
+  });
+  setTimeout(function () { try { term.focus({ preventScroll: true }); } catch (e) {} }, 0);
+})();
+</script>
+<!-- ══ PROTOTYPE BAR, ROUND FOUR: for round-4-textual.html.
+     Paste this whole block unchanged just before </body>. It is not part of any design. ══ -->
+<style id="proto-bar-style">
+  .pbar, .pbar * { box-sizing: border-box; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .pbar { position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 9999; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .pbar-row { display: flex; align-items: center; gap: 2px; background: #111; color: #fff; border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 999px; padding: 4px 6px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5); font-size: 13px; line-height: 1.2; }
+  .pbar button { all: unset; cursor: pointer; padding: 4px 8px; border-radius: 999px; color: #fff; font-size: 13px; white-space: nowrap; }
+  .pbar button:hover { background: rgba(255, 255, 255, 0.15); }
+  .pbar button[aria-pressed="true"] { background: #fff; color: #111; }
+  .pbar button:focus-visible { outline: 2px solid #7dd3fc; outline-offset: 1px; }
+  .pbar-label { padding: 0 10px; white-space: nowrap; min-width: 340px; text-align: center; }
+  .pbar-label small { opacity: 0.7; font-size: 12px; }
+  .pbar-sep { width: 1px; height: 16px; background: rgba(255, 255, 255, 0.25); margin: 0 4px; }
+</style>
+<div class="pbar" id="proto-bar" aria-label="Prototype controls, not part of the design"></div>
+<script id="proto-bar-script">
+  (function () {
+    var ALL = [
+      { file: "round-4-textual.html", key: "spotlight", name: "Spotlight", group: "Textual" },
+    ];
+    var STATES = [
+      ["empty", "Empty"],
+      ["adding", "Adding"],
+      ["queued", "Queued"],
+      ["building", "Building"],
+      ["preview", "Preview TV"],
+      ["preview-film", "Preview Film"],
+      ["applied", "Applied"],
+      ["settings", "Settings"],
+    ];
+    var here = decodeURIComponent(location.pathname.split("/").pop() || "");
+    var mine = ALL.filter(function (d) { return d.file === here; });
+    if (!mine.length) { mine = ALL.filter(function (d) { return d.file === ALL[0].file; }); here = ALL[0].file; }
+    var params = new URLSearchParams(location.search);
+    var cur = { variant: params.get("variant"), state: params.get("state"), theme: params.get("theme"), poster: params.get("poster") === "off" ? "off" : "on" };
+    if (!mine.some(function (d) { return d.key === cur.variant; })) cur.variant = mine[0].key;
+    if (!STATES.some(function (s) { return s[0] === cur.state; })) cur.state = "empty";
+    if (cur.theme !== "dark" && cur.theme !== "light") {
+      cur.theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+    }
+
+    function indexOfCurrent() {
+      for (var i = 0; i < ALL.length; i++) if (ALL[i].file === here && ALL[i].key === cur.variant) return i;
+      return 0;
+    }
+    function urlFor(d) {
+      return d.file + "?variant=" + d.key + "&state=" + cur.state + "&theme=" + cur.theme + "&poster=" + cur.poster;
+    }
+    function el(tag, attrs, text) {
+      var n = document.createElement(tag);
+      for (var k in attrs) n.setAttribute(k, attrs[k]);
+      if (text != null) n.textContent = text;
+      return n;
+    }
+    function drawBar() {
+      var bar = document.getElementById("proto-bar");
+      bar.textContent = "";
+      var i = indexOfCurrent(), d = ALL[i];
+      var top = el("div", { class: "pbar-row" });
+      var prev = el("button", { type: "button", title: "Previous design ( [ )" }, "←");
+      prev.onclick = function () { go(-1); };
+      var label = el("span", { class: "pbar-label" });
+      label.appendChild(document.createTextNode(i + 1 + " / " + ALL.length + " · " + d.name + " "));
+      label.appendChild(el("small", {}, "(" + d.group + ")"));
+      var next = el("button", { type: "button", title: "Next design ( ] )" }, "→");
+      next.onclick = function () { go(1); };
+      top.appendChild(prev); top.appendChild(label); top.appendChild(next);
+      var row = el("div", { class: "pbar-row" });
+      STATES.forEach(function (s) {
+        var b = el("button", { type: "button", "aria-pressed": String(s[0] === cur.state), "data-state": s[0] }, s[1]);
+        b.onclick = function () { setState(s[0]); };
+        row.appendChild(b);
+      });
+      row.appendChild(el("span", { class: "pbar-sep" }));
+      var th = el("button", { type: "button", title: "Switch dark / light" }, cur.theme === "dark" ? "Dark" : "Light");
+      th.onclick = function () { setTheme(cur.theme === "dark" ? "light" : "dark"); };
+      row.appendChild(th);
+      row.appendChild(el("span", { class: "pbar-sep" }));
+      var po = el("button", { type: "button", title: "Show or hide the poster panel" }, cur.poster === "on" ? "Poster on" : "Poster off");
+      po.onclick = function () { setPoster(cur.poster === "on" ? "off" : "on"); };
+      row.appendChild(po);
+      bar.appendChild(top); bar.appendChild(row);
+    }
+    function apply() {
+      try { history.replaceState(null, "", urlFor(ALL[indexOfCurrent()])); } catch (e) {}
+      var root = document.documentElement;
+      root.setAttribute("data-theme", cur.theme);
+      root.setAttribute("data-variant", cur.variant);
+      root.setAttribute("data-state", cur.state);
+      root.setAttribute("data-poster", cur.poster);
+      drawBar();
+      if (typeof window.renderDesign === "function") window.renderDesign(cur.variant, cur.state, cur.theme);
+    }
+    function go(delta) {
+      var next = ALL[(indexOfCurrent() + delta + ALL.length) % ALL.length];
+      if (next.file === here) { cur.variant = next.key; apply(); }
+      else location.href = urlFor(next);
+    }
+    function setState(s) {
+      if (!STATES.some(function (x) { return x[0] === s; })) return;
+      cur.state = s; apply();
+    }
+    function setTheme(t) { cur.theme = t === "light" ? "light" : "dark"; apply(); }
+    function setPoster(p) { cur.poster = p === "off" ? "off" : "on"; apply(); }
+
+    // What a design may call. Designs move through the flow with proto.setState(...).
+    window.proto = {
+      setState: setState,
+      setTheme: setTheme,
+      setPoster: setPoster,
+      go: go,
+      rerender: apply,
+      get state() { return cur.state; },
+      get variant() { return cur.variant; },
+      get theme() { return cur.theme; },
+      get poster() { return cur.poster; },
+      states: STATES.map(function (s) { return s[0]; }),
+    };
+
+    // [ and ] always change design. Left/right arrows change design only while the
+    // terminal frame (.term) does not hold keyboard focus, so a design may use arrows itself.
+    document.addEventListener("keydown", function (e) {
+      var t = e.target;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === "[") { e.preventDefault(); go(-1); return; }
+      if (e.key === "]") { e.preventDefault(); go(1); return; }
+      var term = document.querySelector(".term");
+      var inTerm = term && term.contains(document.activeElement);
+      if (inTerm) return;
+      if (e.key === "ArrowLeft") { e.preventDefault(); go(-1); }
+      if (e.key === "ArrowRight") { e.preventDefault(); go(1); }
+    });
+
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", apply);
+    else apply();
+  })();
+</script>
+</body>
+</html>
