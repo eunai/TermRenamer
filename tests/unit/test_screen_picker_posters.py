@@ -13,6 +13,8 @@ from pathlib import Path
 
 import httpx
 import pytest
+from textual.css.query import NoMatches
+from textual.geometry import Region
 from textual.pilot import Pilot
 
 from termrenamer.core.models import Candidate
@@ -20,6 +22,7 @@ from termrenamer.core.paths import path_key
 from termrenamer.persistence.posters import PosterRequest
 from termrenamer.tui.app import TermRenamerApp
 from termrenamer.tui.dialogs.match_picker import MatchPicker, PickerTile
+from termrenamer.tui.poster_support import ErrorWidget, PosterSupport
 
 from .screen_driver import (
     POSTERS_AVAILABLE,
@@ -138,6 +141,14 @@ def tile_poster_words(app: TermRenamerApp, index: int) -> str:
     return " ".join(word for word in drawn if word != "·")
 
 
+def frame_width(app: TermRenamerApp, index: int) -> int:
+    """The columns a tile's frame takes on screen, or 0 while it is not there."""
+    try:
+        return app.screen.query_one(f"#picker-tile-{index} .tile-frame").region.width
+    except NoMatches:
+        return 0
+
+
 def no_poster_lines(app: TermRenamerApp) -> list[str]:
     return [line for _n, line in app.log_book.lines_after(0) if "No Poster" in line]
 
@@ -193,8 +204,8 @@ async def test_left_and_right_move_between_tiles_and_enter_uses_the_selected_one
 ) -> None:
     app = tiles_app(tmp_path, ImageHost())
     async with app.run_test(size=SIZE) as pilot:
-        picker = await film_picker(pilot, tmp_path)
-        assert picker.tiles is not None
+        await film_picker(pilot, tmp_path)
+        assert len(tile_words(app)) == 3
         moves = [selected_tile(app)]
         for key in ("right", "right", "right", "left", "left", "left"):
             await press(pilot, key)
@@ -236,7 +247,8 @@ async def test_with_tiles_slash_and_three_go_to_the_typing_field_in_the_third_ti
         picker = await film_picker(pilot, tmp_path)
         await press(pilot, "slash")
         typing_after_slash = picker.typing
-        in_third_tile = picker.query_one("#picker-typed").parent.parent.id
+        field = picker.query_one("#picker-typed").region
+        third_frame = picker.query_one("#picker-tile-type .tile-frame").region
         await press(pilot, "escape")
         await press(pilot, "t")
         await settle(pilot)
@@ -248,7 +260,7 @@ async def test_with_tiles_slash_and_three_go_to_the_typing_field_in_the_third_ti
         still_typing = picker.typing
 
     assert typing_after_slash and typing_after_three and still_typing
-    assert in_third_tile == "picker-tile-type"
+    assert field.area > 0 and third_frame.contains_region(field)
 
 
 async def test_each_candidate_tile_shows_its_poster_from_the_poster_store(tmp_path: Path) -> None:
@@ -385,11 +397,9 @@ async def test_with_posters_hidden_the_picker_is_the_plain_list(tmp_path: Path) 
     host = ImageHost()
     app = tiles_app(tmp_path, host, show_posters=False)
     async with app.run_test(size=SIZE) as pilot:
-        picker = await open_picker(pilot, tmp_path)
-        tiles = picker.tiles
+        await open_picker(pilot, tmp_path)
         rows = list_rows(app)
         shown = tile_words(app)
-    assert tiles is None
     assert rows == ["picker-choice-0", "picker-choice-1", "picker-type"]
     assert shown == []
     assert host.urls == []
@@ -401,10 +411,10 @@ async def test_below_the_size_for_posters_the_picker_is_the_plain_list(
 ) -> None:
     app = tiles_app(tmp_path, ImageHost())
     async with app.run_test(size=size) as pilot:
-        picker = await open_picker(pilot, tmp_path)
-        tiles = picker.tiles
+        await open_picker(pilot, tmp_path)
         rows = list_rows(app)
-    assert tiles is None
+        shown = tile_words(app)
+    assert shown == []
     assert len(rows) == 3
 
 
@@ -419,15 +429,15 @@ async def test_the_picker_changes_between_tiles_and_list_as_the_screen_is_resize
         picker.query_one("#picker-typed").value = "Heat Wa"  # type: ignore[attr-defined]
         await pilot.resize_terminal(90, 28)
         await settle(pilot)
-        small = (picker.tiles, list_rows(app), picker.typing)
+        small = (tile_words(app), list_rows(app), picker.typing)
         typed_small = picker.query_one("#picker-typed").value  # type: ignore[attr-defined]
         await pilot.resize_terminal(*SIZE)
         await settle(pilot)
-        large = (picker.tiles is not None, list_rows(app), picker.typing)
+        large = (len(tile_words(app)), list_rows(app), picker.typing)
         typed_large = picker.query_one("#picker-typed").value  # type: ignore[attr-defined]
         drawn = len(tile_images(app, 1))
-    assert small == (None, ["picker-choice-0", "picker-choice-1", "picker-type"], True)
-    assert large == (True, [], True)
+    assert small == ([], ["picker-choice-0", "picker-choice-1", "picker-type"], True)
+    assert large == (3, [], True)
     assert typed_small == typed_large == "Heat Wa"
     assert drawn == 1
 
@@ -487,10 +497,62 @@ async def test_a_poster_already_downloading_is_not_downloaded_again_after_a_resi
         picker = app.screen
         assert isinstance(picker, MatchPicker)
         await pilot.resize_terminal(105, 36)
-        await until(pilot, lambda: picker.tiles is not None and picker.tiles.tile == 21)
+        await until(pilot, lambda: frame_width(app, 1) == 21)  # the smaller tiles
         await pilot.pause(0.2)
         host.release.set()
         await settle(pilot)
         shown = drawn(tile_images(app, 1))
     assert host.urls.count(held) == 1
     assert shown == [stored(app, "/heat86.jpg")]
+
+
+def recording_posters() -> tuple[PosterSupport, list[StandInImage]]:
+    """Posters drawn by stand-in images, each one kept in the list as it is made."""
+    made: list[StandInImage] = []
+
+    def image(path: Path, on_error: ErrorWidget) -> StandInImage:
+        made.append(StandInImage(path, on_error=on_error))
+        return made[-1]
+
+    return PosterSupport(image=image), made
+
+
+async def test_closing_or_relaying_out_the_picker_clears_each_tile_image(tmp_path: Path) -> None:
+    # Clearing an image lets the image package take it off the terminal (a Kitty image
+    # stays allocated otherwise).
+    support, made = recording_posters()
+    host = ImageHost()
+    wired = wiring(film=poster_films(), posters=host.store(tmp_path / "posters"))
+    app = make_app(wired, settings(), posters=support)
+    async with app.run_test(size=SIZE) as pilot:
+        await film_picker(pilot, tmp_path)
+        tiles = list(app.screen.query(StandInImage))
+        await pilot.resize_terminal(105, 36)
+        await settle(pilot)
+        after_resize = [image.image for image in tiles]
+        resized = list(app.screen.query(StandInImage))
+        await press(pilot, "escape")
+        await settle(pilot)
+        after_close = [image.image for image in resized]
+    assert len(tiles) == 2 and len(resized) == 2
+    assert all(image in made for image in tiles + resized)
+    assert after_resize == [None, None]
+    assert after_close == [None, None]
+
+
+@pytest.mark.parametrize("size", [SIZE, SMALLEST])
+async def test_a_long_status_keeps_the_key_hint_on_screen(
+    tmp_path: Path, size: tuple[int, int]
+) -> None:
+    long_title = "The Longest Film Title Anyone Ever Typed Into This Field " * 8
+    app = tiles_app(tmp_path, ImageHost(), film=poster_films())
+    async with app.run_test(size=size) as pilot:
+        picker = await film_picker(pilot, tmp_path)
+        await type_a_title(pilot, long_title)
+        await settle(pilot)
+        dialog = picker.query_one("#picker-dialog").region
+        hint = picker.query_one("#picker-hint").region
+        status = text_of(app, "#picker-status")
+    assert status.startswith("Nothing found for “The Longest Film Title")
+    assert Region(0, 0, *size).contains_region(dialog)
+    assert hint.area > 0 and dialog.shrink((1, 1, 1, 1)).contains_region(hint)
