@@ -286,6 +286,7 @@ def apply_plan(plan: Plan, *, confirmed: bool) -> ApplyOutcome:
         folders_created=tuple(changes.folders_created),
         folders_removed=tuple(changes.folders_removed),
         files_left_behind=tuple(changes.files_left_behind),
+        folders_kept=tuple(changes.folders_kept),
     )
 
 

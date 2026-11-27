@@ -37,7 +37,14 @@ import os
 from pathlib import Path
 
 from termrenamer.core.collisions import is_case_only_rename
-from termrenamer.core.models import ApplyOutcome, ApplyResult, ApplyStatus, Move, UndoOutcome
+from termrenamer.core.models import (
+    ApplyOutcome,
+    ApplyResult,
+    ApplyStatus,
+    KeptFolder,
+    Move,
+    UndoOutcome,
+)
 from termrenamer.core.moving import (
     Changes,
     NotAsRecorded,
@@ -119,6 +126,24 @@ def _within(path: Path, folders: list[Path]) -> bool:
     return any(path == folder or folder in path.parents for folder in folders)
 
 
+def _kept_folder_is_taken(kept: KeptFolder) -> bool:
+    """Whether what is at a kept folder's place is not that folder as Apply left it. A
+    kept folder that is gone is not taken: the files bound for it stay, as for any old
+    folder that no longer exists."""
+    try:
+        st = os.lstat(kept.path)
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        _LOG.warning("Undo left the files of %s: cannot read it: %s", kept.path, exc)
+        return True
+    same = (st.st_dev, st.st_ino, st.st_mtime_ns) == (kept.device, kept.inode, kept.modified_ns)
+    if same and is_folder(kept.path, st):
+        return False
+    _LOG.warning("Undo left the files of %s: its old place is taken", kept.path)
+    return True
+
+
 def _make_folders_again(outcome: ApplyOutcome, changes: Changes) -> list[Path]:
     """Make each folder Apply removed again, outer before inner, and return the folders
     of folder Stragglers whose old place is taken.
@@ -127,10 +152,12 @@ def _make_folders_again(outcome: ApplyOutcome, changes: Changes) -> list[Path]:
     logged, and the files bound for it are left where they are. A folder of a folder
     Straggler (the Straggler itself or a folder inside it) that exists again goes back
     only when nothing is at its old place, so when one is there, with anything or
-    nothing in it, the folder is taken and its files stay at their new place.
+    nothing in it, the folder is taken and its files stay at their new place. A folder
+    Apply kept (:attr:`~termrenamer.core.models.ApplyOutcome.folders_kept`) is taken
+    when another folder or a file is at its place, or it changed since Apply.
     """
     stragglers = _folder_stragglers(outcome)
-    taken: list[Path] = []
+    taken = [kept.path for kept in outcome.folders_kept if _kept_folder_is_taken(kept)]
     # Apply lists each folder before its parent; the stable sort keeps that order's
     # reverse wherever the depth is the same.
     for folder in sorted(reversed(outcome.folders_removed), key=lambda path: len(path.parts)):

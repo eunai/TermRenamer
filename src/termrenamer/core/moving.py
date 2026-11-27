@@ -41,7 +41,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from termrenamer.core.collisions import is_case_only_rename
-from termrenamer.core.models import LinkedFolder, Move, PlanFingerprint
+from termrenamer.core.models import KeptFolder, LinkedFolder, Move, PlanFingerprint
 from termrenamer.core.paths import claim_key
 from termrenamer.core.scan import is_companion_file
 
@@ -191,6 +191,7 @@ class Changes:
     folders_created: list[Path] = field(default_factory=list)
     folders_removed: list[Path] = field(default_factory=list)
     files_left_behind: list[Path] = field(default_factory=list)
+    folders_kept: list[KeptFolder] = field(default_factory=list)
 
     def make_folders(
         self,
@@ -268,8 +269,11 @@ def move_no_replace(
       again at ``dest`` with its kind and target text and the source unlinked. On
       Windows the copy is made under a fresh name beside ``dest``, then renamed to
       ``dest``.
-    - A folder, on every system: ``dest`` is made, then each child is moved by these
-      rules in name order, then the emptied source folder is removed.
+    - A folder, on every system: ``dest`` is made, then each child but a companion file
+      (:func:`~termrenamer.core.scan.is_companion_file`) is moved by these rules in name
+      order, then the emptied source folder is removed; one left holding only companion
+      files is kept. Companion files are left to the filesystem, which may remove,
+      write or move them as the files beside them move.
 
     The last looks before the call that moves are, in this order: each folder of
     ``real_folders`` (and, in a folder's walk, the folder walked and its new folder)
@@ -473,9 +477,10 @@ def _move_folder(
     moved is a :class:`FolderMoveFailed` that says so, not a :class:`NowALink`.
 
     A companion file (:func:`~termrenamer.core.scan.is_companion_file`) is never moved,
-    and a folder left holding only companion files, and folders this walk kept, is kept:
-    it is not removed, as Apply removes no folder that holds a file. Return whether
-    ``source`` was removed."""
+    and one the system removed with its file during the walk is passed over. A folder
+    left holding only companion files, and folders this walk kept, is kept: it is not
+    removed, as Apply removes no folder that holds a file, and it is recorded in
+    ``changes.folders_kept``. Return whether ``source`` was removed."""
     os.mkdir(dest)
     changes.folders_created.append(dest)
     moved_before = len(changes.moves)
@@ -491,7 +496,12 @@ def _move_folder(
             child = source / name
             try:
                 _guard(inner)
-                child_st = os.lstat(child)
+                try:
+                    child_st = os.lstat(child)
+                except FileNotFoundError:
+                    if is_companion_file(child):
+                        continue  # the system removed it with the file it belongs to
+                    raise
                 if is_folder(child, child_st):
                     if not _move_folder(child, child_st, dest / name, changes, inner):
                         kept.add(name)
@@ -510,6 +520,8 @@ def _move_folder(
                 raise FolderMoveFailed(exc.errno or errno.EIO, f"{child}: {exc}") from exc
         left = set(os.listdir(source))
         if left and left <= kept:
+            now = os.lstat(source)
+            changes.folders_kept.append(KeptFolder(source, now.st_dev, now.st_ino, now.st_mtime_ns))
             return False
         leave_folder(source)
         os.rmdir(source)

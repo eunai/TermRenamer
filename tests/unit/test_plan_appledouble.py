@@ -11,10 +11,11 @@ from pathlib import Path
 import pytest
 
 from termrenamer.core.apply import apply_plan
-from termrenamer.core.models import ApplyStatus, Plan
+from termrenamer.core.models import ApplyStatus, Candidate, Plan
 from termrenamer.core.planning import LeaveOut, PutBack, derive_plan, plan_queue
 from termrenamer.core.undo import undo_apply
 
+from .test_plan_queue import TvStandIn
 from .test_plan_stragglers import _options, _provider, _two_discs, _video_in, _write
 from .test_undo import listing
 
@@ -151,18 +152,45 @@ def test_a_folder_straggler_left_holding_only_companions_stays(tmp_path: Path) -
     assert listing(show) == before
 
 
-def _removes_the_companion_with_its_file(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Removing a file removes the companion file beside it, as macOS does on exFAT."""
-    real_unlink = os.unlink
+def _removes_the_companion_with_its_file(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
+    """Removing a file, or renaming it, removes the companion file beside its old name,
+    as macOS may on exFAT. Return the list of companion files the code under test named
+    in a call that moves, copies or removes a file."""
+    real_unlink, real_rename, real_link, real_open = os.unlink, os.rename, os.link, os.open
+    named: list[Path] = []
 
-    def unlink(path: object, *args: object, **kwargs: object) -> None:
-        real_unlink(path, *args, **kwargs)  # type: ignore[arg-type]
+    def note(*paths: object) -> None:
+        named.extend(p for p in map(lambda q: Path(os.fspath(q)), paths) if p.name.startswith("._"))  # type: ignore[arg-type]
+
+    def drop_companion(path: object) -> None:
         name = Path(os.fspath(path))  # type: ignore[call-overload]
         companion = name.with_name("._" + name.name)
         if os.path.lexists(companion):
             real_unlink(companion)
 
+    def unlink(path: object, *args: object, **kwargs: object) -> None:
+        note(path)
+        real_unlink(path, *args, **kwargs)  # type: ignore[arg-type]
+        drop_companion(path)
+
+    def rename(src: object, dst: object, *args: object, **kwargs: object) -> None:
+        note(src, dst)
+        real_rename(src, dst, *args, **kwargs)  # type: ignore[arg-type]
+        drop_companion(src)
+
+    def link(src: object, dst: object, *args: object, **kwargs: object) -> None:
+        note(src, dst)
+        real_link(src, dst, *args, **kwargs)  # type: ignore[arg-type]
+
+    def open_(path: object, *args: object, **kwargs: object) -> int:
+        note(path)
+        return real_open(path, *args, **kwargs)  # type: ignore[arg-type]
+
     monkeypatch.setattr(os, "unlink", unlink)
+    monkeypatch.setattr(os, "rename", rename)
+    monkeypatch.setattr(os, "link", link)
+    monkeypatch.setattr(os, "open", open_)
+    return named
 
 
 def test_a_folder_straggler_whose_companions_go_with_their_files_is_removed(
@@ -172,10 +200,81 @@ def test_a_folder_straggler_whose_companions_go_with_their_files_is_removed(
     subs = show / "Disc 1" / "Subs"
     plan = _plan(show)
 
-    _removes_the_companion_with_its_file(monkeypatch)
+    named = _removes_the_companion_with_its_file(monkeypatch)
     applied = apply_plan(plan, confirmed=True)
     monkeypatch.undo()
 
+    assert named == []
     assert {r.source: r.status for r in applied.stragglers}[subs] is ApplyStatus.RENAMED
     assert not subs.exists()
     assert subs in applied.folders_removed
+
+
+def test_a_companion_removed_with_its_file_during_a_folders_walk_stops_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    show = _two_discs(tmp_path)
+    subs = show / "Disc 1" / "Subs"
+    # "!" sorts before ".", so the file moves before the walk reaches its companion.
+    _write(subs / "!track.txt", b"track")
+    _write(subs / "._!track.txt", b"companion")
+    _write(subs / "z-last.txt", b"last")
+    plan = _plan(show)
+
+    named = _removes_the_companion_with_its_file(monkeypatch)
+    applied = apply_plan(plan, confirmed=True)
+    monkeypatch.undo()
+
+    new = show / "Show Name" / "Season 01" / "Subs"
+    assert named == []
+    assert {r.source: r.status for r in applied.stragglers}[subs] is ApplyStatus.RENAMED
+    assert sorted(p.name for p in new.iterdir()) == ["!track.txt", "English.srt", "z-last.txt"]
+    assert not subs.exists()
+
+
+def test_undo_leaves_the_files_of_a_kept_folder_whose_place_another_folder_took(
+    tmp_path: Path,
+) -> None:
+    show = _two_discs(tmp_path)
+    subs = show / "Disc 1" / "Subs"
+    _write(subs / "._lost.srt", b"companion")
+    applied = apply_plan(_plan(show), confirmed=True)
+    assert sorted(p.name for p in subs.iterdir()) == ["._lost.srt"]  # the folder stays
+
+    subs.rename(tmp_path / "old Subs")
+    subs.mkdir()  # another folder at its place
+    undone = undo_apply(applied)
+
+    moved = show / "Show Name" / "Season 01" / "Subs" / "English.srt"
+    [result] = [r for r in undone.results if r.source == moved]
+    assert (result.status, result.reason) == (
+        ApplyStatus.SKIP,
+        "its folder's old place is taken",
+    )
+    assert moved.exists()
+    assert list(subs.iterdir()) == []
+
+
+def test_a_name_the_plan_wrote_that_starts_like_a_companion_is_applied_and_undone(
+    tmp_path: Path,
+) -> None:
+    show = _two_discs(tmp_path)
+    before = listing(show)
+    provider = TvStandIn(
+        shows={"show name": (Candidate(id="1", name="._Show Name", year=2010),)},
+        episodes={("1", 1, 1): "Pilot", ("1", 1, 2): "Second"},
+    )
+    plan = plan_queue([show], _options(), provider).plan
+    video = show / "Disc 1" / "Show.Name.S01E01.mkv"
+    [entry] = [e for e in plan.entries if e.source == video]
+    assert entry.destination is not None and entry.destination.name.startswith("._")
+
+    applied = apply_plan(plan, confirmed=True)
+
+    assert {r.source: r.status for r in applied.results}[video] is ApplyStatus.RENAMED
+    assert entry.destination.exists()
+
+    undone = undo_apply(applied)
+
+    assert undone.put_back == len(applied.moves)
+    assert listing(show) == before

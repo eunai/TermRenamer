@@ -16,11 +16,19 @@ _SIDECAR_EXT = frozenset({".srt", ".nfo", ".sub", ".idx"})
 
 
 def is_companion_file(path: Path) -> bool:
-    """Whether the file ``path`` is a companion file: one whose name starts with ``._``,
-    as macOS writes beside a file on a drive that cannot hold extended attributes (exFAT,
-    FAT32, some network shares). It is not the person's file: never a video, a Sidecar
-    or a Straggler, and Apply and Undo never move, copy or remove it by name. What the
-    system does with it when the file beside it moves is the system's own."""
+    """Whether the file ``path``, found on the disk, is a companion file: one whose name
+    starts with ``._``, as macOS writes beside a file on a drive that cannot hold
+    extended attributes (exFAT, FAT32, some network shares). A file the scan or the
+    listing of a source folder finds with such a name is not the person's file: it is
+    never a video, a Sidecar or a Straggler, so Apply and Undo never move, copy or
+    remove it by name, and a folder Straggler's walk passes it over. Apply leaves
+    companion files to the filesystem, which may remove, write or move them as the
+    files beside them move.
+
+    The rule is about what is taken from the disk. A name the Plan itself wrote is the
+    Plan's file whatever it starts with, such as one from a Match named ``._Show``:
+    Apply moves it there, and Undo puts it back from the Apply's record, by name; a
+    later scan does not take it."""
     return path.name.startswith("._")
 
 
