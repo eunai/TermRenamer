@@ -78,7 +78,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Cache across Plans** — a second Plan built in the same session now reads what the first one stored. Before, the cache only worked for the first Plan of a session, and later Plans logged a cache warning and fell back to the network.
 
-- **Broken symbolic links** — a broken symbolic link now counts as a file that is already there. A planned name held by one is taken, as any other taken name: under Name taken `suffix` the file gets the numbered name, and under `skip` it stays where it is. A Straggler's path in its target folder held by one is always numbered. If one appears at a destination after the preview, apply skips that entry or Straggler with "destination exists at apply time" instead of replacing the link ([#9](https://github.com/eunai/TermRenamer/issues/9)).
+- **Broken symbolic links** — a broken symbolic link now counts as a file that is already there. A planned name held by one is taken, as any other taken name: under Name taken `suffix` the file gets the numbered name, and under `skip` it stays where it is. A Straggler's path in its target folder held by one is always numbered. If one appears at a destination after the Preview, Apply skips that entry or Straggler with "destination exists at apply time" instead of replacing the link ([#9](https://github.com/eunai/TermRenamer/issues/9)).
 
 ### Security
 
