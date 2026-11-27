@@ -9,7 +9,7 @@ from typing import Any
 
 import httpx
 
-from termrenamer.api.base import TvMetadataProvider, leading_year, text_field
+from termrenamer.api.base import TvMetadataProvider, leading_year, plain_digits, text_field
 from termrenamer.core.models import Candidate
 from termrenamer.util.errors import ProviderError
 from termrenamer.util.http import HttpClient
@@ -19,7 +19,7 @@ _LOG = logging.getLogger(__name__)
 
 _DEFAULT_BASE = "https://api4.thetvdb.com/v4"
 
-_SERIES_PREFIX_ID = re.compile(r"^series-(\d+)$", re.IGNORECASE)
+_SERIES_PREFIX_ID = re.compile(r"^series-([0-9]+)$", re.IGNORECASE)
 
 
 def _tvdb_numeric_series_id(hit: dict[str, Any]) -> str | None:
@@ -32,13 +32,13 @@ def _tvdb_numeric_series_id(hit: dict[str, Any]) -> str | None:
     tvdb_id = hit.get("tvdb_id")
     if tvdb_id is not None and not isinstance(tvdb_id, bool):
         s = str(tvdb_id).strip()
-        if s.isdigit():
+        if plain_digits(s):
             return s
     raw = hit.get("id")
     if raw is None:
         return None
     s = str(raw).strip()
-    if s.isdigit():
+    if plain_digits(s):
         return s
     m = _SERIES_PREFIX_ID.match(s)
     if m:
@@ -189,12 +189,12 @@ class _TvdbBuild:
 
 
 def _whole_number(value: object) -> int | None:
-    """Read an episode list's season or episode number (a number or digits)."""
+    """Read an episode list's season or episode number (a number or the digits 0 to 9)."""
     if isinstance(value, bool):
         return None
     if isinstance(value, int):
         return value
-    if isinstance(value, str) and value.strip().isdigit():
+    if isinstance(value, str) and plain_digits(value.strip()):
         return int(value.strip())
     return None
 
@@ -233,11 +233,10 @@ def _extract_token(payload: dict[str, Any]) -> str | None:
 
 
 def _extract_episode_list(payload: dict[str, Any]) -> list[Any]:
+    """Return the episode list; an answer that holds no list is unusable, not empty."""
     data = payload.get("data")
     if isinstance(data, dict):
-        eps = data.get("episodes")
-        if isinstance(eps, list):
-            return eps
-    if isinstance(data, list):
-        return data
-    return []
+        data = data.get("episodes")
+    if not isinstance(data, list):
+        raise ProviderError("Unexpected TheTVDB episodes response shape")
+    return data

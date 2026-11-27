@@ -146,10 +146,95 @@ def test_failed_login_is_a_failure() -> None:
         provider.search_shows(hint="x")
 
 
-def test_unusable_search_response_is_a_failure() -> None:
-    provider = _provider(_routes(search={"status": "success", "data": {"oops": 1}}))
-    with pytest.raises(ProviderError):
+@pytest.mark.parametrize(
+    "answer",
+    [
+        {"status": "success", "data": {"oops": 1}},
+        {"status": "success", "data": {}},
+        {"status": "success", "data": None},
+        {"status": "success"},
+    ],
+)
+def test_unusable_search_response_is_a_failure(answer: dict) -> None:
+    provider = _provider(_routes(search=answer))
+    with pytest.raises(ProviderError, match="Unexpected TheTVDB search"):
         provider.search_shows(hint="x")
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        {"status": "success", "data": {}},
+        {"status": "success", "data": None},
+        {"status": "success"},
+        {"status": "success", "data": "oops"},
+        {"status": "success", "data": {"episodes": None}},
+        {"status": "success", "data": {"episodes": {}}},
+    ],
+)
+def test_unusable_episode_list_response_is_a_failure(answer: dict) -> None:
+    provider = _provider(_routes(episodes=answer))
+    with pytest.raises(ProviderError, match="Unexpected TheTVDB episodes"):
+        provider.episode_title(show_id="12345", season=1, episode=1)
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [{"status": "success", "data": {"episodes": []}}, {"status": "success", "data": []}],
+)
+def test_an_empty_episode_list_is_nothing_found(answer: dict) -> None:
+    provider = _provider(_routes(episodes=answer))
+    assert provider.episode_title(show_id="12345", season=1, episode=1) is None
+
+
+def test_a_candidate_whose_id_has_digits_other_than_0_to_9_is_dropped() -> None:
+    search_j = {
+        "data": [
+            {"tvdb_id": "\u00b2", "name": "Superscript"},
+            {"id": "\u0664\u0662", "name": "Arabic-Indic"},
+            {"id": "series-\u0664\u0662", "name": "Arabic-Indic slug"},
+            {"tvdb_id": "42", "name": "Kept"},
+        ],
+    }
+    provider = _provider(_routes(search=search_j))
+    assert provider.search_shows(hint="x") == (Candidate(id="42", name="Kept", year=None),)
+
+
+def test_a_candidate_whose_year_has_digits_other_than_0_to_9_has_no_year() -> None:
+    search_j = {
+        "data": [
+            {"tvdb_id": 1, "name": "Superscript", "year": "\u00b2000"},
+            {"tvdb_id": 2, "name": "Arabic-Indic", "year": "\u0662\u0660\u0660\u0660"},
+            {
+                "tvdb_id": 3,
+                "name": "First aired",
+                "year": "\u00b2000",
+                "first_air_time": "2003-04-05",
+            },
+        ],
+    }
+    provider = _provider(_routes(search=search_j))
+    assert [(c.name, c.year) for c in provider.search_shows(hint="x")] == [
+        ("Superscript", None),
+        ("Arabic-Indic", None),
+        ("First aired", 2003),
+    ]
+
+
+def test_episode_whose_numbers_have_digits_other_than_0_to_9_is_dropped() -> None:
+    episodes = {
+        "data": {
+            "episodes": [
+                {"seasonNumber": "\u00b2", "number": "1", "name": "Superscript season"},
+                {"seasonNumber": "1", "number": "\u0661", "name": "Arabic-Indic number"},
+                {"seasonNumber": "1", "number": "2", "name": "Kept"},
+            ],
+        },
+    }
+    build = _provider(_routes(episodes=episodes)).for_build()
+    assert build.episode_title(show_id="12345", season=1, episode=1) is None
+    assert build.episode_title(show_id="12345", season=2, episode=1) is None
+    assert build.episode_title(show_id="12345", season=1, episode=2) == "Kept"
 
 
 def test_401_on_search_triggers_single_relogin() -> None:

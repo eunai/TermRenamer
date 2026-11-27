@@ -170,6 +170,30 @@ def test_invalid_json_is_a_failure() -> None:
         provider.search_films(hint="x", year=None)
 
 
+def test_a_candidate_whose_year_has_digits_other_than_0_to_9_is_dropped() -> None:
+    body = {
+        "Response": "True",
+        "Search": [
+            {"Title": "Superscript", "Year": "²001", "imdbID": "tt1"},
+            {"Title": "Arabic-Indic", "Year": "٢٠٠١", "imdbID": "tt2"},
+            {"Title": "Kept", "Year": "2002", "imdbID": "tt3"},
+        ],
+    }
+    provider = _provider(lambda _: _answer(body))
+    assert provider.search_films(hint="x", year=None) == (
+        Candidate(id="tt3", name="Kept", year=2002, poster_ref=None),
+    )
+
+
+def test_single_title_whose_year_has_digits_other_than_0_to_9_is_nothing_found() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "s" in request.url.params:
+            return _answer({"Response": "False", "Error": "Too many results."})
+        return _answer({"Response": "True", "Title": "A", "Year": "²001", "imdbID": "tt1"})
+
+    assert _provider(handler).search_films(hint="a", year=None) == ()
+
+
 def test_static_omdb_provider() -> None:
     sp = StaticOmdbFilmMetadataProvider(
         _mapping={("the matrix", 1999): MovieMetadata(title="The Matrix", year=1999)},

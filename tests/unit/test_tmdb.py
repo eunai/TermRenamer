@@ -146,3 +146,31 @@ def test_invalid_json_is_a_failure() -> None:
     provider = _provider(lambda _: httpx.Response(200, content=b"not json"))
     with pytest.raises(ProviderError, match="Invalid JSON"):
         provider.search_shows(hint="x")
+
+
+def test_a_film_candidate_whose_date_has_digits_other_than_0_to_9_is_dropped() -> None:
+    body = {
+        "results": [
+            {"id": 1, "title": "Superscript", "release_date": "²011-01-01"},
+            {"id": 2, "title": "Arabic-Indic", "release_date": "٢٠١١-01-01"},
+            {"id": 3, "title": "Kept", "release_date": "2012-01-01"},
+        ],
+    }
+    provider = _provider(lambda _: httpx.Response(200, json=body))
+    assert provider.search_films(hint="x", year=None) == (
+        Candidate(id="3", name="Kept", year=2012),
+    )
+
+
+def test_a_show_candidate_whose_date_has_digits_other_than_0_to_9_has_no_year() -> None:
+    body = {
+        "results": [
+            {"id": 1, "name": "Superscript", "first_air_date": "²019-01-01"},
+            {"id": 2, "name": "Arabic-Indic", "first_air_date": "٢٠١٩-01"},
+        ],
+    }
+    provider = _provider(lambda _: httpx.Response(200, json=body))
+    assert [(c.name, c.year) for c in provider.search_shows(hint="x")] == [
+        ("Superscript", None),
+        ("Arabic-Indic", None),
+    ]

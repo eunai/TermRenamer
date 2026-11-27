@@ -94,6 +94,37 @@ def test_retry_after_header_used(monkeypatch: pytest.MonkeyPatch) -> None:
     assert delays and delays[0] == pytest.approx(2.0, rel=0.01)
 
 
+@pytest.mark.parametrize("value", ["²", "٢"])
+def test_retry_after_with_digits_other_than_0_to_9_falls_back_to_backoff(
+    value: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    delays: list[float] = []
+    monkeypatch.setattr("termrenamer.util.http.time.sleep", delays.append)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if not delays:
+            return httpx.Response(429, headers=[(b"Retry-After", value.encode())])
+        return httpx.Response(200)
+
+    config = HttpClientConfig(max_attempts=2, backoff_base_seconds=0.25, jitter=False)
+    with httpx.Client(transport=httpx.MockTransport(handler)) as raw:
+        response = HttpClient(config=config, client=raw).get("https://example.test/r")
+    assert response.status_code == 200
+    assert delays == [0.25]
+
+
+@pytest.mark.parametrize("value", ["²", "٢"])
+def test_download_with_a_length_in_digits_other_than_0_to_9_reads_the_body(value: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers=[(b"Content-Length", value.encode())], content=b"abc")
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as raw:
+        download = HttpClient(config=HttpClientConfig(max_attempts=1), client=raw).download(
+            "https://example.test/p.jpg", max_bytes=10
+        )
+    assert download.content == b"abc"
+
+
 def test_max_attempts_exhausted_on_repeated_429() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(429)

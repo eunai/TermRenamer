@@ -49,9 +49,18 @@ class BuildScopedTvProvider(Protocol):
         ...
 
 
+def plain_digits(text: str) -> bool:
+    """Return whether ``text`` is one or more of the digits ``0`` to ``9`` and nothing else.
+
+    ``str.isdigit`` also accepts digits such as ``"²"`` or ``"٢"``, which ``int`` reads
+    wrongly or refuses with an error.
+    """
+    return text.isascii() and text.isdigit()
+
+
 def leading_year(value: object) -> int | None:
     """Return the year a Provider date starts with (``"2011-05-20"``, ``"2011–2014"``)."""
-    if isinstance(value, str) and len(value) >= 4 and value[:4].isdigit():
+    if isinstance(value, str) and len(value) >= 4 and plain_digits(value[:4]):
         return int(value[:4])
     return None
 
