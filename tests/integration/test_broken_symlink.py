@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -65,7 +64,7 @@ def test_apply_skips_entry_when_broken_link_appears_at_destination(media: Path) 
     ]
     assert src.read_bytes() == b"data"
     assert dest.is_symlink()
-    assert os.readlink(dest) == str(dest.parent / "missing-target")
+    assert not dest.exists()
 
 
 def test_plan_numbers_an_entry_whose_wanted_name_is_a_broken_link(media: Path) -> None:
