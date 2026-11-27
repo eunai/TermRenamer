@@ -68,12 +68,14 @@ class NotAsRecorded(OSError):
 
 class NowALink(OSError):
     """A folder the move goes through or walks, recorded as a real folder, is a link or a
-    junction now, or one recorded as a link is another link or none; nothing was moved
-    or made through it."""
+    junction now, or one the Plan found to be a link is no longer that link leading to
+    that folder; nothing was moved or made through it."""
 
-    def __init__(self, folder: Path, *, another: bool = False) -> None:
-        what = "another link than the Plan found" if another else "a link"
-        self.reason = f"the folder {folder} is now {what}"
+    def __init__(self, folder: Path, *, recorded: bool = False) -> None:
+        if recorded:
+            self.reason = f"the folder {folder} is no longer the link the Plan found"
+        else:
+            self.reason = f"the folder {folder} is now a link"
         super().__init__(errno.ELOOP, self.reason, str(folder))
 
 
@@ -103,8 +105,8 @@ class Changes:
 
         Before each folder is made, each folder on the way to it that exists is checked
         (:func:`_guard`): one of ``real_folders`` must be a real folder, and one of
-        ``links`` the very link the Plan found. A check that fails raises
-        :class:`NowALink`, and nothing more is made.
+        ``links`` the very link the Plan found; no folder is made where one of ``links``
+        was. A check that fails raises :class:`NowALink`, and nothing more is made.
         """
         wanted = [(f, None) for f in real_folders] + [(link.path, link) for link in links]
         missing: list[Path] = []
@@ -115,6 +117,8 @@ class Changes:
         there: list[_Guard] = [g for g in wanted if g[0] == current or g[0] in current.parents]
         for path in reversed(missing):
             _guard(there)  # the last look before this folder is made in its parent
+            if any(isinstance(was, LinkedFolder) for f, was in wanted if f == path):
+                raise NowALink(path, recorded=True)  # never a folder where that link was
             try:
                 os.mkdir(path)
             except FileExistsError:
@@ -296,7 +300,7 @@ def _guard(folders: Sequence[_Guard]) -> None:
         st = os.lstat(folder)
         if isinstance(was, LinkedFolder):
             if not _is_the_link(folder, st, was):
-                raise NowALink(folder, another=True)
+                raise NowALink(folder, recorded=True)
             continue
         if is_link(folder, st):
             raise NowALink(folder)

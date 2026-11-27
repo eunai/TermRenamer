@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import errno
 import os
+import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -456,8 +457,14 @@ def test_an_error_between_items_stops_apply_and_the_outcome_so_far_is_returned(
     plan = _plan(show)
     second = show / "Disc 2" / "Show.Name.S01E02.mkv"
 
+    real = apply_module.claim_key
+
     def claim_key(path: Path) -> str:
-        raise RuntimeError("boom")  # once the first video has moved, outside any item
+        # Raised only between items: where Apply, after an item's result, works out
+        # whether its folder was moved out of; inside an item it answers as usual.
+        if sys._getframe(1).f_code.co_name == "_apply_all":
+            raise RuntimeError("boom")
+        return real(path)
 
     monkeypatch.setattr(apply_module, "claim_key", claim_key)
     outcome = apply_plan(plan, confirmed=True)

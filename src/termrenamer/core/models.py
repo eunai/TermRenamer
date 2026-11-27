@@ -253,8 +253,9 @@ class Straggler:
 @dataclass(frozen=True, slots=True)
 class LinkedFolder:
     """A folder on the way to a new name that was a link or a junction when a Plan first
-    went through it: the link's own device and inode, its target text, and the folder
-    it led to then. Apply goes through it only while all four are the same."""
+    went through it: the link's own device and inode, its target text, and the path of
+    the folder it led to then. Apply goes through it only while all four are the
+    same."""
 
     path: Path
     device: int

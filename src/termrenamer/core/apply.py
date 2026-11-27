@@ -5,7 +5,7 @@ from __future__ import annotations
 import errno
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from termrenamer.core.models import (
@@ -65,13 +65,19 @@ class _Way:
 
 
 def _way(plan: Plan, root: Path, source: Path, dest: Path) -> _Way:
-    linked = {str(lf.path): lf for lf in plan.linked_folders}
+    # A recorded link is found under any letter case, as the Plan looked at each folder
+    # once under any; it is then checked as the path this move goes through, which on a
+    # disk that tells letter case apart is another entry, and so refused.
+    linked = {claim_key(lf.path): lf for lf in plan.linked_folders}
     new_side = folders_on_the_way(plan.options, root, dest)
     on_the_way = [*new_side, root, *folders_between(root, source.parent)]
+    links = {
+        str(f): replace(linked[claim_key(f)], path=f) for f in on_the_way if claim_key(f) in linked
+    }
     return _Way(
-        new_side=tuple(f for f in new_side if str(f) not in linked),
-        real_folders=tuple(f for f in on_the_way if str(f) not in linked),
-        links=tuple(dict.fromkeys(linked[str(f)] for f in on_the_way if str(f) in linked)),
+        new_side=tuple(f for f in new_side if str(f) not in links),
+        real_folders=tuple(f for f in on_the_way if str(f) not in links),
+        links=tuple(links.values()),
     )
 
 

@@ -309,7 +309,7 @@ def test_a_folder_that_was_a_link_pointed_elsewhere_after_the_preview_is_never_e
 
     another = (
         ApplyStatus.SKIP,
-        f"the folder {library / 'Show Name'} is now another link than the Plan found",
+        f"the folder {library / 'Show Name'} is no longer the link the Plan found",
     )
     video = show / "Disc 1" / "Show.Name.S01E01.mkv"
     assert _by_source(outcome.results)[video] == another
@@ -363,3 +363,75 @@ def test_a_new_folder_apply_made_swapped_for_a_link_gets_no_folder_inside_it(
     video = show / "Disc 1" / "Show.Name.S01E01.mkv"
     assert _by_source(outcome.results)[video] == _now_a_link(made)
     assert outcome.moves == ()
+
+
+def _linked_library(tmp_path: Path, target: Path) -> tuple[Path, Plan]:
+    """The two discs planned into a Library whose ``Show Name`` is a link to ``target``."""
+    show = _two_discs(tmp_path)
+    library = tmp_path / "Library"
+    library.mkdir()
+    target.mkdir(parents=True, exist_ok=True)
+    point_folder_at(library / "Show Name", target)
+    return show, plan_queue([show], _options(destination_root=library), _provider()).plan
+
+
+def _no_longer(folder: Path) -> tuple[ApplyStatus, str]:
+    return (ApplyStatus.SKIP, f"the folder {folder} is no longer the link the Plan found")
+
+
+def test_a_link_the_plan_found_and_reached_in_another_letter_case_is_gone_through(
+    tmp_path: Path,
+) -> None:
+    disk_a = tmp_path / "Disk A" / "Show Name"
+    show, plan = _linked_library(tmp_path, disk_a)
+    if not _ignores_letter_case(show):
+        pytest.skip("needs a disk that ignores letter case")
+    [title] = plan.titles
+    lower = Candidate(id="2", name="Show name", year=2010)
+    episodes = {v.source: ("Pilot" if "E01" in v.source.name else "Second") for v in plan.videos}
+    assert title.match is not None
+    derived = derive_plan(
+        plan, PickMatch(title, lower, found=(title.match, lower), episodes=episodes)
+    )
+
+    outcome = apply_plan(derived, confirmed=True)
+
+    video = show / "Disc 1" / "Show.Name.S01E01.mkv"
+    assert _by_source(outcome.results)[video] == (ApplyStatus.RENAMED, "ok")
+    assert (disk_a / "Season 01" / "Show name - S01E01 - Pilot.mkv").read_bytes() == b"x"
+
+
+def test_a_link_the_plan_found_removed_after_the_preview_gets_no_folder_made_at_its_place(
+    tmp_path: Path,
+) -> None:
+    disk_a = tmp_path / "Disk A" / "Show Name"
+    show, plan = _linked_library(tmp_path, disk_a)
+    link = tmp_path / "Library" / "Show Name"
+    _unpoint(link)
+
+    outcome = apply_plan(plan, confirmed=True)
+
+    video = show / "Disc 1" / "Show.Name.S01E01.mkv"
+    assert _by_source(outcome.results)[video] == _no_longer(link)
+    assert not link.exists(follow_symlinks=False)
+    assert outcome.folders_created == () and outcome.moves == ()
+
+
+def test_a_link_the_plan_found_whose_own_target_is_pointed_elsewhere_is_never_entered(
+    tmp_path: Path,
+) -> None:
+    hop = tmp_path / "Hop"
+    disk_a = tmp_path / "Disk A"
+    disk_b = tmp_path / "Disk B"
+    disk_a.mkdir()
+    disk_b.mkdir()
+    point_folder_at(hop, disk_a)
+    show, plan = _linked_library(tmp_path, hop)  # Library/Show Name -> Hop -> Disk A
+    _unpoint(hop)
+    point_folder_at(hop, disk_b)  # the link itself and its target text are unchanged
+
+    outcome = apply_plan(plan, confirmed=True)
+
+    video = show / "Disc 1" / "Show.Name.S01E01.mkv"
+    assert _by_source(outcome.results)[video] == _no_longer(tmp_path / "Library" / "Show Name")
+    assert os.listdir(disk_a) == [] and os.listdir(disk_b) == []

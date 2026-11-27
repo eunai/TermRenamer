@@ -605,7 +605,7 @@ def _plan_of(
     """
     stragglers = plan_stragglers(options, entries, source_folders)
     looked_at = {claim_key(f): f for f in before.folders_looked_at} if before else {}
-    linked = {str(lf.path): lf for lf in before.linked_folders} if before else {}
+    linked = {claim_key(lf.path): lf for lf in before.linked_folders} if before else {}
     roots = source_roots(entries)
     ways = [(e.root, e.destination) for e in entries]
     ways += [(roots.get(str(s.source.parent), s.source.parent), s.destination) for s in stragglers]
@@ -613,9 +613,9 @@ def _plan_of(
         if dest is None:
             continue
         on_the_way = folders_on_the_way(options, root, dest)
-        new = list({claim_key(f): f for f in on_the_way if claim_key(f) not in looked_at}.values())
-        linked.update((str(lf.path), lf) for lf in links_among(new))
-        looked_at.update((claim_key(f), f) for f in new)
+        new = {key: f for f in on_the_way if (key := claim_key(f)) not in looked_at}
+        linked.update((claim_key(lf.path), lf) for lf in links_among(list(new.values())))
+        looked_at.update(new)
     return Plan(
         options=options,
         titles=titles,
