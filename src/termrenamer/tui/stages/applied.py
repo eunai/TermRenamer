@@ -1,4 +1,4 @@
-"""The Applied Stage: what Apply did, counted in videos, and the way to a new batch."""
+"""The Applied Stage: what Apply did, counted in videos, what it skipped, and a new batch."""
 
 from __future__ import annotations
 
@@ -6,12 +6,14 @@ from collections.abc import Sequence
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.markup import escape
 from textual.widgets import Static
 
 from termrenamer.core.models import ApplyResult, Plan
-from termrenamer.core.title_rows import AppliedCounts
+from termrenamer.core.title_rows import AppliedCounts, skipped_results
 from termrenamer.tui.stages.base import StageView
 from termrenamer.tui.widgets.action_button import ActionButton
+from termrenamer.tui.words import sidecar_skipped
 
 
 class AppliedStage(StageView):
@@ -27,7 +29,13 @@ class AppliedStage(StageView):
         margin-bottom: 1;
     }
     AppliedStage #applied-counts {
-        margin-bottom: 2;
+        margin-bottom: 1;
+    }
+    AppliedStage #applied-skipped {
+        height: auto;
+        max-height: 12;
+        margin-bottom: 1;
+        color: $tr-dim;
     }
     AppliedStage .buttons {
         height: 1;
@@ -45,6 +53,7 @@ class AppliedStage(StageView):
         with Vertical(id="applied-body"):
             yield Static("The Plan is applied.", id="applied-title")
             yield Static("", id="applied-counts")
+            yield Static("", id="applied-skipped")
             with Horizontal(classes="buttons"):
                 yield ActionButton("n", "New batch", press_key="n", classes="-plain")
 
@@ -63,6 +72,10 @@ class AppliedStage(StageView):
         if counts.unchanged:
             line += f" [$tr-dim]· {counts.unchanged} already had their names[/]"
         self.query_one("#applied-counts", Static).update(line)
+        videos, sidecars = skipped_results(plan, results)
+        skipped = [f"{r.source.name} · {r.reason}" for r in videos]
+        skipped += [sidecar_skipped(r.source, r.reason) for r in sidecars]
+        self.query_one("#applied-skipped", Static).update(escape("\n".join(skipped)))
         self.query_one("#applied-title", Static).update(
             "The Plan is applied." + ("" if counts.failed else " Nothing failed.")
         )

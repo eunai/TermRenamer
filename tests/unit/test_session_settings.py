@@ -59,3 +59,33 @@ def test_season_folder_loaded_on_while_folder_rename_is_off_starts_off() -> None
     assert owner.season_folders is False
     owner.set_folder_rename(True)
     assert owner.plan_options().season_folders is False
+
+
+def test_name_taken_starts_as_loaded_and_goes_into_the_plan_options() -> None:
+    from termrenamer.core.policies import NameTakenPolicy
+
+    from .screen_driver import settings
+
+    assert SessionSettings(None).plan_options().name_taken is NameTakenPolicy.SUFFIX
+    owner = SessionSettings(settings(name_taken=NameTakenPolicy.SKIP))
+    assert owner.name_taken is NameTakenPolicy.SKIP
+    assert owner.plan_options().name_taken is NameTakenPolicy.SKIP
+
+
+def test_a_name_taken_change_is_reported_and_refused_while_locked() -> None:
+    from termrenamer.core.policies import NameTakenPolicy
+
+    owner = SessionSettings(None)
+    heard: list[str] = []
+    owner.add_listener(heard.append)
+
+    assert owner.set_name_taken(NameTakenPolicy.SUFFIX) is False
+    assert owner.set_name_taken(NameTakenPolicy.SKIP) is True
+    assert heard == ["Name taken"]
+    assert owner.plan_options().name_taken is NameTakenPolicy.SKIP
+
+    owner.lock()
+    with pytest.raises(SettingsLockedError):
+        owner.set_name_taken(NameTakenPolicy.SUFFIX)
+    assert owner.name_taken is NameTakenPolicy.SKIP
+    assert heard == ["Name taken"]

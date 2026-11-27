@@ -20,6 +20,7 @@ from textual_fspicker import FileOpen, SelectDirectory
 
 from termrenamer.app_bootstrap import Settings, ThemeName
 from termrenamer.core.models import Candidate
+from termrenamer.core.policies import NameTakenPolicy
 from termrenamer.tui.app import TermRenamerApp
 from termrenamer.wiring import PlanningWiring
 
@@ -108,6 +109,7 @@ def settings(
     tv_root: Path | None = None,
     film_root: Path | None = None,
     theme: ThemeName = ThemeName.DARK,
+    name_taken: NameTakenPolicy = NameTakenPolicy.SUFFIX,
 ) -> Settings:
     return Settings(
         tmdb_api_key=None,
@@ -125,6 +127,7 @@ def settings(
         enable_folder_rename=folder_rename,
         enable_season_folders=season_folders,
         theme=theme,
+        name_taken=name_taken,
     )
 
 

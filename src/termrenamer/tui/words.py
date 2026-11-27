@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import PurePath
 
-from termrenamer.core.models import PROVIDER_NAMES, ScanMode
+from termrenamer.core.models import PROVIDER_NAMES, EntryStatus, PlanEntry, ScanMode
 
 
 def noun(n: int, word: str) -> str:
@@ -40,3 +40,21 @@ def folder_text(folder: PurePath) -> str:
     text = str(folder)
     sep = folder.parser.sep
     return text if text.endswith(sep) else text + sep
+
+
+def name_taken_note(entry: PlanEntry) -> str | None:
+    """What Apply does with ``entry`` because its name is taken; ``None`` when it is not.
+
+    With a numbered name (Name taken set to ``suffix``) it is renamed to that name;
+    without one (``skip``) Apply skips it.
+    """
+    if entry.skipped_for_name_taken:
+        return "Name taken: Apply skips it, and it stays where it is."
+    if entry.status is not EntryStatus.NAME_TAKEN or entry.destination is None:
+        return None
+    return f"Name taken: it gets a number, as {entry.destination.name}."
+
+
+def sidecar_skipped(source: PurePath, reason: str) -> str:
+    """The line for a Sidecar skipped while its video moves, in the confirm and after Apply."""
+    return f"Sidecar skipped: {source.name} · {reason}"

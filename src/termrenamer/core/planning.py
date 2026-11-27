@@ -11,10 +11,11 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import overload
 
 from termrenamer.api.base import FilmMetadataProvider, TvMetadataProvider
 from termrenamer.api.lookup import FilmLookup, TvLookup
-from termrenamer.core.collisions import allocate_destination
+from termrenamer.core.collisions import claim_name
 from termrenamer.core.models import (
     Candidate,
     EntryStatus,
@@ -32,7 +33,17 @@ from termrenamer.core.models import (
 )
 from termrenamer.core.parse import parse_filename, parse_film_filename
 from termrenamer.core.paths import path_key
-from termrenamer.core.progress import PlanListener, TitleLookedUp
+from termrenamer.core.progress import (
+    BuildFinished,
+    CancelSignal,
+    FileLookedUp,
+    PlanEvent,
+    PlanListener,
+    Scanned,
+    ScannedTitle,
+    TitleLookedUp,
+    TitleLookupStarted,
+)
 from termrenamer.core.scan import classify, scan
 from termrenamer.core.templates import format_film_destination, format_tv_destination
 from termrenamer.util.errors import ParseError
@@ -273,19 +284,43 @@ def _wanted_name(
     )
 
 
+@overload
 def plan_queue(
     sources: Sequence[Path],
     options: PlanOptions,
     provider: TvMetadataProvider | FilmMetadataProvider,
     *,
     listener: PlanListener | None = None,
-) -> PlanBuild:
+    cancel: None = None,
+) -> PlanBuild: ...
+
+
+@overload
+def plan_queue(
+    sources: Sequence[Path],
+    options: PlanOptions,
+    provider: TvMetadataProvider | FilmMetadataProvider,
+    *,
+    listener: PlanListener | None = None,
+    cancel: CancelSignal,
+) -> PlanBuild | None: ...
+
+
+def plan_queue(
+    sources: Sequence[Path],
+    options: PlanOptions,
+    provider: TvMetadataProvider | FilmMetadataProvider,
+    *,
+    listener: PlanListener | None = None,
+    cancel: CancelSignal | None = None,
+) -> PlanBuild | None:
     """Plan every file of the queued ``sources`` with ``options``, in one Plan.
 
     Returns the Plan and a message for each Source that was skipped (it no longer
     exists, or it is a file that is not a video). ``listener`` is told each event of
     :mod:`termrenamer.core.progress` as the build runs; an exception it raises stops
-    the build.
+    the build. ``cancel`` is checked before each lookup: once it is set, the build
+    stops and returns ``None``.
     """
     lookup = _lookup(provider, options.mode)
     found, messages = _collect(sources)
@@ -307,35 +342,60 @@ def plan_queue(
     groups: dict[tuple[str, int], list[_Video]] = {}
     for video in videos:
         groups.setdefault(video.group_key, []).append(video)
+    ordered = [groups[key] for key in sorted(groups)]
+
+    def tell(event: PlanEvent) -> None:
+        if listener is not None:
+            listener(event)
+
+    def cancelled() -> bool:
+        return cancel is not None and cancel.is_set()
+
+    tell(
+        Scanned(
+            files=len(videos),
+            titles=tuple(
+                ScannedTitle(name=m[0].hint, year=m[0].year_hint, videos=len(m)) for m in ordered
+            ),
+            not_recognised=tuple(e.source for e in entries),
+        )
+    )
 
     # Lookups: one search per group, then in TV Mode one episode lookup per file.
     found_groups: list[tuple[list[_Video], tuple[Candidate, ...]]] = []
     episode_titles: dict[Path, str | None] = {}
-    for key in sorted(groups):
-        members = groups[key]
+    for members in ordered:
+        name, year = members[0].hint, members[0].year_hint
+        if cancelled():
+            return None
+        tell(TitleLookupStarted(name=name, year=year))
         candidates_found = _search(lookup, members[0])
         found_groups.append((members, candidates_found))
-        if listener is not None:
-            listener(
-                TitleLookedUp(
-                    name=members[0].hint,
-                    year=members[0].year_hint,
-                    match=candidates_found[0] if candidates_found else None,
-                )
+        tell(
+            TitleLookedUp(
+                name=name, year=year, match=candidates_found[0] if candidates_found else None
             )
+        )
         if not candidates_found or not isinstance(lookup, TvLookup):
+            for video in members:
+                tell(FileLookedUp(path=video.path, matched=bool(candidates_found)))
             continue
         for video in members:
             assert isinstance(video.parsed, ParseResult)
-            episode_titles[video.path] = lookup.episode_title(
+            if cancelled():
+                return None
+            episode_title = lookup.episode_title(
                 show_id=candidates_found[0].id,
                 season=video.parsed.season,
                 episode=video.parsed.primary_episode,
             )
+            episode_titles[video.path] = episode_title
+            tell(FileLookedUp(path=video.path, matched=episode_title is not None))
+    tell(BuildFinished())
 
     title_of = _titles(found_groups)
 
-    # Names, claimed in source-path order.
+    # Names, claimed in source-path order by the entries that will be applied.
     occupied: set[Path] = set()
     for video in videos:
         title = title_of[video.path]
@@ -349,7 +409,7 @@ def plan_queue(
                 _entry(video, destination=None, status=EntryStatus.NO_MATCH, title=title)
             )
             continue
-        final = allocate_destination(desired, source=video.path, occupied=occupied)
+        final = claim_name(desired, source=video.path, occupied=occupied, policy=options.name_taken)
         status = EntryStatus.READY if final == desired else EntryStatus.NAME_TAKEN
         entries.append(_entry(video, destination=final, status=status, title=title))
 
@@ -366,7 +426,9 @@ def plan_queue(
         status = owner.status
         if owner.destination is not None:
             desired = owner.destination.with_suffix(sidecar.path.suffix.lower())
-            destination = allocate_destination(desired, source=sidecar.path, occupied=occupied)
+            destination = claim_name(
+                desired, source=sidecar.path, occupied=occupied, policy=options.name_taken
+            )
             status = EntryStatus.READY if destination == desired else EntryStatus.NAME_TAKEN
         entries.append(
             _entry(

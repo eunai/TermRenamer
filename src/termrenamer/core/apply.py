@@ -11,7 +11,6 @@ from termrenamer.core.collisions import allocate_destination, name_is_taken
 from termrenamer.core.models import (
     ApplyResult,
     ApplyStatus,
-    EntryStatus,
     Plan,
     PlanEntry,
 )
@@ -120,10 +119,6 @@ def _merge_stragglers(
     return maybe_empty
 
 
-_NOT_APPLIED = frozenset({EntryStatus.NO_MATCH, EntryStatus.NOT_RECOGNISED})
-"""Statuses Apply skips, giving the status as the reason."""
-
-
 def _apply_entry(entry: PlanEntry) -> ApplyResult:
     """Rename one entry after the checks; touch nothing when a check fails."""
     source = entry.source
@@ -132,7 +127,7 @@ def _apply_entry(entry: PlanEntry) -> ApplyResult:
     def result(status: ApplyStatus, reason: str) -> ApplyResult:
         return ApplyResult(source=source, destination=dest, status=status, reason=reason)
 
-    if dest is None or entry.status in _NOT_APPLIED:
+    if dest is None:
         return result(ApplyStatus.SKIP, entry.status.value)
     if not source.exists():
         return result(ApplyStatus.SKIP, "stale: source missing")
@@ -160,12 +155,13 @@ def _apply_entry(entry: PlanEntry) -> ApplyResult:
 def apply_plan(plan: Plan, *, confirmed: bool) -> list[ApplyResult]:
     """Execute a Plan exactly as previewed.
 
-    Applies the entries with the status ready or name taken; reports every other
-    entry as skipped with its status as the reason. Each video is handled before the
-    Sidecars, and a Sidecar is applied only when its video was renamed or unchanged
-    in this Apply. While the Plan was built with Folder rename on, the files left in
-    a folder that a video moved out of are merged into the video's new folder,
-    except files of the Plan.
+    Applies the entries that have a destination: ready, and name taken with a numbered
+    name (Name taken set to ``suffix``). Reports every other entry (no match, not
+    recognised, name taken under ``skip``) as skipped with its status as the reason.
+    Each video is handled before the Sidecars, and a Sidecar is applied only when its
+    video was renamed or unchanged in this Apply. While the Plan was built with Folder
+    rename on, the files left in a folder that a video moved out of are merged into the
+    video's new folder, except files of the Plan.
 
     Args:
         plan: The Plan the Preview showed.
@@ -187,7 +183,10 @@ def apply_plan(plan: Plan, *, confirmed: bool) -> list[ApplyResult]:
 
     for entry in ordered:
         if entry.video is not None and entry.video not in applied_sources:
-            reason = entry.status.value if entry.status in _NOT_APPLIED else "video not applied"
+            # The Plan left it without a name (its video's status), or its video was
+            # skipped or failed in this Apply.
+            not_named = entry.destination is None
+            reason = entry.status.value if not_named else "video not applied"
             results.append(
                 ApplyResult(
                     source=entry.source,
