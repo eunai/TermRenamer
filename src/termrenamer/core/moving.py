@@ -338,7 +338,8 @@ def _copy_then_unlink(
 
 def _make_copy(source: Path, st: os.stat_result, at: Path, changes: Changes) -> os.stat_result:
     """Make a copy of ``source`` (as ``st`` found it) at the new name ``at``, list ``at``
-    as left behind from the moment it is made, and return the copy's ``lstat``."""
+    as left behind from the moment it is made, and return the copy's stat as made: a
+    link's ``lstat``, or a file's ``fstat`` from before its bytes were written."""
     if stat.S_ISLNK(st.st_mode):
         _remake_link(source, st, at)
         changes.files_left_behind.append(at)
