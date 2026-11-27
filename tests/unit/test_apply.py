@@ -63,11 +63,12 @@ def test_apply_operation_order_lexical(tmp_path: Path) -> None:
 
 def test_remove_empty_source_dirs_skips_non_empty(tmp_path: Path) -> None:
     from termrenamer.core.apply import _remove_empty_source_dirs
+    from termrenamer.core.moving import Changes
 
     d = tmp_path / "keep"
     d.mkdir()
     (d / "file.txt").write_text("x", encoding="utf-8")
-    _remove_empty_source_dirs({d})
+    _remove_empty_source_dirs({d}, Changes())
     assert d.is_dir()
     assert (d / "file.txt").exists()
 
@@ -109,9 +110,10 @@ def test_apply_merge_stragglers_moves_extra_files_to_dest_parent(
 
 def test_remove_empty_source_dirs_deepest_first(tmp_path: Path) -> None:
     from termrenamer.core.apply import _remove_empty_source_dirs
+    from termrenamer.core.moving import Changes
 
     deep = tmp_path / "x" / "y" / "z"
     deep.mkdir(parents=True)
     parents = {tmp_path / "x" / "y" / "z", tmp_path / "x" / "y", tmp_path / "x"}
-    _remove_empty_source_dirs(parents)
+    _remove_empty_source_dirs(parents, Changes())
     assert not (tmp_path / "x").exists()

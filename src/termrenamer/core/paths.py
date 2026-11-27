@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import unicodedata
 from pathlib import Path
 
 
@@ -16,11 +17,14 @@ def path_key(path: Path) -> str:
     return str(path.parent.resolve() / path.name).casefold()
 
 
-def recorded_key(path: Path) -> str:
-    """The key of a path the Plan recorded: its text, case folded; no disk is read.
+def claim_key(path: Path) -> str:
+    """The key a planned name is claimed by: the path as text, case folded, then in
+    Unicode's composed form (NFC); no disk is read.
 
-    The Plan records paths under resolved Sources and a resolved Destination root, so
-    for them this matches :func:`path_key`. Working out a Plan's names and Stragglers
-    compares paths by it, so deriving a Plan never reads a folder again.
+    Two names a filesystem may take for one name (``Café.jpg``, ``café.jpg`` and the
+    decomposed ``café.jpg``) have one key. It is strict on purpose: two names a
+    case-sensitive filesystem would keep apart get a number, which is harmless.
+    Planning and deriving claim names, and order and select Stragglers, by it, so
+    deriving a Plan never reads a folder again.
     """
-    return str(path).casefold()
+    return unicodedata.normalize("NFC", str(path).casefold())

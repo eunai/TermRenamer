@@ -294,15 +294,17 @@ class ApplyResult:
 
 @dataclass(frozen=True, slots=True)
 class Move:
-    """One file or folder Apply moved, from ``source`` to ``destination``.
+    """One file or symbolic link Apply moved, from ``source`` to ``destination``; a folder
+    is moved as its files.
 
-    ``fingerprint`` is a file's size and modification time at its new place, taken
-    without following symbolic links; ``None`` for a folder.
+    ``fingerprint`` is its size and modification time at its new place, taken without
+    following symbolic links; when that could not be read after the move, the values
+    read at the old place just before it.
     """
 
     source: Path
     destination: Path
-    fingerprint: PlanFingerprint | None
+    fingerprint: PlanFingerprint
 
 
 @dataclass(frozen=True, slots=True)
@@ -312,9 +314,15 @@ class ApplyOutcome:
     ``results`` holds one result per entry: videos in source-path order, then Sidecars.
     ``stragglers`` holds one result per Straggler of the Plan, in the Plan's order; a
     Straggler that moved is ``RENAMED``. ``moves`` lists every move: the entries renamed,
-    in ``results`` order, then the Stragglers moved. ``folders_created`` lists each folder
-    Apply made, each before the folders inside it. ``folders_removed`` lists each emptied
-    source folder Apply removed after every move, each before its parent.
+    in ``results`` order, then the Stragglers' files; a folder Straggler is moved as its
+    files, so a move is never of a folder. ``folders_created`` lists each folder Apply
+    made, each before the folders inside it: the entries' and Stragglers' new folders,
+    and each folder of a folder Straggler made again at its new place.
+    ``folders_removed`` lists each source folder Apply removed, each before its parent:
+    a folder Straggler's folders once their files moved, then the source folders the
+    moves emptied. ``files_left_behind`` lists each file Apply made at a new name and
+    could not remove after its move failed, so the source is still there too. Each
+    change is listed once its call succeeded.
     """
 
     results: tuple[ApplyResult, ...]
@@ -322,6 +330,7 @@ class ApplyOutcome:
     moves: tuple[Move, ...]
     folders_created: tuple[Path, ...]
     folders_removed: tuple[Path, ...]
+    files_left_behind: tuple[Path, ...] = ()
 
     @property
     def stragglers_merged(self) -> int:

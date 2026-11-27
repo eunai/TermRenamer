@@ -46,8 +46,9 @@ def test_apply_merges_the_listed_stragglers_and_removes_the_emptied_folders(
     assert [(r.source, r.destination, r.status, r.reason) for r in outcome.stragglers] == [
         (s.source, s.destination, ApplyStatus.RENAMED, "ok") for s in plan.stragglers
     ]
-    assert outcome.folders_removed == (show / "Disc 1", show / "Disc 2")
-    assert outcome.folders_created == (show / "Show Name", show / "Show Name" / "Season 01")
+    # The Subs folder is moved as its files: made again at its new place, then removed.
+    assert outcome.folders_created == (show / "Show Name", season, season / "Subs")
+    assert outcome.folders_removed == (show / "Disc 1" / "Subs", show / "Disc 1", show / "Disc 2")
 
 
 def test_the_outcome_records_each_move_with_the_size_and_time_at_its_new_place(
@@ -58,14 +59,15 @@ def test_the_outcome_records_each_move_with_the_size_and_time_at_its_new_place(
 
     outcome = apply_plan(plan, confirmed=True)
 
+    season = show / "Show Name" / "Season 01"
     planned = [(e.source, e.destination) for e in plan.entries]
-    planned += [(s.source, s.destination) for s in plan.stragglers]
+    for s in plan.stragglers:
+        if s.source.name == "Subs":  # a folder is moved as its files
+            planned.append((s.source / "English.srt", season / "Subs" / "English.srt"))
+        else:
+            planned.append((s.source, s.destination))
     assert [(m.source, m.destination) for m in outcome.moves] == planned
     for move in outcome.moves:
-        if move.destination.is_dir():
-            assert move.fingerprint is None
-            continue
-        assert move.fingerprint is not None
         st = os.lstat(move.destination)
         assert (move.fingerprint.path, move.fingerprint.size, move.fingerprint.mtime_ns) == (
             move.destination,

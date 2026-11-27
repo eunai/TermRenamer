@@ -439,6 +439,10 @@ class TermRenamerApp(App[None]):
                 result.destination,
                 result.reason,
             )
+        for path in outcome.files_left_behind:
+            self._messages.warning(
+                "A copy Apply made could not be removed after its move failed: %s", path
+            )
         applied = self.query_one(AppliedStage)
         applied.show_results(plan, outcome)
         self._show_stage(Stage.APPLIED)

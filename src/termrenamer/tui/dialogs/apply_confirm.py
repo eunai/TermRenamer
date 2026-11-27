@@ -16,7 +16,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Static
 
 from termrenamer.core.models import EntryStatus, Plan
-from termrenamer.core.paths import recorded_key
+from termrenamer.core.paths import claim_key
 from termrenamer.core.title_rows import PlanCounts, sidecars_skipped_alone
 from termrenamer.tui.widgets.action_button import ActionButton
 from termrenamer.tui.words import (
@@ -79,14 +79,14 @@ def _merge_line(plan: Plan) -> str:
     the Stragglers' target folders."""
     if not plan.stragglers:
         return "No Stragglers in this Plan."
-    targets = {recorded_key(s.destination.parent) for s in plan.stragglers}
+    targets = {claim_key(s.destination.parent) for s in plan.stragglers}
     names = sorted(
         {
             match_name(e.title, plan.mode)
             for e in plan.entries
             if e.title is not None
             and e.destination is not None
-            and recorded_key(e.destination.parent) in targets
+            and claim_key(e.destination.parent) in targets
         },
         key=str.casefold,
     )

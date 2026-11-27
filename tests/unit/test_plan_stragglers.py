@@ -350,3 +350,21 @@ def test_deriving_works_out_the_stragglers_without_reading_a_folder_or_resolving
 
     assert [s.source.parent.name for s in left_out.stragglers] == ["Disc 1"] * 3
     assert put_back == plan
+
+
+def test_two_stragglers_whose_names_differ_only_in_unicode_form_never_share_a_path(
+    tmp_path: Path,
+) -> None:
+    composed, decomposed = "café.jpg", "café.jpg"
+    show = _two_discs(tmp_path)
+    _write(show / "Disc 1" / composed)
+    _write(show / "Disc 2" / decomposed)
+
+    plan = plan_queue([show], _options(), _provider()).plan
+
+    season = show / "Show Name" / "Season 01"
+    names = {s.source.parent.name: s.destination for s in plan.stragglers if "caf" in s.source.name}
+    assert names == {
+        "Disc 1": season / composed,
+        "Disc 2": season / "café (1).jpg",
+    }
