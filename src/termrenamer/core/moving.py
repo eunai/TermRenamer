@@ -730,9 +730,10 @@ def _make_copy(
     once its bytes are written. A copy that fails is removed only while it is the file
     made here and ``at_old_name`` verifies the source at its old name.
 
-    A file's number is read through its descriptor after its bytes are written, and
-    again just before a failed copy is removed: macOS gives a new empty file on exFAT
-    and FAT32 a placeholder number until its first bytes are written."""
+    A file's number is read through its descriptor once the copy is complete, and
+    again just before a failed copy is removed: on exFAT and FAT32, macOS gives an
+    empty file a passing number, which changes when the file is changed, until bytes
+    are first written to it."""
     _guard(guards)
     if held is None:  # a link, which is copied as its target text and never opened
         _remake_link(source, st, at, changes)

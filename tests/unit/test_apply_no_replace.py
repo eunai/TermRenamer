@@ -1079,47 +1079,49 @@ def test_a_program_file_copied_to_another_drive_is_moved(
     assert not program.exists(follow_symlinks=False)
 
 
-PLACEHOLDER = 2**64 - 8
-"""The number macOS gives a new empty file on exFAT and FAT32 until its first bytes are
-written, when it gets its own."""
-
-
 def _numbered_once_written(monkeypatch: pytest.MonkeyPatch, dest: Path | None = None) -> None:
     """A file made by exclusive create (in ``dest``'s folder when given: the copy, or the
-    fresh name a Windows copy is made under) reports :data:`PLACEHOLDER` as its number
-    through its descriptor until the first bytes are written through it, as on macOS
-    exFAT."""
-    real_open, real_write, real_fstat = os.open, os.write, os.fstat
-    empty: set[int] = set()
+    fresh name a Windows copy is made under) reports a passing number of its own, by name
+    and through its descriptor alike, until bytes are first written to it, and its own
+    number from then on, as on macOS exFAT and FAT32, where an empty file's number is near
+    2**64."""
+    real_open, real_write = os.open, os.write
+    real_fstat, real_lstat, real_stat = os.fstat, os.lstat, os.stat
+    passing: dict[tuple[int, int], int] = {}  # (device, own number): its passing number
+
+    def as_reported(st: os.stat_result) -> os.stat_result:
+        number = passing.get((st.st_dev, st.st_ino))
+        if number is None:
+            return st
+        _, (seq, extra) = st.__reduce__()
+        fields = list(seq)
+        fields[1] = number  # st_ino
+        return os.stat_result(fields, extra)
 
     def open_(path: object, flags: int, *args: object, **kwargs: object) -> int:
         fd = real_open(path, flags, *args, **kwargs)  # type: ignore[arg-type]
         if flags & os.O_EXCL and (dest is None or _in_folder_of(path, dest)):
-            empty.add(fd)
+            st = real_fstat(fd)
+            passing[(st.st_dev, st.st_ino)] = 2**64 - 1 - len(passing)
         return fd
 
     def write(fd: int, data: object) -> int:
-        empty.discard(fd)
-        return real_write(fd, data)  # type: ignore[arg-type]
-
-    def fstat(fd: int) -> os.stat_result:
         st = real_fstat(fd)
-        if fd not in empty:
-            return st
-        _, (seq, extra) = st.__reduce__()
-        fields = list(seq)
-        fields[1] = PLACEHOLDER  # st_ino
-        return os.stat_result(fields, extra)
+        passing.pop((st.st_dev, st.st_ino), None)
+        return real_write(fd, data)  # type: ignore[arg-type]
 
     monkeypatch.setattr(os, "open", open_)
     monkeypatch.setattr(os, "write", write)
-    monkeypatch.setattr(os, "fstat", fstat)
+    monkeypatch.setattr(os, "fstat", lambda fd: as_reported(real_fstat(fd)))
+    monkeypatch.setattr(os, "lstat", lambda path: as_reported(real_lstat(path)))
+    monkeypatch.setattr(os, "stat", lambda path, **kwargs: as_reported(real_stat(path, **kwargs)))
 
 
+@pytest.mark.parametrize("data", [b"my notes", b""], ids=["with bytes", "empty"])
 def test_a_copy_whose_number_comes_with_its_first_bytes_is_moved(
-    show: Path, monkeypatch: pytest.MonkeyPatch
+    show: Path, monkeypatch: pytest.MonkeyPatch, data: bytes
 ) -> None:
-    notes = _write(show / "Disc 1" / "notes.txt", b"my notes")
+    notes = _write(show / "Disc 1" / "notes.txt", data)
     plan = _plan(show)
     [dest] = [s.destination for s in plan.stragglers if s.source == notes]
 
@@ -1129,7 +1131,7 @@ def test_a_copy_whose_number_comes_with_its_first_bytes_is_moved(
     monkeypatch.undo()
 
     assert _by_source(outcome.stragglers)[notes] == (ApplyStatus.RENAMED, "ok")
-    assert dest.read_bytes() == b"my notes"
+    assert dest.read_bytes() == data
     assert not notes.exists(follow_symlinks=False)
     assert outcome.files_left_behind == ()
 
