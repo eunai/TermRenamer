@@ -251,3 +251,50 @@ def test_leave_out_changes_the_entry_named_even_when_its_folder_now_points_elsew
         ("Disc A", EntryStatus.READY),
         ("Disc B", EntryStatus.LEFT_OUT),
     ]
+
+
+def _redirect_disc_b_before_disc_a(tmp_path: Path) -> None:
+    """After planning, Disc B becomes a link to a copy that sorts before Disc A."""
+    copy = tmp_path / "Aaa"
+    copy.mkdir()
+    for name in ("Show.Name.S01E01.mkv", "Show.Name.S01E01.srt"):
+        (copy / name).write_bytes((tmp_path / "Disc B" / name).read_bytes())
+    (tmp_path / "Disc B").rename(tmp_path / "Disc B moved")
+    (tmp_path / "Disc B").symlink_to(copy, target_is_directory=True)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symbolic links need privileges on Windows")
+def test_a_derived_plan_keeps_the_order_the_build_recorded_when_a_folder_is_redirected(
+    tmp_path: Path,
+) -> None:
+    library = tmp_path / "Library"
+    plan = plan_queue(
+        _two_discs(tmp_path), _options(NameTakenPolicy.SUFFIX, library=library), _show_name()
+    ).plan
+    _redirect_disc_b_before_disc_a(tmp_path)
+
+    left_out = derive_plan(plan, LeaveOut(_video(plan, "Disc B")))
+    put_back = derive_plan(left_out, PutBack(_video(left_out, "Disc B")))
+
+    assert [e.source for e in left_out.entries] == [e.source for e in plan.entries]
+    # Disc A still claims first, so Disc B gets the number again, as in the build.
+    assert put_back == plan
+
+
+def test_deriving_never_resolves_a_source_path_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    library = tmp_path / "Library"
+    plan = plan_queue(
+        _two_discs(tmp_path), _options(NameTakenPolicy.SUFFIX, library=library), _show_name()
+    ).plan
+
+    def no_resolve(self: Path, strict: bool = False) -> Path:
+        raise AssertionError(f"resolved {self} while deriving")
+
+    monkeypatch.setattr(Path, "resolve", no_resolve)
+    left_out = derive_plan(plan, LeaveOut(_video(plan, "Disc A")))
+    put_back = derive_plan(left_out, PutBack(_video(left_out, "Disc A")))
+    monkeypatch.undo()
+
+    assert put_back == plan

@@ -126,8 +126,7 @@ class PreviewStage(TitleListStage):
 
         A new Plan starts at its first row. With ``keep_selection``, for a Plan
         derived from the one shown, the selection stays on the same file, in whichever
-        row now holds it: a derived Plan has the same entries in the same order, so
-        the file is found by its place among them.
+        row now holds it, found by the source the Plan recorded for it.
         """
         kept = self._kept_entry(plan) if keep_selection else None
         self._plan = plan
@@ -158,11 +157,11 @@ class PreviewStage(TitleListStage):
         self._show_details()
 
     def _kept_entry(self, plan: Plan) -> PlanEntry | None:
-        """The entry of ``plan``, derived from the Plan shown, at the selected file's place."""
-        shown, selected = self._plan, self.selected_file
-        if shown is None or selected is None or len(shown.entries) != len(plan.entries):
+        """The entry of ``plan`` with the selected file's recorded source, or ``None``."""
+        selected = self.selected_file
+        if selected is None:
             return None
-        return plan.entries[shown.entries.index(selected)]
+        return _entry_of(plan, selected)
 
     def redraw(self) -> None:
         super().redraw()
@@ -244,7 +243,15 @@ def _name_if_put_back(plan: Plan, video: PlanEntry) -> Path | None:
         back = derive_plan(plan, PutBack(video))
     except OSError:
         return video.wanted
-    return back.entries[plan.entries.index(video)].destination or video.wanted
+    put_back = _entry_of(back, video)
+    destination = put_back.destination if put_back is not None else None
+    return destination or video.wanted
+
+
+def _entry_of(plan: Plan, entry: PlanEntry) -> PlanEntry | None:
+    """The entry of ``plan`` (derived from the Plan ``entry`` came from) that records the
+    same source: the Plan's own record, compared without reading the disk."""
+    return next((e for e in plan.entries if e.source == entry.source), None)
 
 
 def fit_path(text: str, width: int) -> str:

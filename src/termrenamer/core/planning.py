@@ -426,6 +426,8 @@ def plan_queue(
         )
 
     titles = sorted(set(title_of.values()), key=lambda t: (t.name.casefold(), t.year or 0))
+    # Source-path order is fixed here, once; a derived Plan keeps it.
+    entries.sort(key=lambda e: path_key(e.source))
     plan = _plan_of(options, tuple(titles), _claim_names(entries, options))
     return PlanBuild(plan=plan, messages=tuple(messages))
 
@@ -433,14 +435,15 @@ def plan_queue(
 def _claim_names(entries: Sequence[PlanEntry], options: PlanOptions) -> tuple[PlanEntry, ...]:
     """Work out every entry's destination and status by claiming names across the Plan.
 
-    Videos claim first, then Sidecars, each in source-path order, and only entries
-    that will be applied claim a name, so numbering is the same however the Plan was
-    reached. A left out video, and one with no wanted name (no match, not
+    ``entries`` are in source-path order, as the first build fixed it; that order is
+    kept and no source is read again. Videos claim first, then Sidecars, and only
+    entries that will be applied claim a name, so numbering is the same however the
+    Plan was reached. A left out video, and one with no wanted name (no match, not
     recognised), keeps its status and gets no destination. Each wanted path is tested
     on disk again. A Sidecar whose video is not applied has its video's status; any
     other is tested on its own, under its video's new name.
     """
-    ordered = sorted(entries, key=lambda e: path_key(e.source))
+    ordered = tuple(entries)
     occupied: set[Path] = set()
     named: dict[Path, PlanEntry] = {}
     for entry in ordered:
@@ -515,7 +518,8 @@ def derive_plan(plan: Plan, change: PlanChange) -> Plan:
     source-path order, as a fresh build would: each wanted path is tested on disk
     again, a name that only a left out file had claimed is free for the next entry,
     and a video put back gets the status a fresh Plan gives it. No Provider is asked.
-    The change names its entry of ``plan`` itself, so no path is resolved to find it.
+    The change names its entry of ``plan`` itself, and the entries keep the order of
+    ``plan``: the disk is read again only to test whether a wanted name is taken.
 
     Raises:
         ValueError: ``change`` names an entry that is not in ``plan``, a Sidecar, a

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+
+import pytest
 
 from termrenamer.core.apply import apply_plan
 from termrenamer.core.models import (
@@ -136,3 +139,29 @@ def test_a_title_with_a_file_of_no_match_says_no_match_before_left_out(tmp_path:
         plan = derive_plan(plan, LeaveOut(video))
 
     assert [row.status for row in title_rows(plan)] == [EntryStatus.NO_MATCH]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symbolic links need privileges on Windows")
+def test_apply_skips_a_video_whose_folder_was_pointed_elsewhere_after_planning(
+    tmp_path: Path,
+) -> None:
+    folder = _show(tmp_path)
+    plan = _plan(folder)
+    other = tmp_path / "Other"
+    other.mkdir()
+    for name in ("Show.Name.S01E01.mkv", "Show.Name.S01E02.mkv"):
+        (other / name).write_bytes(b"another file")
+    folder.rename(tmp_path / "Backups moved")
+    folder.symlink_to(other, target_is_directory=True)
+
+    results = apply_plan(plan, confirmed=True)
+
+    videos = {r.source.name: (r.status, r.reason) for r in results if r.source.suffix == ".mkv"}
+    assert videos == {
+        "Show.Name.S01E01.mkv": (ApplyStatus.SKIP, "stale: source changed since plan"),
+        "Show.Name.S01E02.mkv": (ApplyStatus.SKIP, "stale: source changed since plan"),
+    }
+    assert sorted(p.name for p in other.iterdir()) == [
+        "Show.Name.S01E01.mkv",
+        "Show.Name.S01E02.mkv",
+    ]

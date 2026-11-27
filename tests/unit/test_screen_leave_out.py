@@ -247,3 +247,31 @@ async def test_x_keeps_the_plan_when_the_disk_cannot_be_checked(tmp_path: Path) 
 
     assert app.plan is built
     assert "The new names could not be checked on disk:" in text
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symbolic links need privileges on Windows")
+async def test_x_twice_puts_back_the_same_file_after_its_folder_is_redirected(
+    tmp_path: Path,
+) -> None:
+    folder = tmp_path / "TV"
+    for disc in ("Disc A", "Disc B"):
+        (folder / disc).mkdir(parents=True)
+        (folder / disc / "Night Ferry S01E01.mkv").write_bytes(disc.encode())
+    app = make_app()
+    async with app.run_test(size=WIDE) as pilot:
+        await queue(pilot, folder)
+        await build(pilot)
+        built = app.plan
+        # Night Ferry's second file is Disc B's; then Disc B points to a copy that sorts first.
+        await press(pilot, "down", "right")
+        copy = tmp_path / "Aaa"
+        copy.mkdir()
+        (copy / "Night Ferry S01E01.mkv").write_bytes(b"Disc B")
+        (folder / "Disc B").rename(tmp_path / "Disc B moved")
+        (folder / "Disc B").symlink_to(copy, target_is_directory=True)
+        await press(pilot, "x")
+        left_out = [v.source.parent.name for v in app.plan.videos if v.status.value == "left out"]
+        await press(pilot, "x")
+
+    assert left_out == ["Disc B"]
+    assert app.plan == built
