@@ -247,3 +247,30 @@ async def test_two_titles_found_with_the_same_match_become_one_row(tmp_path: Pat
         ("holiday.mkv", "not recognised", "1"),
     ]
     assert heading == "3"
+
+
+async def test_a_selected_title_that_joins_another_keeps_the_selection_on_it(
+    tmp_path: Path,
+) -> None:
+    stand_in = PausingTv()
+    folder = tv_backups(tmp_path)
+    (folder / "Aurora S01E01.mkv").write_bytes(b"x")
+    (folder / "Harbour Lights UK S02E01.mkv").write_bytes(b"x")
+    app = make_app(wiring(tv=stand_in))  # type: ignore[arg-type]
+    async with app.run_test(size=SIZE) as pilot:
+        await queue(pilot, folder)
+        await press(pilot, "b")
+        await _wait_in_search(pilot, stand_in)  # in Aurora's search (not found)
+        stand_in.let_go()
+        await _wait_in_search(pilot, stand_in)  # in Harbour Lights's search
+        stand_in.let_go()
+        await _wait_in_search(pilot, stand_in)  # in Harbour Lights UK's search
+        await press(pilot, "down", "down")
+        stand_in.let_go()
+        await _wait_in_search(pilot, stand_in)  # in Night Ferry's search
+        selected = app.query_one(PlanStage).query_one(TitleList).selected
+        details = text_of(app, "#plan-details")
+        await _finish(pilot, app, stand_in)
+
+    assert selected is not None and selected.name == "Harbour Lights"
+    assert details.splitlines() == ["Harbour Lights", "found · 3 videos"]

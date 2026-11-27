@@ -37,6 +37,13 @@ from termrenamer.tui.words import plural
 _DETAILS_WIDTH = 38
 """The left column's width, as in the mockup."""
 
+_WIDE_STRIP = 116
+"""The strip's width at the design size (120 columns less its padding)."""
+_WIDE_CELLS = (16, 16, 8, 10, 3)
+_NARROW_CELLS = (6, 6, 3, 5, 2)
+"""The strip's cells: the lookup gauge, the matched bar, the unmatched bar, the
+lookups per second chart and the gap between the four, at the design size and below."""
+
 
 @dataclass(slots=True)
 class _Row:
@@ -195,7 +202,6 @@ class PlanStage(TitleListStage):
         row = self._row_of.get(key)
         if row is None:
             return
-        self._current = row
         if event.match is None:
             self._set_status(key, StatusWord.NO_MATCH)
             return
@@ -204,12 +210,14 @@ class PlanStage(TitleListStage):
             (r for r in self._rows if r.match is not None and r.match.id == event.match.id), None
         )
         if same is not None:
+            selected = self.title_list.selected
             same.videos += row.videos
-            same.looked_up += row.looked_up
             self._rows.remove(row)
             self._row_of[key] = same
             self._current = same
             self.title_list.set_rows([r.list_row() for r in self._rows])
+            if selected is not None and selected.key == row.key:
+                self.title_list.highlighted = self._rows.index(same)
             self._draw_rows()
             return
         row.match = event.match
@@ -264,8 +272,8 @@ class PlanStage(TitleListStage):
 
     def _draw_strip(self) -> None:
         strip = self.query_one("#plan-strip", Static)
-        wide = strip.size.width == 0 or strip.size.width >= 116
-        gauge, bar, small_bar, chart, gap = (16, 16, 8, 10, 3) if wide else (6, 6, 3, 5, 2)
+        wide = strip.size.width == 0 or strip.size.width >= _WIDE_STRIP
+        gauge, bar, small_bar, chart, gap = _WIDE_CELLS if wide else _NARROW_CELLS
         total = self._total
         done = round(self._looked_up / total * gauge) if total else 0
         space = " " * gap

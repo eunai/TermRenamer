@@ -331,7 +331,6 @@ class TermRenamerApp(App[None]):
             return
         self._cancel.set()
         self._end_build()
-        self.session_settings.unlock()
         self._show_stage(Stage.QUEUE)
         self.say("Plan cancelled. Nothing was renamed.")
 
@@ -430,12 +429,13 @@ class TermRenamerApp(App[None]):
             elif worker.name == _APPLY and isinstance(worker.result, tuple):
                 self._apply_finished(*worker.result)
         elif event.state in (WorkerState.ERROR, WorkerState.CANCELLED):
-            self.session_settings.unlock()
-            self._applying = False
             what = "Plan" if worker.name == _BUILD else "Apply"
             if worker.name == _BUILD:
                 self._end_build()
                 self._show_stage(Stage.QUEUE)
+            else:
+                self._applying = False
+                self.session_settings.unlock()
             self.say(f"{what} failed: {worker.error}", MessageKind.ERROR)
             self._refresh_chrome()
 
