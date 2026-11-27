@@ -15,9 +15,11 @@ Apply checks a source and claims a destination by calls that sit directly before
 change they guard: the folders on the way must still be real folders, not links, and
 the source must still be of the kind and, for a file, the size and modification time
 the Plan recorded. A new name is removed again after a failure only while the source is
-verified at its old name, so a file never loses both names. Apply cannot defend against
-another program that changes that same file or name between such a check and the very
-next call, or that deletes or writes over a name Apply has claimed.
+verified at its old name, so a file never loses both names; and the old name is
+removed only while it is verified to be the source's own file. In both, the ``lstat`` of
+the old name that verifies it is the last call before the removal. Apply cannot defend
+against another program that changes that same file or name between such a check and
+the very next call, or that deletes or writes over a name Apply has claimed.
 
 "The same file" never rests on the device and inode number alone, as ext4 and tmpfs give
 the number of a file just removed to the next file made (:func:`_one_file`). A file
@@ -93,9 +95,11 @@ _Guard = tuple[Path, "_Held | LinkedFolder | None"]
 with ``None``, a real folder; with a :class:`_Held`, the very folder found there before;
 with a :class:`LinkedFolder`, the very link the Plan found, leading where it led."""
 
-_AtOldName = Callable[[os.stat_result], bool]
-"""Whether the source's own file is verified at its old name, given the ``lstat`` of the
-old name now."""
+_AtOldName = Callable[[], "os.stat_result | None"]
+"""The ``lstat`` of the source's old name when it holds the source's own file, else
+``None``: a look whose last call on the disk is that ``lstat``, so that it can sit
+directly before the call it guards. It raises :class:`OSError` when the old name
+cannot be read, :class:`FileNotFoundError` when it is gone."""
 
 
 def _one_file(a: os.stat_result, b: os.stat_result) -> bool:
@@ -167,6 +171,20 @@ class _Held:
         # A Windows folder, by its number and its creation time.
         made_then = getattr(self.st, "st_birthtime_ns", None)
         return os.path.samestat(now, self.st) and getattr(now, "st_birthtime_ns", None) == made_then
+
+    def look_at(self, path: Path) -> os.stat_result | None:
+        """``path``'s ``lstat`` when that name holds this file or folder now, else
+        ``None``. The look through the descriptor comes first and the look by name last,
+        so the look by name can sit directly before the call it guards; it raises
+        :class:`OSError` when the name cannot be read."""
+        if self.fd is None:
+            return None if self.released else (now if self.agrees(now := os.lstat(path)) else None)
+        try:
+            held_now: os.stat_result | None = os.fstat(self.fd)
+        except OSError:
+            held_now = None
+        now = os.lstat(path)
+        return now if held_now is not None and _one_file(now, held_now) else None
 
     def descriptor(self) -> int:
         """The open descriptor of a file held, which stays open until released."""
@@ -557,18 +575,11 @@ def _move_file(
     changes.files_left_behind.append(dest)  # until the source's name is removed
     made = os.lstat(dest)
 
-    def both_names(now: os.stat_result) -> bool:
-        # Both names are one file while the new name still holds the file made there,
-        # with the links it had then: the old name's removal would have lowered them.
-        try:
-            at_dest = os.lstat(dest)
-        except OSError:
-            return False
-        return (
-            os.path.samestat(at_dest, made)
-            and at_dest.st_nlink == made.st_nlink
-            and _one_file(now, at_dest)
-        )
+    def both_names() -> os.stat_result | None:
+        # One look, at the old name alone: it is still the file made at ``dest``, with
+        # the links it had then, which the removal of either name would have lowered.
+        now = os.lstat(source)
+        return now if _one_file(now, made) else None
 
     _unlink_source(source, dest, made, both_names, both_names, before, changes)
 
@@ -586,25 +597,27 @@ def _unlink_source(
     """Remove the source's name now that ``dest`` (``made`` there, listed as left behind)
     holds the file, and record the move.
 
-    The check by name, ``unchanged`` (the source's own file at its old name, as it was
-    copied), is the last look before the unlink; on Windows the source ``held`` open is
-    released between the two, as Windows removes no file held open. When the old name is
-    gone already, the file is at ``dest`` alone and the move is recorded. On any error,
-    an interrupt included, :func:`_settle` decides by the disk, with ``at_old_name``, what is
-    kept, so the file never loses both names.
+    The check ``unchanged`` (the source's own file at its old name, as it was copied)
+    ends with the look by name that is the last call before the unlink. On Windows the
+    source ``held`` open is released after that check, as Windows removes no file held
+    open, and the old name is looked at again, as the last call before the unlink: it
+    must still be the file the check found. When the old name is gone already, the file
+    is at ``dest`` alone and the move is recorded. On any error, an interrupt included,
+    :func:`_settle` decides by the disk, with ``at_old_name``, what is kept, so the file
+    never loses both names.
     """
     try:
         try:
-            now: os.stat_result | None = os.lstat(source)
-        except FileNotFoundError:
-            now = None
-        if now is None:
-            _LOG.warning("%s was removed during its move; the file is at %s", source, dest)
-        elif not unchanged(now):
-            raise OSError(errno.EIO, "the source changed during its move", str(source))
-        else:
-            if held is not None and os.name == "nt":
+            now = unchanged()
+            if now is not None and held is not None and os.name == "nt":
                 held.release()
+                again = os.lstat(source)  # the last look before the unlink
+                now = now if _one_file(again, now) else None
+        except FileNotFoundError:
+            _LOG.warning("%s was removed during its move; the file is at %s", source, dest)
+        else:
+            if now is None:
+                raise OSError(errno.EIO, "the source changed during its move", str(source))
             os.unlink(source)
         _forget(changes.files_left_behind, dest)
         changes.moved(source, dest, before)
@@ -622,23 +635,16 @@ def _settle(
     changes: Changes,
 ) -> None:
     """After an error once ``dest`` held the file: remove ``dest`` only while the source's
-    own file is verified at its old name (``at_old_name``); record the move when the old name
-    is gone; else keep ``dest`` listed as left behind."""
+    own file is verified at its old name (``at_old_name``, the last call before the
+    removal); record the move when the old name is gone and ``dest`` still holds the
+    file made there; else keep ``dest`` listed as left behind."""
     if any(m.source == source and m.destination == dest for m in changes.moves):
         return  # the move is recorded already
-    try:
-        now = os.lstat(source)
-    except FileNotFoundError:
+    if dest not in changes.files_left_behind:
+        changes.files_left_behind.append(dest)
+    if _remove_if_made(dest, made, changes, source, at_old_name):
         _forget(changes.files_left_behind, dest)
         changes.moved(source, dest, before)
-        return
-    except OSError as exc:
-        _LOG.warning("Cannot read %s, so %s is kept: %s", source, dest, exc)
-        now = None
-    if now is not None and at_old_name(now):
-        _remove_if_made(dest, made, changes, source, at_old_name)
-    elif dest not in changes.files_left_behind:
-        changes.files_left_behind.append(dest)
 
 
 def _copy_then_unlink(
@@ -669,31 +675,35 @@ def _copy_then_unlink(
         target = os.readlink(source)
         held = None
 
-        def at_old_name(now: os.stat_result) -> bool:
+        def at_old_name() -> os.stat_result | None:
             # A link is its target text: one with the same text at the old name, made at
             # the same time, leaves nothing lost when the link made at ``dest`` goes.
+            # The text is read first, so the ``lstat`` is the last call.
             try:
-                return (
-                    _one_file(now, st)
-                    and stat.S_ISLNK(now.st_mode)
-                    and os.readlink(source) == target
-                )
+                text: str | None = os.readlink(source)
+            except FileNotFoundError:
+                raise
             except OSError:
-                return False
+                text = None
+            now = os.lstat(source)
+            same = text == target and stat.S_ISLNK(now.st_mode) and _one_file(now, st)
+            return now if same else None
 
         unchanged = at_old_name
     else:
         held = _Held(source, st, folder=False)
 
-        def at_old_name(now: os.stat_result) -> bool:
-            return held.agrees(now)
+        def at_old_name() -> os.stat_result | None:
+            return held.look_at(source)
 
-        def unchanged(now: os.stat_result) -> bool:
+        def unchanged() -> os.stat_result | None:
             # The source's own file, as it was copied.
-            return held.agrees(now) and (now.st_size, now.st_mtime_ns) == (
+            now = held.look_at(source)
+            as_copied = now is not None and (now.st_size, now.st_mtime_ns) == (
                 st.st_size,
                 st.st_mtime_ns,
             )
+            return now if as_copied else None
 
     try:
         if os.name == "nt":
@@ -736,7 +746,7 @@ def _make_copy(
     are first written to it."""
     _guard(guards)
     if held is None:  # a link, which is copied as its target text and never opened
-        _remake_link(source, st, at, changes)
+        _remake_link(source, st, at, changes, at_old_name)
         made = os.lstat(at)
     else:
         fd = os.open(at, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW | _O_BINARY, 0o600)
@@ -775,11 +785,13 @@ def _remove_failed_copy(
     _remove_if_made(at, made, changes, source, at_old_name)
 
 
-def _remake_link(source: Path, st: os.stat_result, at: Path, changes: Changes) -> None:
+def _remake_link(
+    source: Path, st: os.stat_result, at: Path, changes: Changes, at_old_name: _AtOldName
+) -> None:
     r"""Make at ``at`` a symbolic link of the kind and with the target text of the link
     ``source`` (``st`` its ``lstat``), so a relative link stays relative, or raise. The
     link is listed as left behind from the moment it is made, and taken off that list
-    only when this removes it again.
+    only when this removes it again, as :func:`_remove_if_made` does.
 
     On Windows a link is a link to a file or to a folder, and Windows makes a link to a
     folder whenever its target names one, so a link to a file whose target names a
@@ -803,9 +815,9 @@ def _remake_link(source: Path, st: os.stat_result, at: Path, changes: Changes) -
         made = os.lstat(at)
         if os.readlink(at) == target and _is_folder_link(made) == folder:
             return
-        if os.path.samestat(os.lstat(at), made):
-            os.unlink(at)
-            _forget(changes.files_left_behind, at)
+        _remove_if_made(at, made, changes, source, at_old_name)
+        if at in changes.files_left_behind:
+            break  # kept: nothing more is made at ``at``
     msg = "the link could not be made again with its kind and target"
     raise OSError(errno.EXDEV, msg, str(source))
 
@@ -891,25 +903,41 @@ def _set_times_by_name(dest: Path, made: os.stat_result, st: os.stat_result) -> 
 
 def _remove_if_made(
     dest: Path, made: os.stat_result, changes: Changes, source: Path, at_old_name: _AtOldName
-) -> None:
+) -> bool:
     """Remove ``dest`` while it still is the entry made here and the source's own file
     is verified at its old name (``at_old_name``), and take it off the files left behind; it
     stays listed when it is kept, so a copy is never removed while it may be the only
-    one."""
+    one. ``dest`` is looked at first and the old name last, so the look at the old name
+    is the last call before the removal.
+
+    Return whether the old name was found gone while ``dest`` still was the entry made
+    here: ``dest`` is then kept, and it holds the file.
+    """
     try:
-        source_there = at_old_name(os.lstat(source))
+        ours = os.path.samestat(os.lstat(dest), made)
+    except FileNotFoundError:
+        ours = False
+    except OSError as exc:
+        _LOG.warning("Keeping %s, which Apply made: cannot read it: %s", dest, exc)
+        return False
+    try:
+        source_there = at_old_name() is not None  # the last call before the removal
+    except FileNotFoundError:
+        _LOG.warning("Keeping %s, which Apply made: %s is no longer there", dest, source)
+        return ours
     except OSError as exc:
         _LOG.warning("Keeping %s, which Apply made: cannot find %s: %s", dest, source, exc)
-        return
+        return False
     if not source_there:
-        _LOG.warning("Keeping %s, which Apply made: %s is no longer there", dest, source)
-        return
-    try:
-        if os.path.samestat(os.lstat(dest), made):
+        _LOG.warning("Keeping %s, which Apply made: %s is not as it was", dest, source)
+        return False
+    if ours:
+        try:
             os.unlink(dest)
-    except FileNotFoundError:
-        pass
-    except OSError as exc:
-        _LOG.warning("Cannot remove %s, which Apply made: %s", dest, exc)
-        return
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            _LOG.warning("Cannot remove %s, which Apply made: %s", dest, exc)
+            return False
     _forget(changes.files_left_behind, dest)
+    return False
