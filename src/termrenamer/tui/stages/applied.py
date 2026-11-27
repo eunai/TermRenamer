@@ -19,7 +19,7 @@ from termrenamer.core.models import ApplyResult, ApplyStatus, Plan, PlanEntry
 from termrenamer.core.title_rows import AppliedCounts
 from termrenamer.tui.stages.base import StageView
 from termrenamer.tui.widgets.action_button import ActionButton
-from termrenamer.tui.words import why_not_renamed
+from termrenamer.tui.words import folder_text, why_not_renamed
 
 _APPLIED = frozenset({ApplyStatus.RENAMED, ApplyStatus.UNCHANGED})
 
@@ -152,6 +152,6 @@ def _lines_for(entry: PlanEntry, result: ApplyResult) -> str:
         reason = f"Sidecar not renamed: {reason}"
     source = entry.source
     return (
-        f"[$foreground]{escape(source.name)}[/]  [$tr-dim]{escape(str(source.parent))}[/]\n"
+        f"[$foreground]{escape(source.name)}[/]  [$tr-dim]{escape(folder_text(source.parent))}[/]\n"
         f"    [{colour}]{escape(reason)}[/]"
     )

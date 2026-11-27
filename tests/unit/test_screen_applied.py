@@ -3,6 +3,7 @@ reason. A Sidecar gets a line only when it was not renamed while its video was."
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -61,11 +62,11 @@ async def test_the_applied_stage_lists_each_skipped_file_with_its_reason(tmp_pat
     assert counts == ["1 renamed · 3 skipped · 0 failed", "1 already had its name"]
     assert heading == ["Not renamed 3"]
     assert listed == [
-        f"Harbour Lights S01E09.mkv {folder}",
+        f"Harbour Lights S01E09.mkv {folder}{os.sep}",
         "no match: the episode was not found",
-        f"holiday.mkv {folder}",
+        f"holiday.mkv {folder}{os.sep}",
         "not recognised: its name could not be read",
-        f"Quiet Rivers S01E01.mkv {folder}",
+        f"Quiet Rivers S01E01.mkv {folder}{os.sep}",
         "no match: the show was not found",
     ]
     assert "n New batch" in text
@@ -82,7 +83,7 @@ async def test_a_sidecar_not_renamed_while_its_video_was_gets_a_line(tmp_path: P
         listed = lines_of(app, "#applied-list")
         logs = [line for _n, line in app.log_book.lines_after(0)]
     assert listed[-2:] == [
-        f"Harbour Lights S01E01.srt {folder}",
+        f"Harbour Lights S01E01.srt {folder}{os.sep}",
         "Sidecar not renamed: destination exists at apply time",
     ]
     assert any("Harbour Lights S01E01.srt" in line and "skip" in line for line in logs)
@@ -122,5 +123,5 @@ async def test_a_failed_file_is_listed_with_its_reason(tmp_path: Path) -> None:
         counts = lines_of(app, "#applied-counts")
         listed = lines_of(app, "#applied-list")
     assert counts == ["0 renamed · 0 skipped · 1 failed"]
-    assert listed[0] == f"Night Ferry S01E01.mkv {folder}"
+    assert listed[0] == f"Night Ferry S01E01.mkv {folder}{os.sep}"
     assert listed[1].startswith("failed: mkdir failed:")
