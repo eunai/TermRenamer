@@ -477,63 +477,87 @@ def _move_folder(
     moved is a :class:`FolderMoveFailed` that says so, not a :class:`NowALink`.
 
     A companion file (:func:`~termrenamer.core.scan.is_companion_file`) is never moved,
-    and one the system removed with its file during the walk is passed over. A folder
-    left holding only companion files, and folders this walk kept, is kept: it is not
-    removed, as Apply removes no folder that holds a file, and it is recorded in
-    ``changes.folders_kept``. Return whether ``source`` was removed."""
+    and one the listing found as a file that the system removed with its file during
+    the walk is passed over; any other child that vanishes fails the walk. A folder left
+    holding only companion files, and folders this walk kept, is kept: it is not
+    removed, as Apply removes no folder that holds a file. A folder that stays, kept or
+    after a walk that failed, is recorded in ``changes.folders_kept`` by its device and
+    inode number as the walk held it, once the walk moved a file. Return whether
+    ``source`` was removed."""
     os.mkdir(dest)
     changes.folders_created.append(dest)
     moved_before = len(changes.moves)
+    identity = KeptFolder(source, st.st_dev, st.st_ino)
     held: list[_Held] = []
     try:
-        held.append(_Held(source, st, folder=True))
-        held.append(_Held(dest, os.lstat(dest), folder=True))
-        inner: list[_Guard] = [*guards, (source, held[0]), (dest, held[1])]
-        _guard(inner)
-        names = sorted(os.listdir(source), key=lambda name: claim_key(Path(name)))
-        kept: set[str] = set()
-        for name in names:
-            child = source / name
-            try:
-                _guard(inner)
-                try:
-                    child_st = os.lstat(child)
-                except FileNotFoundError:
-                    if is_companion_file(child):
-                        continue  # the system removed it with the file it belongs to
-                    raise
-                if is_folder(child, child_st):
-                    if not _move_folder(child, child_st, dest / name, changes, inner):
-                        kept.add(name)
-                elif is_companion_file(child):
-                    kept.add(name)
-                else:
-                    _move_file(child, dest / name, changes, inner)
-            except FolderMoveFailed:
-                raise
-            except NowALink as exc:
-                if len(changes.moves) == moved_before:
-                    raise
-                msg = f"{exc.reason}; part of the folder moved"
-                raise FolderMoveFailed(errno.ELOOP, msg) from exc
-            except OSError as exc:
-                raise FolderMoveFailed(exc.errno or errno.EIO, f"{child}: {exc}") from exc
-        left = set(os.listdir(source))
-        if left and left <= kept:
-            now = os.lstat(source)
-            changes.folders_kept.append(KeptFolder(source, now.st_dev, now.st_ino, now.st_mtime_ns))
-            return False
-        leave_folder(source)
-        os.rmdir(source)
-    except (FolderMoveFailed, NowALink):
+        try:
+            held.append(_Held(source, st, folder=True))
+            held.append(_Held(dest, os.lstat(dest), folder=True))
+            inner: list[_Guard] = [*guards, (source, held[0]), (dest, held[1])]
+            _guard(inner)
+            if not _walk(source, dest, changes, inner, moved_before):
+                if len(changes.moves) > moved_before:
+                    changes.folders_kept.append(identity)
+                return False
+            leave_folder(source)
+            os.rmdir(source)
+        except (FolderMoveFailed, NowALink):
+            raise
+        except OSError as exc:
+            raise FolderMoveFailed(exc.errno or errno.EIO, f"{source}: {exc}") from exc
+    except BaseException:
+        if len(changes.moves) > moved_before:
+            changes.folders_kept.append(identity)
         raise
-    except OSError as exc:
-        raise FolderMoveFailed(exc.errno or errno.EIO, f"{source}: {exc}") from exc
     finally:
         for entry in held:
             entry.release()
     changes.folders_removed.append(source)
     return True
+
+
+def _walk(
+    source: Path, dest: Path, changes: Changes, inner: Sequence[_Guard], moved_before: int
+) -> bool:
+    """Move each child of the folder ``source`` into ``dest`` while ``inner`` holds, as
+    :func:`_move_folder` says, and return whether ``source`` may be removed: ``False``
+    when it holds only companion files and folders this walk kept."""
+    kinds: dict[str, bool] = {}  # each child's name: whether the listing found a folder
+    with os.scandir(source) as listing:
+        for entry in listing:
+            try:
+                kinds[entry.name] = entry.is_dir(follow_symlinks=False)
+            except OSError:
+                kinds[entry.name] = True  # not known to be a file
+    kept: set[str] = set()
+    for name in sorted(kinds, key=lambda name: claim_key(Path(name))):
+        child = source / name
+        try:
+            _guard(inner)
+            try:
+                child_st = os.lstat(child)
+            except FileNotFoundError:
+                if not kinds[name] and is_companion_file(child):
+                    continue  # the system removed it with the file it belongs to
+                raise
+            if is_folder(child, child_st):
+                if not _move_folder(child, child_st, dest / name, changes, inner):
+                    kept.add(name)
+            elif is_companion_file(child):
+                kept.add(name)
+            else:
+                _move_file(child, dest / name, changes, inner)
+        except FolderMoveFailed:
+            raise
+        except NowALink as exc:
+            if len(changes.moves) == moved_before:
+                raise
+            msg = f"{exc.reason}; part of the folder moved"
+            raise FolderMoveFailed(errno.ELOOP, msg) from exc
+        except OSError as exc:
+            raise FolderMoveFailed(exc.errno or errno.EIO, f"{child}: {exc}") from exc
+    left = set(os.listdir(source))
+    return not (left and left <= kept)
 
 
 def _move_file(

@@ -1,11 +1,14 @@
-"""A file whose name starts with ``._`` is the companion file macOS writes beside a file
-on a drive that cannot hold extended attributes (exFAT, FAT32, many network shares). It
-is not the person's file: it is never a video, a Sidecar or a Straggler, and Apply and
-Undo leave it where the system leaves it. The names are plain files on every system."""
+"""A file found on the disk whose name starts with ``._`` is the companion file macOS
+writes beside a file on a drive that cannot hold extended attributes (exFAT, FAT32, some
+network shares). It is not the person's file: it is never a video, a Sidecar or a
+Straggler, and Apply and Undo never move it by name. A name the Plan wrote is the
+Plan's file whatever it starts with. The names are plain files on every system."""
 
 from __future__ import annotations
 
+import errno
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -15,6 +18,7 @@ from termrenamer.core.models import ApplyStatus, Candidate, Plan
 from termrenamer.core.planning import LeaveOut, PutBack, derive_plan, plan_queue
 from termrenamer.core.undo import undo_apply
 
+from .test_apply_no_replace import _with_the_number_of
 from .test_plan_queue import TvStandIn
 from .test_plan_stragglers import _options, _provider, _two_discs, _video_in, _write
 from .test_undo import listing
@@ -278,3 +282,108 @@ def test_a_name_the_plan_wrote_that_starts_like_a_companion_is_applied_and_undon
 
     assert undone.put_back == len(applied.moves)
     assert listing(show) == before
+
+
+def test_undo_puts_files_back_into_a_kept_folder_whose_content_changed(tmp_path: Path) -> None:
+    show = _two_discs(tmp_path)
+    subs = show / "Disc 1" / "Subs"
+    _write(subs / "._lost.srt", b"companion")
+    applied = apply_plan(_plan(show), confirmed=True)
+    (subs / "._lost.srt").unlink()  # its modification time changes; it is the same folder
+
+    undone = undo_apply(applied)
+
+    assert undone.not_put_back == 0
+    assert (subs / "English.srt").exists()
+
+
+def test_undo_takes_a_folder_made_again_with_the_kept_folders_number_for_it_and_overwrites_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The stated limit: a folder made again under the same number is taken for the kept
+    # one, and each old name is still claimed by the move itself.
+    show = _two_discs(tmp_path)
+    subs = show / "Disc 1" / "Subs"
+    _write(subs / "French.srt", b"french")
+    _write(subs / "._lost.srt", b"companion")
+    applied = apply_plan(_plan(show), confirmed=True)
+    kept = os.lstat(subs)
+    subs.rename(tmp_path / "old Subs")
+    _write(subs / "English.srt", b"another program's")
+    real_lstat = os.lstat
+
+    def lstat(path: object, *args: object, **kwargs: object) -> os.stat_result:
+        st = real_lstat(path, *args, **kwargs)  # type: ignore[arg-type]
+        return _with_the_number_of(st, kept) if Path(os.fspath(path)) == subs else st  # type: ignore[call-overload]
+
+    monkeypatch.setattr(os, "lstat", lstat)
+    undone = undo_apply(applied)
+    monkeypatch.undo()
+
+    new = show / "Show Name" / "Season 01" / "Subs"
+    reasons = {r.source.name: (r.status, r.reason) for r in undone.results}
+    assert reasons["French.srt"] == (ApplyStatus.RENAMED, "ok")
+    assert reasons["English.srt"] == (ApplyStatus.SKIP, "its old place is taken")
+    assert (subs / "French.srt").read_bytes() == b"french"
+    assert (subs / "English.srt").read_bytes() == b"another program's"
+    assert (new / "English.srt").exists()
+
+
+def test_undo_leaves_the_files_of_a_failed_walk_whose_folder_another_folder_replaced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    show = _two_discs(tmp_path)
+    subs = show / "Disc 1" / "Subs"
+    _write(subs / "z-fails.srt", b"fails")
+    plan = _plan(show)
+    real_link, real_rename = os.link, os.rename
+
+    def refuse(real: object) -> object:
+        def call(src: object, dst: object, *args: object, **kwargs: object) -> None:
+            if Path(os.fspath(src)).name == "z-fails.srt":  # type: ignore[call-overload]
+                raise OSError(errno.EIO, "Input/output error")
+            real(src, dst, *args, **kwargs)  # type: ignore[operator]
+
+        return call
+
+    monkeypatch.setattr(os, "link", refuse(real_link))
+    monkeypatch.setattr(os, "rename", refuse(real_rename))
+    applied = apply_plan(plan, confirmed=True)
+    monkeypatch.undo()
+    assert {r.source: r.status for r in applied.stragglers}[subs] is ApplyStatus.FAIL
+    assert subs in [k.path for k in applied.folders_kept]
+
+    subs.rename(tmp_path / "old Subs")
+    subs.mkdir()
+    undone = undo_apply(applied)
+
+    moved = show / "Show Name" / "Season 01" / "Subs" / "English.srt"
+    [result] = [r for r in undone.results if r.source == moved]
+    assert (result.status, result.reason) == (ApplyStatus.SKIP, "its folder's old place is taken")
+    assert list(subs.iterdir()) == []
+
+
+def test_a_folder_named_like_a_companion_that_vanishes_during_a_walk_fails_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    show = _two_discs(tmp_path)
+    subs = show / "Disc 1" / "Subs"
+    _write(subs / "!first.txt", b"first")
+    _write(subs / "._ordinary" / "inside.txt", b"inside")
+    plan = _plan(show)
+    real_unlink, real_rename = os.unlink, os.rename
+
+    def then_remove_the_folder(real: object) -> object:
+        def call(*args: object, **kwargs: object) -> None:
+            real(*args, **kwargs)  # type: ignore[operator]
+            if Path(os.fspath(args[0])).name == "!first.txt":  # type: ignore[call-overload]
+                shutil.rmtree(subs / "._ordinary")
+
+        return call
+
+    monkeypatch.setattr(os, "unlink", then_remove_the_folder(real_unlink))
+    monkeypatch.setattr(os, "rename", then_remove_the_folder(real_rename))
+    applied = apply_plan(plan, confirmed=True)
+    monkeypatch.undo()
+
+    assert {r.source: r.status for r in applied.stragglers}[subs] is ApplyStatus.FAIL

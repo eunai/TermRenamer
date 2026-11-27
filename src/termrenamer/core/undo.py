@@ -34,6 +34,7 @@ from __future__ import annotations
 import errno
 import logging
 import os
+from collections.abc import Sequence
 from pathlib import Path
 
 from termrenamer.core.collisions import is_case_only_rename
@@ -79,7 +80,7 @@ def undo_apply(outcome: ApplyOutcome) -> UndoOutcome:
             results.append(_result(move, ApplyStatus.SKIP, _STOPPED))
             continue
         try:
-            results.append(_put_back(move, taken, changes))
+            results.append(_put_back(move, taken, outcome.folders_kept, changes))
         except Exception as exc:
             _LOG.error("Undo stopped at %s by an unexpected error", move.destination, exc_info=exc)
             results.append(_result(move, ApplyStatus.FAIL, f"unexpected error: {exc!r}"))
@@ -126,22 +127,15 @@ def _within(path: Path, folders: list[Path]) -> bool:
     return any(path == folder or folder in path.parents for folder in folders)
 
 
-def _kept_folder_is_taken(kept: KeptFolder) -> bool:
-    """Whether what is at a kept folder's place is not that folder as Apply left it. A
-    kept folder that is gone is not taken: the files bound for it stay, as for any old
-    folder that no longer exists."""
+def _kept_folder_is_there(kept: KeptFolder) -> bool:
+    """Whether the folder at a kept folder's path is that folder: a real folder, not a
+    link, with its recorded device and inode number (see :class:`KeptFolder` for the
+    limit of that)."""
     try:
         st = os.lstat(kept.path)
-    except FileNotFoundError:
+    except OSError:
         return False
-    except OSError as exc:
-        _LOG.warning("Undo left the files of %s: cannot read it: %s", kept.path, exc)
-        return True
-    same = (st.st_dev, st.st_ino, st.st_mtime_ns) == (kept.device, kept.inode, kept.modified_ns)
-    if same and is_folder(kept.path, st):
-        return False
-    _LOG.warning("Undo left the files of %s: its old place is taken", kept.path)
-    return True
+    return is_folder(kept.path, st) and (st.st_dev, st.st_ino) == (kept.device, kept.inode)
 
 
 def _make_folders_again(outcome: ApplyOutcome, changes: Changes) -> list[Path]:
@@ -152,12 +146,10 @@ def _make_folders_again(outcome: ApplyOutcome, changes: Changes) -> list[Path]:
     logged, and the files bound for it are left where they are. A folder of a folder
     Straggler (the Straggler itself or a folder inside it) that exists again goes back
     only when nothing is at its old place, so when one is there, with anything or
-    nothing in it, the folder is taken and its files stay at their new place. A folder
-    Apply kept (:attr:`~termrenamer.core.models.ApplyOutcome.folders_kept`) is taken
-    when another folder or a file is at its place, or it changed since Apply.
+    nothing in it, the folder is taken and its files stay at their new place.
     """
     stragglers = _folder_stragglers(outcome)
-    taken = [kept.path for kept in outcome.folders_kept if _kept_folder_is_taken(kept)]
+    taken: list[Path] = []
     # Apply lists each folder before its parent; the stable sort keeps that order's
     # reverse wherever the depth is the same.
     for folder in sorted(reversed(outcome.folders_removed), key=lambda path: len(path.parts)):
@@ -180,9 +172,14 @@ def _make_folders_again(outcome: ApplyOutcome, changes: Changes) -> list[Path]:
     return taken
 
 
-def _put_back(move: Move, taken: list[Path], changes: Changes) -> ApplyResult:
+def _put_back(
+    move: Move, taken: list[Path], kept: Sequence[KeptFolder], changes: Changes
+) -> ApplyResult:
     """Move one file from its new place back to its old place, when the checks pass;
-    ``taken`` holds the folders of folder Stragglers whose old place is taken."""
+    ``taken`` holds the folders of folder Stragglers whose old place is taken, and
+    ``kept`` the folders of folder Stragglers that stayed at their old place, each of
+    which must still be that folder (:func:`_kept_folder_is_there`), as the last look
+    before the file's move back."""
     new, old = move.destination, move.source
     if _within(old.parent, taken):
         return _result(move, ApplyStatus.SKIP, "its folder's old place is taken")
@@ -208,6 +205,9 @@ def _put_back(move: Move, taken: list[Path], changes: Changes) -> ApplyResult:
         return _result(move, ApplyStatus.FAIL, f"cannot read its old folder: {exc}")
     if not is_folder(old.parent, folder):
         return _result(move, ApplyStatus.SKIP, linked)
+    for kept_folder in kept:
+        if _within(old.parent, [kept_folder.path]) and not _kept_folder_is_there(kept_folder):
+            return _result(move, ApplyStatus.SKIP, "its folder's old place is taken")
     try:
         move_no_replace(new, old, changes, expected=move.fingerprint)
     except FileExistsError:

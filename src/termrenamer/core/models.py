@@ -252,17 +252,20 @@ class Straggler:
 
 @dataclass(frozen=True, slots=True)
 class KeptFolder:
-    """A folder of a folder Straggler that Apply kept at its old place because it still
-    held companion files (:func:`~termrenamer.core.scan.is_companion_file`), with its
-    device, inode and modification time once Apply was done with it. Undo puts files
-    back into it only while all three are the same, so a folder made at its place since
-    is taken for another folder, even where it gets the kept folder's inode number,
-    unless it is made within the same step of the disk's clock."""
+    """A folder of a folder Straggler that stayed at its old place after its walk moved a
+    file: kept because what the walk did not move, such as companion files
+    (:func:`~termrenamer.core.scan.is_companion_file`), is still in it, or left after the
+    walk failed part-way. It is known by its device and inode number, as the walk held
+    it from its start, and by being a real folder; not by its modification time, which
+    changes whenever what it holds changes. Undo puts a file back into it only while the
+    folder at its path is a real folder with that device and number. A folder another
+    program removed and made again after Apply is taken for it only if the system gave
+    it the same number; even then Undo claims each old name by the move itself and
+    never writes over a file."""
 
     path: Path
     device: int
     inode: int
-    modified_ns: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -366,8 +369,8 @@ class ApplyOutcome:
     a folder Straggler's folders once their files moved, then the source folders the
     moves emptied. ``files_left_behind`` lists each file Apply made at a new name and
     could not remove after its move failed, so the source is still there too.
-    ``folders_kept`` lists each folder of a folder Straggler that Apply left at its old
-    place, holding only companion files and folders it kept, each before its parent.
+    ``folders_kept`` lists each folder of a folder Straggler that stayed at its old place
+    after its walk moved a file (:class:`KeptFolder`), each before its parent.
     Each change is listed once its call succeeded.
     """
 
