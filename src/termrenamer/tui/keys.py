@@ -87,7 +87,7 @@ KEYS: tuple[Key, ...] = (
         "t",
         _bound("t", "pick_match"),
         "Match",
-        "Open the Match picker (←→, 1 to 3, enter, / to type, esc)",
+        "Open the Match picker (↑↓, 1 to 3, enter, / to type, esc)",
         frozenset({Stage.PREVIEW}),
     ),
     Key(

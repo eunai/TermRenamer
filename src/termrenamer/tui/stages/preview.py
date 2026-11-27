@@ -8,6 +8,7 @@ The column stays left of the Title list, where the Poster panel goes (#29).
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from textual.app import ComposeResult
@@ -73,6 +74,7 @@ class PreviewStage(TitleListStage):
         self._plan: Plan | None = None
         self._rows: tuple[TitleRow, ...] = ()
         self._file = 0
+        self._looking_up = False
 
     def compose(self) -> ComposeResult:
         with Horizontal():
@@ -130,6 +132,7 @@ class PreviewStage(TitleListStage):
         """
         kept = self._kept_entry(plan) if keep_selection else None
         self._plan = plan
+        self._looking_up = False
         self._rows = title_rows(plan)
         self._file = 0
         row_index = 0
@@ -156,6 +159,18 @@ class PreviewStage(TitleListStage):
         self.query_one("#summary-counts", Static).update(_summary(PlanCounts.of(plan)))
         self._show_details()
 
+    def mark_looking_up(self) -> None:
+        """Mark the selected Title looking up, while its new Match's episodes are looked
+        up; showing a Plan clears the mark. Apply, Leave out and Change match wait."""
+        selected = self.title_list.selected
+        if selected is not None:
+            self.title_list.put_row(replace(selected, status=StatusWord.LOOKING_UP))
+        self._looking_up = True
+        self.changed()
+
+    def key_enabled(self, action: str) -> bool:
+        return not (self._looking_up and action in ("apply", "leave_out", "pick_match"))
+
     def _kept_entry(self, plan: Plan) -> PlanEntry | None:
         """The entry of ``plan`` with the selected file's recorded source, or ``None``."""
         selected = self.selected_file
@@ -175,6 +190,15 @@ class PreviewStage(TitleListStage):
         self.query_one("#leave-out", ActionButton).update(
             "x  Put back" if left_out else "x  Leave out"
         )
+        # Change match stands out on a row with no match, as in the mockup.
+        row = self.selected_row
+        unmatched = row is not None and row.status in (
+            EntryStatus.NO_MATCH,
+            EntryStatus.NOT_RECOGNISED,
+        )
+        change = self.query_one("#change-match", ActionButton)
+        change.set_class(unmatched, "-strong")
+        change.set_class(not unmatched, "-plain")
         self.changed()
 
     # ------------------------------------------------------------------ keys
