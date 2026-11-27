@@ -14,7 +14,6 @@ from pathlib import Path
 import pytest
 from textual.widgets import Input
 from textual_fspicker import FileOpen, SelectDirectory
-from textual_fspicker.parts import DirectoryNavigation
 
 from termrenamer.core.models import ScanMode
 from termrenamer.tui.views import SettingsView
@@ -169,7 +168,8 @@ async def test_a_typed_path_the_disk_cannot_answer_gets_no_suggestion_and_keeps_
         await wait_for_listing(pilot)
         monkeypatch.setattr(Path, "exists", refused)
         field = app.screen.query_one(Input)
-        field.focus()
+        await pilot.press("tab")
+        assert app.focused is field
         await pilot.press(*typed)
         await wait_for_listing(pilot)
         await pilot.pause()
@@ -182,6 +182,58 @@ async def test_a_typed_path_the_disk_cannot_answer_gets_no_suggestion_and_keeps_
 
     assert isinstance(dialog, FileOpen)
     assert shown == typed
+    assert running
+    assert sources == (queued.resolve(),)
+
+
+@pytest.mark.parametrize(
+    ("number", "said"),
+    [
+        (errno.ENAMETOOLONG, "This path cannot be used: File name too long"),
+        # The folder that holds it cannot be looked in.
+        (errno.EACCES, "This folder cannot be read: Permission denied"),
+    ],
+)
+async def test_enter_on_a_typed_path_the_disk_cannot_answer_says_why_and_keeps_the_app(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, number: int, said: str
+) -> None:
+    """Enter on a typed path leaves the file dialog open with the reason on its error
+    line when the disk cannot say what the path is; the typed text and the queue stay."""
+    queued = tmp_path / "Queued"
+    queued.mkdir()
+    start = (tmp_path / "Start").resolve()
+    start.mkdir()
+    monkeypatch.chdir(start)
+    is_dir = Path.is_dir
+
+    def refused(path: Path, *args: object, **kwargs: object) -> bool:
+        if path.name == "Too long":
+            raise OSError(number, os.strerror(number), str(path))
+        return is_dir(path, *args, **kwargs)  # type: ignore[arg-type]
+
+    app = make_app()
+    async with app.run_test(size=WIDE) as pilot:
+        await queue(pilot, queued.resolve())
+        await press(pilot, "a")
+        await wait_for_listing(pilot)
+        field = app.screen.query_one(Input)
+        await pilot.press("tab")
+        assert app.focused is field
+        await pilot.press(*"Too long")
+        monkeypatch.setattr(Path, "is_dir", refused)
+        await pilot.press("enter")
+        await wait_for_listing(pilot)
+        text = screen_text(app)
+        dialog = app.screen
+        shown = field.value
+        monkeypatch.setattr(Path, "is_dir", is_dir)
+        await press(pilot, "escape")
+        sources = app.queue.sources
+        running = app.is_running
+
+    assert isinstance(dialog, FileOpen)
+    assert said in text
+    assert shown == "Too long"
     assert running
     assert sources == (queued.resolve(),)
 
@@ -207,7 +259,8 @@ async def test_a_folder_that_lists_but_cannot_be_entered_says_why_in_the_folder_
             await press(pilot, "f")
             await wait_for_listing(pilot)
             unsearchable.chmod(0o444)
-            app.screen.query_one(DirectoryNavigation).location = unsearchable
+            # The listing holds ``..`` then Unsearchable.
+            await pilot.press("down", "enter")
             await wait_for_listing(pilot)
             await pilot.pause()
             text = screen_text(app)
