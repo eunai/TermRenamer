@@ -43,6 +43,7 @@ from pathlib import Path
 from termrenamer.core.collisions import is_case_only_rename
 from termrenamer.core.models import LinkedFolder, Move, PlanFingerprint
 from termrenamer.core.paths import claim_key
+from termrenamer.core.scan import is_companion_file
 
 _LOG = logging.getLogger(__name__)
 
@@ -465,11 +466,16 @@ def _rename_case(source: Path, dest: Path, before: PlanFingerprint, changes: Cha
 
 def _move_folder(
     source: Path, st: os.stat_result, dest: Path, changes: Changes, guards: Sequence[_Guard]
-) -> None:
+) -> bool:
     """Move the folder ``source`` (``st`` its ``lstat``) as its files: make ``dest``, move
     each child there while ``source`` is still that folder and no folder on the way is a
     link, then remove ``source``. A folder found to be a link after part of the walk
-    moved is a :class:`FolderMoveFailed` that says so, not a :class:`NowALink`."""
+    moved is a :class:`FolderMoveFailed` that says so, not a :class:`NowALink`.
+
+    A companion file (:func:`~termrenamer.core.scan.is_companion_file`) is never moved,
+    and a folder left holding only companion files, and folders this walk kept, is kept:
+    it is not removed, as Apply removes no folder that holds a file. Return whether
+    ``source`` was removed."""
     os.mkdir(dest)
     changes.folders_created.append(dest)
     moved_before = len(changes.moves)
@@ -480,13 +486,17 @@ def _move_folder(
         inner: list[_Guard] = [*guards, (source, held[0]), (dest, held[1])]
         _guard(inner)
         names = sorted(os.listdir(source), key=lambda name: claim_key(Path(name)))
+        kept: set[str] = set()
         for name in names:
             child = source / name
             try:
                 _guard(inner)
                 child_st = os.lstat(child)
                 if is_folder(child, child_st):
-                    _move_folder(child, child_st, dest / name, changes, inner)
+                    if not _move_folder(child, child_st, dest / name, changes, inner):
+                        kept.add(name)
+                elif is_companion_file(child):
+                    kept.add(name)
                 else:
                     _move_file(child, dest / name, changes, inner)
             except FolderMoveFailed:
@@ -498,6 +508,9 @@ def _move_folder(
                 raise FolderMoveFailed(errno.ELOOP, msg) from exc
             except OSError as exc:
                 raise FolderMoveFailed(exc.errno or errno.EIO, f"{child}: {exc}") from exc
+        left = set(os.listdir(source))
+        if left and left <= kept:
+            return False
         leave_folder(source)
         os.rmdir(source)
     except (FolderMoveFailed, NowALink):
@@ -508,6 +521,7 @@ def _move_folder(
         for entry in held:
             entry.release()
     changes.folders_removed.append(source)
+    return True
 
 
 def _move_file(

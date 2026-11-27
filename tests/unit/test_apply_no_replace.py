@@ -565,7 +565,7 @@ def test_a_copy_whose_source_changes_just_before_its_removal_keeps_the_source(
     assert outcome.files_left_behind == ()
 
 
-def test_a_new_name_made_by_exclusive_create_is_listed_until_its_copy_is_removed(
+def test_a_copy_that_cannot_be_read_while_it_is_open_is_kept_and_listed(
     show: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     notes = _write(show / "Disc 1" / "notes.txt", b"my notes")

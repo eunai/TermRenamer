@@ -49,7 +49,7 @@ from termrenamer.core.progress import (
     TitleLookedUp,
     TitleLookupStarted,
 )
-from termrenamer.core.scan import classify, scan
+from termrenamer.core.scan import classify, is_companion_file, scan
 from termrenamer.core.stragglers import plan_stragglers
 from termrenamer.core.templates import format_film_destination, format_tv_destination
 from termrenamer.util.errors import ParseError
@@ -144,7 +144,7 @@ def _file_source(path: Path) -> list[_Found]:
     for sibling in siblings:
         if (
             sibling.is_file()
-            and classify(sibling.suffix) is FileKind.SIDECAR
+            and classify(sibling) is FileKind.SIDECAR
             and _pair_key(sibling) == _pair_key(path)
         ):
             found.append(_Found(path=sibling, root=root, kind=FileKind.SIDECAR))
@@ -180,7 +180,7 @@ def _collect(sources: Sequence[Path]) -> tuple[list[_Found], list[str]]:
                 _Found(path=f.path, root=resolved, kind=f.kind, in_folder_source=True)
                 for f in scan(root=resolved)
             ]
-        elif classify(resolved.suffix) is FileKind.VIDEO:
+        elif classify(resolved) is FileKind.VIDEO:
             rank = (1, 0)
             contributed = _file_source(resolved)
         else:
@@ -521,8 +521,9 @@ def _source_folders(folders: Iterable[Path]) -> tuple[SourceFolder, ...]:
     """Each of ``folders`` once, in source-path order, with its direct children now.
 
     The folder that holds a file Source is never passed here, so the files beside a
-    queued file are never Stragglers. A folder that cannot be listed has no children,
-    with a logged warning.
+    queued file are never Stragglers. A companion file
+    (:func:`~termrenamer.core.scan.is_companion_file`) is not recorded, so it is never
+    one either. A folder that cannot be listed has no children, with a logged warning.
     """
     unique = {str(folder): folder for folder in folders}
     recorded = []
@@ -540,7 +541,7 @@ def _source_folders(folders: Iterable[Path]) -> tuple[SourceFolder, ...]:
         recorded.append(
             SourceFolder(
                 path=folder,
-                files=tuple(c for c in children if not is_folder[c]),
+                files=tuple(c for c in children if not is_folder[c] and not is_companion_file(c)),
                 folders=tuple(c for c in children if is_folder[c]),
             )
         )
