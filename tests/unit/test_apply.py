@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -66,10 +67,12 @@ def test_apply_moves_in_source_path_order(tmp_path: Path) -> None:
     assert [m.source.name for m in outcome.moves] == ["a.S01E01.mkv", "b.S01E01.mkv"]
 
 
-def test_apply_orders_by_the_plan_and_reads_no_path_again(
+def test_apply_follows_the_plans_own_order_and_resolves_no_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    plan = _two_shows(tmp_path)
+    built = _two_shows(tmp_path)
+    # Not source-path order, so Apply sorting the entries again would show.
+    plan = replace(built, entries=tuple(reversed(built.entries)))
 
     def resolve(self: Path, strict: bool = False) -> Path:
         raise RuntimeError("Apply read a path from the disk again")
@@ -78,7 +81,7 @@ def test_apply_orders_by_the_plan_and_reads_no_path_again(
     outcome = apply_plan(plan, confirmed=True)
     monkeypatch.undo()
 
-    assert [m.source.name for m in outcome.moves] == ["a.S01E01.mkv", "b.S01E01.mkv"]
+    assert [m.source.name for m in outcome.moves] == ["b.S01E01.mkv", "a.S01E01.mkv"]
     assert [r.status for r in outcome.results] == [ApplyStatus.RENAMED] * 2
 
 

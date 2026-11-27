@@ -251,6 +251,19 @@ class Straggler:
 
 
 @dataclass(frozen=True, slots=True)
+class LinkedFolder:
+    """A folder on the way to a new name that was a link or a junction when a Plan first
+    went through it: the link's own device and inode, its target text, and the folder
+    it led to then. Apply goes through it only while all four are the same."""
+
+    path: Path
+    device: int
+    inode: int
+    target: str
+    leads_to: Path
+
+
+@dataclass(frozen=True, slots=True)
 class Plan:
     """The immutable batch that the Preview shows and Apply executes unchanged.
 
@@ -258,9 +271,10 @@ class Plan:
     ``source_folders`` holds the children of each source folder that Stragglers are
     listed from; a Plan built with Folder rename off lists no Stragglers.
     ``folders_looked_at`` holds each folder on the way to a new name, read once, when
-    a Plan first went through it, and ``linked_folders`` those of them that were a link
-    or a junction then: Apply goes through these as the Preview showed, and through no
-    other link. A derived Plan keeps both and reads only the folders new to it.
+    a Plan first went through it under any letter case, and ``linked_folders`` those
+    of them that were a link or a junction then: Apply goes through such a link, by
+    its exact path, only while it is the same link leading to the same folder, and
+    through no other link. A derived Plan keeps both and reads only folders new to it.
     """
 
     options: PlanOptions
@@ -269,7 +283,7 @@ class Plan:
     stragglers: tuple[Straggler, ...] = ()
     source_folders: tuple[SourceFolder, ...] = ()
     folders_looked_at: tuple[Path, ...] = ()
-    linked_folders: tuple[Path, ...] = ()
+    linked_folders: tuple[LinkedFolder, ...] = ()
 
     @property
     def mode(self) -> ScanMode:

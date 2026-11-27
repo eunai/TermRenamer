@@ -36,7 +36,7 @@ from termrenamer.core.models import (
 )
 from termrenamer.core.moving import folders_between, links_among
 from termrenamer.core.parse import parse_filename, parse_film_filename
-from termrenamer.core.paths import path_key
+from termrenamer.core.paths import claim_key, path_key
 from termrenamer.core.progress import (
     BuildFinished,
     CancelSignal,
@@ -570,6 +570,22 @@ def _claim_names(entries: Sequence[PlanEntry], options: PlanOptions) -> tuple[Pl
     return tuple(named[entry.source] for entry in ordered)
 
 
+def folders_on_the_way(options: PlanOptions, root: Path, dest: Path) -> list[Path]:
+    """Each folder a move to ``dest`` goes through that Apply may make or must check:
+    from below the Destination root (or, with none, ``root``, the owning Source's
+    folder) to ``dest``'s folder, by the recorded text."""
+    return folders_between(options.destination_root or root, dest.parent)
+
+
+def source_roots(entries: Iterable[PlanEntry]) -> dict[str, Path]:
+    """The owning Source's folder of each source folder, by its recorded path: that of
+    the first entry from it."""
+    roots: dict[str, Path] = {}
+    for entry in entries:
+        roots.setdefault(str(entry.source.parent), entry.root)
+    return roots
+
+
 def _plan_of(
     options: PlanOptions,
     titles: tuple[Title, ...],
@@ -582,25 +598,24 @@ def _plan_of(
 
     Stragglers are worked out here, from the entries and ``source_folders``, the
     children each source folder had when the Plan was first built; the folders are not
-    read again. Each folder on the way to a new name that no Plan before went through
-    is read here, as the names are claimed, for whether it is a link
-    (:attr:`Plan.linked_folders`); one read before keeps what was found then.
+    read again. Each folder on the way to a new name that no Plan before went through,
+    under any letter case, is read here, as the names are claimed, for whether it is a
+    link (:attr:`Plan.linked_folders`); one read before keeps what was found then, so a
+    link made after a Preview is never taken for one the Plan found.
     """
     stragglers = plan_stragglers(options, entries, source_folders)
-    looked_at = {str(f): f for f in before.folders_looked_at} if before else {}
-    linked = {str(f): f for f in before.linked_folders} if before else {}
-    root_of = {str(e.source.parent): e.root for e in entries}
+    looked_at = {claim_key(f): f for f in before.folders_looked_at} if before else {}
+    linked = {str(lf.path): lf for lf in before.linked_folders} if before else {}
+    roots = source_roots(entries)
     ways = [(e.root, e.destination) for e in entries]
-    ways += [
-        (root_of.get(str(s.source.parent), s.source.parent), s.destination) for s in stragglers
-    ]
+    ways += [(roots.get(str(s.source.parent), s.source.parent), s.destination) for s in stragglers]
     for root, dest in ways:
         if dest is None:
             continue
-        below = options.destination_root or root
-        new = [f for f in folders_between(below, dest.parent) if str(f) not in looked_at]
-        linked.update((str(f), f) for f in links_among(new))
-        looked_at.update((str(f), f) for f in new)
+        on_the_way = folders_on_the_way(options, root, dest)
+        new = list({claim_key(f): f for f in on_the_way if claim_key(f) not in looked_at}.values())
+        linked.update((str(lf.path), lf) for lf in links_among(new))
+        looked_at.update((claim_key(f), f) for f in new)
     return Plan(
         options=options,
         titles=titles,

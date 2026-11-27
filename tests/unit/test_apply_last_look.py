@@ -10,10 +10,11 @@ from pathlib import Path
 import pytest
 
 from termrenamer.core.apply import apply_plan
-from termrenamer.core.models import ApplyResult, ApplyStatus, Plan
-from termrenamer.core.planning import LeaveOut, PutBack, derive_plan, plan_queue
+from termrenamer.core.models import ApplyResult, ApplyStatus, Candidate, Plan
+from termrenamer.core.planning import LeaveOut, PickMatch, PutBack, derive_plan, plan_queue
 
 from .links import needs_symlinks, point_folder_at
+from .test_apply_no_replace import _ignores_letter_case
 from .test_plan_stragglers import _options, _provider, _two_discs, _write
 
 STALE = (ApplyStatus.SKIP, "stale: source changed since plan")
@@ -83,6 +84,14 @@ def test_a_video_that_is_a_link_is_moved_as_the_link_after_its_target_moved(
     [first_dest] = [e.destination for e in plan.entries if e.source == first]
     assert first_dest is not None
     assert first_dest.read_bytes() == b"x" and not first_dest.is_symlink()
+
+
+def _unpoint(link: Path) -> None:
+    """Remove the link or junction ``link``, never what it points to."""
+    if link.is_symlink():
+        link.unlink()
+    else:
+        os.rmdir(link)  # a junction is removed as an empty folder
 
 
 def _now_a_link(folder: Path) -> tuple[ApplyStatus, str]:
@@ -279,3 +288,78 @@ def test_a_new_folder_made_a_link_after_the_preview_stays_one_in_a_derived_plan(
 
     assert _by_source(outcome.results)[video] == _now_a_link(show / "Show Name")
     assert os.listdir(elsewhere) == []
+
+
+def test_a_folder_that_was_a_link_pointed_elsewhere_after_the_preview_is_never_entered(
+    tmp_path: Path,
+) -> None:
+    show = _two_discs(tmp_path)
+    library = tmp_path / "Library"
+    library.mkdir()
+    disk_a = tmp_path / "Disk A" / "Show Name"
+    unrelated = tmp_path / "Unrelated" / "Show Name"
+    disk_a.mkdir(parents=True)
+    unrelated.mkdir(parents=True)
+    point_folder_at(library / "Show Name", disk_a)
+    plan = plan_queue([show], _options(destination_root=library), _provider()).plan
+    _unpoint(library / "Show Name")
+    point_folder_at(library / "Show Name", unrelated)
+
+    outcome = apply_plan(plan, confirmed=True)
+
+    another = (
+        ApplyStatus.SKIP,
+        f"the folder {library / 'Show Name'} is now another link than the Plan found",
+    )
+    video = show / "Disc 1" / "Show.Name.S01E01.mkv"
+    assert _by_source(outcome.results)[video] == another
+    assert os.listdir(unrelated) == [] and os.listdir(disk_a) == []
+    assert outcome.moves == ()
+
+
+def test_a_folder_made_a_link_after_the_preview_and_reached_in_another_letter_case_is_not_entered(
+    tmp_path: Path,
+) -> None:
+    show = _two_discs(tmp_path)
+    if not _ignores_letter_case(show):
+        pytest.skip("needs a disk that ignores letter case")
+    plan = _plan(show)
+    elsewhere = tmp_path / "Elsewhere"
+    elsewhere.mkdir()
+    point_folder_at(show / "Show Name", elsewhere)
+    [title] = plan.titles
+    lower = Candidate(id="2", name="Show name", year=2010)
+    episodes = {v.source: ("Pilot" if "E01" in v.source.name else "Second") for v in plan.videos}
+    assert title.match is not None
+    derived = derive_plan(
+        plan, PickMatch(title, lower, found=(title.match, lower), episodes=episodes)
+    )
+
+    outcome = apply_plan(derived, confirmed=True)
+
+    assert derived.linked_folders == ()
+    assert all(r.status is not ApplyStatus.RENAMED for r in outcome.results)
+    assert os.listdir(elsewhere) == []
+
+
+def test_a_new_folder_apply_made_swapped_for_a_link_gets_no_folder_inside_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    show = _two_discs(tmp_path)
+    plan = _plan(show)
+    made = show / "Show Name"
+    elsewhere = tmp_path / "Elsewhere"
+    elsewhere.mkdir()
+
+    def swap() -> None:
+        os.rmdir(made)
+        point_folder_at(made, elsewhere)
+
+    _when_made(monkeypatch, made, swap)
+    outcome = apply_plan(plan, confirmed=True)
+    monkeypatch.undo()
+
+    assert os.listdir(elsewhere) == []
+    video = show / "Disc 1" / "Show.Name.S01E01.mkv"
+    assert _by_source(outcome.results)[video] == _now_a_link(made)
+    assert outcome.moves == ()

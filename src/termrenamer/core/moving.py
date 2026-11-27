@@ -32,7 +32,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from termrenamer.core.collisions import is_case_only_rename
-from termrenamer.core.models import Move, PlanFingerprint
+from termrenamer.core.models import LinkedFolder, Move, PlanFingerprint
 from termrenamer.core.paths import claim_key
 
 _LOG = logging.getLogger(__name__)
@@ -68,16 +68,19 @@ class NotAsRecorded(OSError):
 
 class NowALink(OSError):
     """A folder the move goes through or walks, recorded as a real folder, is a link or a
-    junction now; nothing was moved or made through it."""
+    junction now, or one recorded as a link is another link or none; nothing was moved
+    or made through it."""
 
-    def __init__(self, folder: Path) -> None:
-        self.reason = f"the folder {folder} is now a link"
+    def __init__(self, folder: Path, *, another: bool = False) -> None:
+        what = "another link than the Plan found" if another else "a link"
+        self.reason = f"the folder {folder} is now {what}"
         super().__init__(errno.ELOOP, self.reason, str(folder))
 
 
-_Guard = tuple[Path, os.stat_result | None]
-"""A folder that must be a real folder at the last look before each call that claims a
-name through it, and, with its ``lstat``, the very folder that was found there."""
+_Guard = tuple[Path, "os.stat_result | LinkedFolder | None"]
+"""A folder checked at the last look before each call that claims a name through it:
+with ``None``, a real folder; with its ``lstat``, the very folder found there before;
+with a :class:`LinkedFolder`, the very link the Plan found, leading where it led."""
 
 
 @dataclass
@@ -89,28 +92,37 @@ class Changes:
     folders_removed: list[Path] = field(default_factory=list)
     files_left_behind: list[Path] = field(default_factory=list)
 
-    def make_folders(self, folder: Path, *, real_folders: Sequence[Path] = ()) -> None:
+    def make_folders(
+        self,
+        folder: Path,
+        *,
+        real_folders: Sequence[Path] = (),
+        links: Sequence[LinkedFolder] = (),
+    ) -> None:
         """Make ``folder`` and each missing folder above it, recording each one made.
 
-        Each folder of ``real_folders`` (folders on the way to ``folder``, by the
-        recorded text) that exists, or appears while the others are made, must be a
-        real folder: one that is a link or a junction raises :class:`NowALink`, and
-        nothing is made through it.
+        Before each folder is made, each folder on the way to it that exists is checked
+        (:func:`_guard`): one of ``real_folders`` must be a real folder, and one of
+        ``links`` the very link the Plan found. A check that fails raises
+        :class:`NowALink`, and nothing more is made.
         """
+        wanted = [(f, None) for f in real_folders] + [(link.path, link) for link in links]
         missing: list[Path] = []
         current = folder
         while not current.exists(follow_symlinks=False) and current.parent != current:
             missing.append(current)
             current = current.parent
-        _guard([(f, None) for f in real_folders if f == current or f in current.parents])
+        there: list[_Guard] = [g for g in wanted if g[0] == current or g[0] in current.parents]
         for path in reversed(missing):
+            _guard(there)  # the last look before this folder is made in its parent
             try:
                 os.mkdir(path)
             except FileExistsError:
-                if path in real_folders:
-                    _guard([(path, None)])  # it appeared meanwhile: never one to go through
-                continue
-            self.folders_created.append(path)
+                pass  # it appeared meanwhile: checked as any other on the way
+            else:
+                self.folders_created.append(path)
+            there += [g for g in wanted if g[0] == path]
+        _guard(there)
 
     def moved(self, source: Path, dest: Path, before: PlanFingerprint) -> None:
         """Record a file moved, with its size and modification time at its new place.
@@ -138,6 +150,7 @@ def move_no_replace(
     expected: PlanFingerprint | None = None,
     folder: bool | None = None,
     real_folders: Sequence[Path] = (),
+    links: Sequence[LinkedFolder] = (),
 ) -> None:
     """Move ``source`` (a file, a symbolic link moved as itself, or a folder) to ``dest``
     without ever replacing anything there, and record each change in ``changes``.
@@ -158,7 +171,8 @@ def move_no_replace(
 
     The last looks before the call that moves are, in this order: each folder of
     ``real_folders`` (and, in a folder's walk, the folder walked and its new folder)
-    must be a real folder, not a link or a junction; then the source, read with
+    must be a real folder, not a link or a junction, and each of ``links`` the very
+    link the Plan found, leading to the same folder; then the source, read with
     ``lstat``, must be of the kind ``folder`` says (a folder, or a file or link) and,
     with ``expected``, a file or link with the recorded size and modification time.
 
@@ -170,7 +184,8 @@ def move_no_replace(
         NotAsRecorded: the source is not as ``expected`` or ``folder`` says; nothing
             was changed.
         NowALink: a folder of ``real_folders``, or of a folder's walk before anything
-            in it moved, is a link or a junction; no file was moved.
+            in it moved, is a link or a junction, or one of ``links`` is not the link
+            the Plan found; no file was moved.
         FolderMoveFailed: a child of a folder could not be moved; what moved before it
             stays moved and recorded, and the rest stays in the source folder.
         OSError: any other failure. Whatever the error, an interrupt included, the file
@@ -183,7 +198,7 @@ def move_no_replace(
             but for an interrupt in the instant after the call that makes the new name
             returns and before it is recorded.
     """
-    guards: list[_Guard] = [(f, None) for f in real_folders]
+    guards: list[_Guard] = [(f, None) for f in real_folders] + [(lf.path, lf) for lf in links]
     if expected is not None:
         folder = False
     if is_case_only_rename(source, dest):
@@ -215,18 +230,31 @@ def folders_between(top: Path, folder: Path) -> list[Path]:
     return found
 
 
-def links_among(folders: Sequence[Path]) -> list[Path]:
-    """Each of ``folders`` that is a link or a junction now; a folder that cannot be
-    read is not one."""
+def links_among(folders: Sequence[Path]) -> list[LinkedFolder]:
+    """Each of ``folders`` that is a link or a junction now, as it is now; a folder
+    that cannot be read is not one."""
     found = []
     for path in folders:
         try:
             st = os.lstat(path)
+            if not is_link(path, st):
+                continue
+            target, leads_to = os.readlink(path), Path(os.path.realpath(path))
         except OSError:
             continue
-        if is_link(path, st):
-            found.append(path)
+        found.append(LinkedFolder(path, st.st_dev, st.st_ino, target, leads_to))
     return found
+
+
+def _is_the_link(folder: Path, st: os.stat_result, was: LinkedFolder) -> bool:
+    """Whether ``folder`` (``st`` its ``lstat``) is the link ``was`` recorded: the same
+    link, with the same target text, leading to the same folder."""
+    if not is_link(folder, st) or (st.st_dev, st.st_ino) != (was.device, was.inode):
+        return False
+    try:
+        return os.readlink(folder) == was.target and os.path.realpath(folder) == str(was.leads_to)
+    except OSError:
+        return False
 
 
 def is_link(path: Path, st: os.stat_result) -> bool:
@@ -261,10 +289,15 @@ def leave_folder(folder: Path) -> None:
 
 
 def _guard(folders: Sequence[_Guard]) -> None:
-    """Raise :class:`NowALink` when a folder of ``folders`` is a link or a junction, and
-    :class:`OSError` when it is no longer the very folder found before."""
+    """Raise :class:`NowALink` when a folder of ``folders`` is a link or a junction, or is
+    not the link the Plan found, and :class:`OSError` when it is no longer the very
+    folder found before."""
     for folder, was in folders:
         st = os.lstat(folder)
+        if isinstance(was, LinkedFolder):
+            if not _is_the_link(folder, st, was):
+                raise NowALink(folder, another=True)
+            continue
         if is_link(folder, st):
             raise NowALink(folder)
         if was is not None and not os.path.samestat(st, was):

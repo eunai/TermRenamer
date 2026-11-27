@@ -13,6 +13,7 @@ from termrenamer.core.models import (
     ApplyResult,
     ApplyStatus,
     EntryStatus,
+    LinkedFolder,
     Plan,
     PlanEntry,
     PlanFingerprint,
@@ -29,7 +30,7 @@ from termrenamer.core.moving import (
     move_no_replace,
 )
 from termrenamer.core.paths import claim_key
-from termrenamer.core.planning import fingerprint
+from termrenamer.core.planning import fingerprint, folders_on_the_way, source_roots
 from termrenamer.util.errors import ValidationError
 
 _LOG = logging.getLogger(__name__)
@@ -50,25 +51,27 @@ def _stale(exc: NotAsRecorded) -> str:
 
 @dataclass(frozen=True, slots=True)
 class _Way:
-    """The folders one move goes through that must be real folders at the last look
-    before it: ``new_side`` each folder from below the Destination root (or, with none,
-    the owning Source's folder) to the new name's folder, and ``real_folders`` those and
-    each folder from the owning Source's folder to the source's folder. A folder the
-    Plan found to be a link already is gone through as the Preview showed it, and the
+    """The folders one move goes through, checked at the last look before it:
+    ``new_side`` each folder on the way to the new name
+    (:func:`~termrenamer.core.planning.folders_on_the_way`), ``real_folders`` those and
+    each folder from the owning Source's folder to the source's folder, and ``links``
+    the folders among them that the Plan found to be links. Each of ``real_folders``
+    must be a real folder, and each of ``links`` the very link the Plan found; the
     Destination root itself may be a link."""
 
     new_side: tuple[Path, ...]
     real_folders: tuple[Path, ...]
+    links: tuple[LinkedFolder, ...]
 
 
 def _way(plan: Plan, root: Path, source: Path, dest: Path) -> _Way:
-    linked = {str(folder) for folder in plan.linked_folders}
-    below = plan.options.destination_root or root
-    new_side = tuple(f for f in folders_between(below, dest.parent) if str(f) not in linked)
-    old_side = (root, *folders_between(root, source.parent))
+    linked = {str(lf.path): lf for lf in plan.linked_folders}
+    new_side = folders_on_the_way(plan.options, root, dest)
+    on_the_way = [*new_side, root, *folders_between(root, source.parent)]
     return _Way(
-        new_side=new_side,
-        real_folders=(*new_side, *(f for f in old_side if str(f) not in linked)),
+        new_side=tuple(f for f in new_side if str(f) not in linked),
+        real_folders=tuple(f for f in on_the_way if str(f) not in linked),
+        links=tuple(dict.fromkeys(linked[str(f)] for f in on_the_way if str(f) in linked)),
     )
 
 
@@ -86,7 +89,7 @@ def _move(
     With ``expected``, the source must still have the size and modification time the
     Plan recorded; with ``folder``, it must still be of the kind the Plan listed."""
     try:
-        changes.make_folders(dest.parent, real_folders=way.new_side)
+        changes.make_folders(dest.parent, real_folders=way.new_side, links=way.links)
     except NowALink as exc:
         return ApplyStatus.SKIP, exc.reason
     except OSError as exc:
@@ -99,6 +102,7 @@ def _move(
             expected=expected,
             folder=folder,
             real_folders=way.real_folders,
+            links=way.links,
         )
     except FileExistsError:
         return ApplyStatus.SKIP, _TAKEN
@@ -292,9 +296,7 @@ def _apply_all(
     emptied: set[Path] = set()
     moved_out: set[str] = set()
     applied_sources: set[Path] = set()
-    root_of: dict[str, Path] = {}
-    for entry in plan.entries:
-        root_of.setdefault(str(entry.source.parent), entry.root)
+    root_of = source_roots(plan.entries)
 
     for entry in ordered:
         if entry.status is EntryStatus.LEFT_OUT:
