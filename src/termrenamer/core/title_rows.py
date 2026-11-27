@@ -2,8 +2,8 @@
 
 A Title's status word is the first that applies: no match (the Title has no Match, or
 any of its files has the status no match), left out (every file is left out), name
-taken (any file), ready. Counts count
-videos.
+taken (any file), ready. A not recognised video's row says not recognised, or left out
+when the person left it out. Counts count videos.
 """
 
 from __future__ import annotations
@@ -163,7 +163,7 @@ def title_rows(plan: Plan) -> tuple[TitleRow, ...]:
             TitleRow(
                 name=video.source.name,
                 title=None,
-                status=EntryStatus.NOT_RECOGNISED,
+                status=video.status,  # not recognised, or left out
                 entries=(video, *sidecars),
             )
         )

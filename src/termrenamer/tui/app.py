@@ -491,20 +491,14 @@ class TermRenamerApp(App[None]):
         """Leave the selected video out of the Plan with its Sidecars, or put it back.
 
         Either change derives a new Plan, which the Preview shows with the same file
-        selected. A file Apply does not rename anyway changes nothing, and so does a
-        failure to test the new names on disk: the Plan shown stays.
+        selected. Any video can be left out, one with no match or not recognised too,
+        and it stays left out through Change match until it is put back. A failure to
+        test the new names on disk changes nothing: the Plan shown stays.
         """
         plan = self.plan
         preview = self.query_one(PreviewStage)
         video = preview.selected_file
         if plan is None or video is None or self._applying or self._refuse_while_picking():
-            return
-        if video.status in (EntryStatus.NO_MATCH, EntryStatus.NOT_RECOGNISED):
-            self.say(
-                "Nothing to leave out: Apply does not rename a file with the status "
-                f"{video.status.value}.",
-                MessageKind.WARNING,
-            )
             return
         change: PlanChange
         if video.status is EntryStatus.LEFT_OUT:

@@ -204,17 +204,32 @@ def test_a_video_skipped_for_a_taken_name_can_be_left_out_and_put_back(tmp_path:
     assert derive_plan(left_out, PutBack(_video(left_out, "Disc B"))) == plan
 
 
-def test_no_match_and_not_recognised_files_cannot_be_left_out(tmp_path: Path) -> None:
+def test_no_match_and_not_recognised_files_can_be_left_out_and_put_back(tmp_path: Path) -> None:
+    """Leave out is the person's choice, whatever the lookup found: each video comes back
+    with the status it had, and its Sidecar follows it both ways."""
     (tmp_path / "Unknown.Show.S01E01.mkv").write_bytes(b"1")
+    (tmp_path / "Unknown.Show.S01E01.srt").write_text("s", encoding="utf-8")
     (tmp_path / "Show.Name.S01E05.mkv").write_bytes(b"5")
     (tmp_path / "holiday video.mkv").write_bytes(b"h")
     plan = plan_queue([tmp_path], _options(NameTakenPolicy.SUFFIX), _show_name()).plan
-    statuses = {v.status for v in plan.videos}
-    assert statuses == {EntryStatus.NO_MATCH, EntryStatus.NOT_RECOGNISED}
+    before = {v.source.name: v.status for v in plan.videos}
+    assert before == {
+        "Unknown.Show.S01E01.mkv": EntryStatus.NO_MATCH,
+        "Show.Name.S01E05.mkv": EntryStatus.NO_MATCH,
+        "holiday video.mkv": EntryStatus.NOT_RECOGNISED,
+    }
 
-    for video in plan.videos:
-        with pytest.raises(ValueError, match="cannot be left out"):
-            derive_plan(plan, LeaveOut(video))
+    for name, status in before.items():
+        video = next(v for v in plan.videos if v.source.name == name)
+        left_out = derive_plan(plan, LeaveOut(video))
+        shown = next(v for v in left_out.videos if v.source.name == name)
+        assert shown.status is EntryStatus.LEFT_OUT
+        assert shown.destination is None
+        assert all(
+            e.status is EntryStatus.LEFT_OUT for e in left_out.entries if e.video == video.source
+        )
+        put_back = derive_plan(left_out, PutBack(shown))
+        assert put_back == plan, (name, status)
 
 
 def test_a_sidecar_cannot_be_left_out_on_its_own_and_only_a_left_out_video_is_put_back(
