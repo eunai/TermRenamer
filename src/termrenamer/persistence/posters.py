@@ -8,8 +8,11 @@ inside the store's folder; a body larger than :data:`MAX_POSTER_BYTES`, or one t
 not a JPEG, PNG or WebP image, is refused. With Pillow installed (the ``posters``
 extra), a body is decoded whole before it is stored, so a stored file always draws.
 
-The store keeps no state in memory, so several threads may fetch at once. A folder or
-file the store cannot reach counts as no file, never as a crash.
+The store keeps no Poster in memory, so several threads may fetch at once. A folder or
+file the store cannot reach counts as no file, never as a crash. Before it reads,
+writes or deletes a file, the store checks that its folder is a real folder (no link
+and no junction) whose real place is inside the per-user cache folder; otherwise it
+does nothing, logs one line for the run, and every Poster is "no poster".
 """
 
 from __future__ import annotations
@@ -18,11 +21,13 @@ import contextlib
 import hashlib
 import importlib
 import io
+import logging
 import os
 import re
 import stat
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -33,6 +38,8 @@ import httpx
 
 from termrenamer.util.errors import ProviderError, TermRenamerError
 from termrenamer.util.http import Abandoned, HttpClient
+
+_LOG = logging.getLogger(__name__)
 
 MAX_AGE_SECONDS = 30 * 24 * 60 * 60.0
 """How long a Poster file is reused; older files are deleted at start."""
@@ -57,6 +64,11 @@ _STORED_NAME = re.compile(r"[0-9a-f]{64}(?:\.poster|\.[A-Za-z0-9_]{1,16}\.part)"
 
 class PosterError(TermRenamerError):
     """A Poster cannot be shown: its reference was refused, or its download failed."""
+
+
+class PosterFolderRefused(PosterError):
+    """The poster folder is a link, or not inside the per-user cache folder; the store
+    has logged it once and touches nothing."""
 
 
 class PosterAbandoned(PosterError):
@@ -102,22 +114,41 @@ def poster_address(request: PosterRequest) -> str:
     raise PosterError(f"Posters from {request.provider_id!r} are not shown")
 
 
-def poster_folder() -> Path:
-    """The per-user folder Poster files go in.
+def cache_folder() -> Path:
+    """The per-user cache folder the poster folder is inside.
 
-    Windows: ``%LOCALAPPDATA%\\termrenamer\\posters``, or ``AppData\\Local`` in the home
-    folder when ``LOCALAPPDATA`` is unset or empty. Every other platform:
-    ``$XDG_CACHE_HOME/termrenamer/posters``, or ``.cache`` in the home folder when
-    ``XDG_CACHE_HOME`` is unset, empty or relative. It does not depend on the lookup
-    cache setting.
+    Windows: ``%LOCALAPPDATA%``, or ``AppData\\Local`` in the home folder when
+    ``LOCALAPPDATA`` is unset or empty. Every other platform: ``$XDG_CACHE_HOME``, or
+    ``.cache`` in the home folder when ``XDG_CACHE_HOME`` is unset, empty or relative.
     """
     if sys.platform == "win32":
         local = os.environ.get("LOCALAPPDATA", "")
-        base = Path(local) if local else Path.home() / "AppData" / "Local"
-    else:
-        xdg = Path(os.environ.get("XDG_CACHE_HOME", ""))
-        base = xdg if xdg.is_absolute() else Path.home() / ".cache"
-    return base / "termrenamer" / "posters"
+        return Path(local) if local else Path.home() / "AppData" / "Local"
+    xdg = Path(os.environ.get("XDG_CACHE_HOME", ""))
+    return xdg if xdg.is_absolute() else Path.home() / ".cache"
+
+
+def poster_folder() -> Path:
+    """The per-user folder Poster files go in: ``termrenamer/posters`` in
+    :func:`cache_folder`. It does not depend on the lookup cache setting."""
+    return cache_folder() / "termrenamer" / "posters"
+
+
+def _folder_refusal(folder: Path, inside: Path) -> str | None:
+    """Why the store may not use ``folder``, or ``None``: it must be no link and no
+    junction, a folder when it exists, and its real place inside ``inside``'s."""
+    try:
+        if folder.is_symlink() or folder.is_junction():
+            return "is a link"
+        if folder.exists() and not folder.is_dir():
+            return "is not a folder"
+        real, real_inside = folder.resolve(), inside.resolve()
+    except (OSError, RuntimeError) as exc:
+        return f"cannot be checked ({exc})"
+    # Compared as the system's paths compare: letter case counts except on Windows.
+    if not real.is_relative_to(real_inside):
+        return f"is not inside {inside}"
+    return None
 
 
 def _is_image(body: bytes) -> bool:
@@ -158,14 +189,31 @@ class PosterStore:
         http: HttpClient,
         *,
         clock: Callable[[], float] = time.time,
+        inside: Path | None = None,
     ) -> None:
+        """``inside`` is the folder ``folder`` must really be in: the per-user cache
+        folder for the app's store, and ``folder``'s parent when not given."""
         self._folder = folder
         self._http = http
         self._clock = clock
+        self._inside = folder.parent if inside is None else inside
+        self._refusal_logged = False
+        self._lock = threading.Lock()
 
     @property
     def folder(self) -> Path:
         return self._folder
+
+    def _refused(self) -> bool:
+        """Whether the folder is refused now; the first refusal of the run logs a line."""
+        reason = _folder_refusal(self._folder, self._inside)
+        if reason is None:
+            return False
+        with self._lock:
+            first, self._refusal_logged = not self._refusal_logged, True
+        if first:
+            _LOG.warning("Posters are not stored: the poster folder %s %s", self._folder, reason)
+        return True
 
     def _path_for(self, address: str) -> Path:
         return self._folder / (hashlib.sha256(address.encode("utf-8")).hexdigest() + _SUFFIX)
@@ -190,6 +238,8 @@ class PosterStore:
             path = self._path_for(poster_address(request))
         except PosterError:
             return None
+        if self._refused():
+            return None
         return path if self._fresh(path) else None
 
     def fetch(self, request: PosterRequest, *, go_on: Callable[[], bool] | None = None) -> Path:
@@ -205,6 +255,8 @@ class PosterStore:
         """
         address = poster_address(request)
         path = self._path_for(address)
+        if self._refused():
+            raise PosterFolderRefused("the poster folder is refused")
         if self._fresh(path):
             return path
         try:
@@ -217,6 +269,8 @@ class PosterStore:
         body = download.content
         if (kind and not kind.startswith("image/")) or not _is_image(body) or not _decodes(body):
             raise PosterError("the download is not an image")
+        if self._refused():
+            raise PosterFolderRefused("the poster folder is refused")
         try:
             self._write(path, body)
         except OSError as exc:
@@ -226,6 +280,8 @@ class PosterStore:
     def _write(self, path: Path, body: bytes) -> None:
         """Write ``body`` to ``path`` through a temporary file beside it."""
         self._folder.mkdir(parents=True, exist_ok=True)
+        if self._refused():  # made through a link since the last check
+            raise OSError("the poster folder is refused")
         handle, temporary = tempfile.mkstemp(dir=self._folder, prefix=path.stem + ".", suffix=_PART)
         try:
             with os.fdopen(handle, "wb") as out:
@@ -244,6 +300,8 @@ class PosterStore:
         Only files the store names are touched; anything else in the folder stays, and
         so does a file whose age cannot be read.
         """
+        if self._refused():
+            return 0
         try:
             entries = list(self._folder.iterdir())
         except OSError:

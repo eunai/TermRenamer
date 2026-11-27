@@ -24,6 +24,7 @@ from textual.widget import Widget
 from termrenamer.persistence.posters import (
     PosterAbandoned,
     PosterError,
+    PosterFolderRefused,
     PosterRequest,
     PosterStore,
 )
@@ -148,6 +149,7 @@ class PosterSource:
                 raise PosterError(running.error)
             return
         error: str | None = None
+        logged = False  # the store logs a refused folder itself, once
         try:
             self.store.fetch(request, go_on=download.wanted)
         except PosterAbandoned as exc:
@@ -155,12 +157,14 @@ class PosterSource:
             raise
         except Exception as exc:  # a Poster never stops the screen
             error = str(exc) if isinstance(exc, PosterError) else f"{type(exc).__name__}: {exc}"
+            logged = isinstance(exc, PosterFolderRefused)
             download.error = error
             raise PosterError(error) from exc
         finally:
             with self._lock:
                 if error is not None and request not in self.failed:
                     self.failed.add(request)
-                    _LOG.warning("No Poster for %s: %s", name, error)
+                    if not logged:
+                        _LOG.warning("No Poster for %s: %s", name, error)
                 del self._downloads[request]
             download.done.set()
