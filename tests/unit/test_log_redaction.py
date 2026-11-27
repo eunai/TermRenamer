@@ -21,6 +21,7 @@ import pytest
 from termrenamer.api.omdb import OmdbProvider
 from termrenamer.api.tmdb import TmdbProvider
 from termrenamer.api.tvdb_v4 import TvdbV4Provider
+from termrenamer.tui.log_book import LogBook, LogBookHandler
 from termrenamer.util.errors import ProviderError
 from termrenamer.util.http import HttpClient, HttpClientConfig
 from termrenamer.util.logging import setup_logging
@@ -163,7 +164,7 @@ def test_no_record_quotes_a_key_the_pin_the_token_or_the_login_body(
 
     text = "\n".join(raw.lines)
     assert "termrenamer.util.http: HTTP GET https://api.themoviedb.org/3/search/tv 200" in text
-    assert "HTTP GET https://www.omdbapi.com 200" in text
+    assert "HTTP GET https://www.omdbapi.com/ 200" in text
     assert "HTTP POST https://api4.thetvdb.com/v4/login 200" in text
     _assert_no_secret(text)
     assert _TVDB_PIN not in text and '"pin"' not in text and "apikey" not in text
@@ -201,8 +202,99 @@ async def test_the_logs_view_masks_each_key_and_token_whatever_quotes_it(
         _quote_every_secret()
         text = "\n".join(line for _, line in app.log_book.lines_after(0))
 
-    assert "HTTP GET https://www.omdbapi.com 200" in text
+    assert "HTTP GET https://www.omdbapi.com/ 200" in text
     assert "keys: *** *** ***" in text and "token: ***" in text
     assert "Traceback" in text and "lookup failed for ***" in text
     _assert_no_secret(text)
     assert "HTTP Request:" not in text
+
+
+def test_a_redirect_is_logged_as_the_request_the_app_made(bare_root: logging.Logger) -> None:
+    _strip(bare_root)
+    setup_logging(level=logging.DEBUG, stream=io.StringIO())
+    raw = _Raw()
+    bare_root.addHandler(raw)
+
+    def redirect(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/login"):
+            return httpx.Response(307, headers={"Location": f"/v4/elsewhere/{_TVDB_PIN}"})
+        return httpx.Response(200, json={"status": "success", "data": {"token": _TVDB_TOKEN}})
+
+    http = HttpClient(
+        config=HttpClientConfig(max_attempts=1),
+        client=httpx.Client(transport=httpx.MockTransport(redirect), follow_redirects=True),
+    )
+    tvdb = TvdbV4Provider(http, api_key=_TVDB_KEY, subscriber_pin=_TVDB_PIN)
+    with pytest.raises(ProviderError):
+        tvdb.search_shows(hint="Harbour Lights")
+
+    text = "\n".join(raw.lines)
+    assert "HTTP POST https://api4.thetvdb.com/v4/login 200" in text
+    assert _TVDB_PIN not in text and "elsewhere" not in text
+
+
+class _Unprintable(Exception):
+    def __str__(self) -> str:
+        raise _Unprintable
+
+
+class _Refuses:
+    """A log argument that cannot be made into text, with an error that cannot either."""
+
+    def __str__(self) -> str:
+        raise _Unprintable
+
+
+def test_a_line_that_cannot_be_written_shows_no_key_on_any_stream(
+    bare_root: logging.Logger, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _strip(bare_root)
+    stream = io.TextIOWrapper(io.BytesIO(), encoding="ascii")
+    setup_logging(level=logging.DEBUG, stream=stream)
+    TmdbProvider(_http(_answer), api_key=_TMDB_KEY)
+    log = logging.getLogger("a.library")
+
+    log.warning("%s %s", _TMDB_KEY, _Refuses())
+    log.warning("→ %s", _TMDB_KEY)  # the ascii stream refuses the arrow
+
+    stream.flush()
+    written = stream.buffer.getvalue().decode("ascii")  # type: ignore[attr-defined]
+    assert written.count("WARNING a.library: a log line could not be written") == 2
+    captured = capsys.readouterr()
+    for text in (written, captured.out, captured.err):
+        assert _TMDB_KEY not in text
+
+
+async def test_the_logs_view_writes_no_key_when_a_line_cannot_be_written(
+    bare_root: logging.Logger, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _strip(bare_root)
+    app = make_app()
+    async with app.run_test(size=SIZE):
+        TmdbProvider(_http(_answer), api_key=_TMDB_KEY)
+        logging.getLogger("a.library").warning("%s %s", _TMDB_KEY, _Refuses())
+        text = "\n".join(line for _, line in app.log_book.lines_after(0))
+
+    assert "WARNING a.library: a log line could not be written" in text
+    captured = capsys.readouterr()
+    for shown in (text, captured.out, captured.err):
+        assert _TMDB_KEY not in shown
+
+
+def test_the_logs_view_handler_reports_its_own_failure_with_no_key(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fails() -> None:
+        raise RuntimeError("the screen is gone")
+
+    book = LogBook()
+    handler = LogBookHandler(book, fails)
+    record = logging.LogRecord("a.library", logging.WARNING, __file__, 1, "%s", (_TMDB_KEY,), None)
+    TmdbProvider(_http(_answer), api_key=_TMDB_KEY)
+
+    handler.handle(record)
+
+    captured = capsys.readouterr()
+    lines = "\n".join(line for _, line in book.lines_after(0))
+    for shown in (lines, captured.out, captured.err):
+        assert _TMDB_KEY not in shown

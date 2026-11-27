@@ -7,12 +7,13 @@ build's thread; the book is safe to add to from any thread.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import threading
 from collections import deque
 from collections.abc import Callable
 
-from termrenamer.util.logging import MaskingFormatter
+from termrenamer.util.logging import MaskingFormatter, failed_line
 
 
 class LogBook:
@@ -54,3 +55,9 @@ class LogBookHandler(logging.Handler):
             self._on_line()
         except Exception:
             self.handleError(record)
+
+    def handleError(self, record: logging.LogRecord) -> None:  # noqa: N802 - logging's name
+        """Add :func:`failed_line` to the book, in place of logging's report, which prints
+        the record's arguments; nothing when even that fails."""
+        with contextlib.suppress(Exception):  # nothing more can be written
+            self._book.add(failed_line(record))
