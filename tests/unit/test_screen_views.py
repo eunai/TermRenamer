@@ -16,7 +16,9 @@ from termrenamer.tui.stage import Stage
 from termrenamer.tui.views import HelpView, LogsView, SettingsView
 
 from .screen_driver import (
+    POSTERS_AVAILABLE,
     SIZE,
+    ImageHost,
     build,
     make_app,
     press,
@@ -25,44 +27,55 @@ from .screen_driver import (
     settings,
     text_of,
     tv_backups,
+    wiring,
 )
 
 
-async def test_s_opens_settings_with_its_six_rows_and_escape_closes_it() -> None:
-    app = make_app(loaded=settings(folder_rename=True, tv_root=Path("/media/Shows")))
+async def test_s_opens_settings_with_its_seven_rows_and_escape_closes_it(tmp_path: Path) -> None:
+    # Short paths on the drive of the temporary folder fit the fields whole.
+    tv = Path(tmp_path.anchor) / "Backups" / "Shows"
+    film = Path(tmp_path.anchor) / "Backups" / "Films"
+    loaded = settings(
+        folder_rename=True,
+        season_folders=True,
+        tv_root=tv,
+        film_root=film,
+        show_posters=False,
+    )
+    store = ImageHost().store(tmp_path / "posters")
+    app = make_app(wiring(posters=store), loaded, posters=POSTERS_AVAILABLE)
     async with app.run_test(size=SIZE) as pilot:
         await press(pilot, "s")
         assert isinstance(app.screen, SettingsView)
-        text = screen_text(app)
+        rows = screen_text(app).splitlines()
         await press(pilot, "escape")
         assert app.screen is app.screen_stack[0]
-    for label in (
-        "TV Destination root",
-        "Film Destination root",
-        "Folder rename",
-        "Season folder",
-        "Name taken",
-        "Theme",
-    ):
-        assert label in text
-    assert str(Path("/media/Shows")) in text
-    assert "dark" in text and "light" in text
-    assert "suffix" in text and "skip" in text
+    assert f"▸ TV Destination root {tv}" in rows
+    assert f"Film Destination root {film}" in rows
+    assert "Folder rename on" in rows
+    assert "Season folder on" in rows
+    assert "Name taken suffix skip" in rows
+    assert "Show posters off" in rows
+    assert "Theme dark light" in rows
 
 
-async def test_a_destination_root_typed_in_settings_is_saved_to_the_settings_owner() -> None:
+async def test_a_destination_root_typed_in_settings_is_saved_to_the_settings_owner(
+    tmp_path: Path,
+) -> None:
+    tv = Path(tmp_path.anchor) / "Backups" / "TV"
+    film = Path(tmp_path.anchor) / "Backups" / "Films"
     app = make_app(loaded=settings(folder_rename=True))
     async with app.run_test(size=SIZE) as pilot:
         await press(pilot, "s")
         assert app.focused is app.screen.query_one("#tv-root", Input)
-        await pilot.press(*"/media/TV", "enter")
+        await pilot.press(*str(tv), "enter")
         await press(pilot, "down")
-        await pilot.press(*"/media/Films")
+        await pilot.press(*str(film))
         await press(pilot, "escape")
         owner = app.session_settings
-        assert owner.destination_root(ScanMode.TV) == Path("/media/TV")
-        assert owner.destination_root(ScanMode.FILM) == Path("/media/Films")
-        assert f"Destination root {Path('/media/TV')}{os.sep}" in screen_text(app)
+        assert owner.destination_root(ScanMode.TV) == tv
+        assert owner.destination_root(ScanMode.FILM) == film
+        assert f"Destination root {tv}{os.sep}" in screen_text(app)
 
 
 async def test_season_folder_cannot_be_turned_on_while_folder_rename_is_off() -> None:
