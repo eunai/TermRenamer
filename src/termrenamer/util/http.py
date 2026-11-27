@@ -37,7 +37,15 @@ class Download:
 
 
 class HttpClient:
-    """Thin wrapper around ``httpx.Client`` with retry/backoff (no secrets in logs)."""
+    """Thin wrapper around ``httpx.Client`` with retry/backoff.
+
+    Each response it returns is logged at INFO with the method, the host and the path
+    of the request as the caller made it, and the status: never the query string, which
+    holds the TMDB and OMDb keys, and never a URL a server sent back, such as a
+    redirect's. httpx's own request lines are kept out of the logs
+    (:mod:`termrenamer.util.logging`). No other line of it quotes a URL, a header or a
+    body.
+    """
 
     def __init__(
         self,
@@ -66,7 +74,9 @@ class HttpClient:
         Retries on: timeout, connect errors, HTTP 429 / 502 / 503 / 504.
         Does not retry 401/404/400 (adapters handle auth refresh separately).
         """
-        return self._with_retries(lambda: self._client.request(method, url, **kwargs))
+        response = self._with_retries(lambda: self._client.request(method, url, **kwargs))
+        _log_answer(method, url, response)
+        return response
 
     def download(self, url: str, *, max_bytes: int) -> Download:
         """GET ``url`` with retries, as :meth:`request` does, reading at most ``max_bytes``.
@@ -94,6 +104,7 @@ class HttpClient:
                 return response
 
         response = self._with_retries(send)
+        _log_answer("GET", url, response)
         if response.status_code != 200:
             raise ProviderError(f"HTTP {response.status_code}")
         return Download(
@@ -160,6 +171,14 @@ class HttpClient:
         if delay < 0:
             delay = 0.0
         time.sleep(delay)
+
+
+def _log_answer(method: str, url: str, response: httpx.Response) -> None:
+    """Log the request as the caller made it: its method, host and path, and the status."""
+    asked = httpx.URL(url)
+    _LOG.info(
+        "HTTP %s %s://%s%s %s", method, asked.scheme, asked.host, asked.path, response.status_code
+    )
 
 
 def _parse_retry_after(response: httpx.Response) -> float | None:
