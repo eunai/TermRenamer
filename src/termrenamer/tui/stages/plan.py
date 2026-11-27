@@ -132,6 +132,7 @@ class PlanStage(TitleListStage):
         self._row_of = {}
         self._current = None
         self._total = self._looked_up = self._matched = self._unmatched = 0
+        # The rate counts from the key press, not from when the screen hears the scan.
         self._rate = LookupRate(self.clock)
         self.title_list.set_rows([])
         self._draw_rows()
@@ -158,7 +159,6 @@ class PlanStage(TitleListStage):
             self._draw_progress()
 
     def _scanned(self, event: Scanned) -> None:
-        self._rate = LookupRate(self.clock)
         self._total = event.files
         self._rows = [
             _Row(
