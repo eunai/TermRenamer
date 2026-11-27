@@ -3,14 +3,16 @@
 :class:`PosterView` draws one Poster, or in its place the Title's name and a word such
 as "no poster". It asks the poster store for the file: a stored file is drawn at once;
 otherwise, when downloads are allowed, the store downloads it on a thread of its own,
-never on the screen's. A failed download logs one line and leaves "no poster".
+never on the screen's. A failed download, or a stored file the image widget cannot
+read, logs one line and leaves "no poster"; the source remembers it for the session,
+for every view.
 
 While Posters are hidden or unavailable the view is given no :class:`PosterSource`:
-it then draws nothing, removes its image and downloads nothing. While it is paused (its
-Stage is not shown, or a dialog covers it) it draws the Title's name in place of the
-image and downloads nothing; a dialog's backdrop would otherwise tint the image's cells,
-which breaks a Kitty image. :class:`PosterPanel` frames one view at the mockup's 24 by
-17 cells.
+it then draws nothing, removes its image and starts no download (one already running
+finishes and is stored). While it is paused (its Stage is not shown, or a dialog covers
+it) it draws the Title's name in place of the image and starts no download; a dialog's
+backdrop would otherwise tint the image's cells, which breaks a Kitty image.
+:class:`PosterPanel` frames one view at the mockup's 24 by 17 cells.
 """
 
 from __future__ import annotations
@@ -28,12 +30,17 @@ from textual.worker import Worker, WorkerState
 
 from termrenamer.persistence.posters import PosterError, PosterRequest
 from termrenamer.tui.poster_support import PosterSource
+from termrenamer.tui.words import provider_name
 
 _LOG = logging.getLogger(__name__)
 
 POSTER_WIDTH = 24
 POSTER_HEIGHT = 17
 """The Poster's cells inside the panel's frame, as in the mockup."""
+
+PANEL_WIDTH = POSTER_WIDTH + 2
+PANEL_HEIGHT = POSTER_HEIGHT + 2
+"""The panel's columns and rows, its frame included."""
 
 NO_POSTER = "no poster"
 
@@ -116,8 +123,7 @@ class PosterView(Vertical):
         self._image: Widget | None = None
         self._image_request: PosterRequest | None = None
         self._paused = False
-        self._fetches: dict[Worker[_Fetched], PosterRequest] = {}
-        self._failed: set[PosterRequest] = set()
+        self._fetches: dict[Worker[_Fetched], tuple[PosterRequest, PosterSource]] = {}
 
     def compose(self) -> ComposeResult:
         yield Static("", classes="poster-text")
@@ -132,7 +138,8 @@ class PosterView(Vertical):
         return self._image
 
     def use(self, source: PosterSource | None) -> None:
-        """Show Posters from ``source``, or, for ``None``, nothing: no image, no download."""
+        """Show Posters from ``source``, or, for ``None``, nothing: no image, and no
+        download starts."""
         self._source = source
         if source is None:
             self._drop_image()
@@ -158,7 +165,7 @@ class PosterView(Vertical):
         self._draw()
 
     def pause(self, paused: bool) -> None:
-        """While ``paused``, draw the name in place of the image and download nothing."""
+        """While ``paused``, draw the name in place of the image and start no download."""
         if paused != self._paused:
             self._paused = paused
             self._draw()
@@ -174,7 +181,7 @@ class PosterView(Vertical):
             self.text.update("")
             return
         request = wanted.request
-        if request is None or request in self._failed:
+        if request is None or request in source.failed:
             self._words(
                 wanted.name, wanted.label if request is None and wanted.label else NO_POSTER
             )
@@ -188,7 +195,7 @@ class PosterView(Vertical):
         if path is not None:
             self._drop_image()
             self.text.display = False
-            image = source.image(path, lambda exc: self._unreadable(request, wanted.name, exc))
+            image = source.image(path, lambda exc: self._unreadable(source, request, wanted, exc))
             image.add_class("poster-image")
             self._image, self._image_request = image, request
             self.mount(image)
@@ -197,7 +204,7 @@ class PosterView(Vertical):
             self._words(wanted.name, wanted.label)
             return
         self._words(wanted.name, "")
-        if request not in self._fetches.values():
+        if all(fetching != request for fetching, _source in self._fetches.values()):
             store = source.store
 
             def fetch() -> _Fetched:
@@ -210,7 +217,7 @@ class PosterView(Vertical):
                 return _Fetched(request, None)
 
             worker = self.run_worker(fetch, thread=True, group="poster", exit_on_error=False)
-            self._fetches[worker] = request
+            self._fetches[worker] = (request, source)
 
     def _words(self, name: str, label: str) -> None:
         self._drop_image()
@@ -226,10 +233,13 @@ class PosterView(Vertical):
             image.image = None  # type: ignore[attr-defined]
         image.remove()
 
-    def _unreadable(self, request: PosterRequest, name: str, exc: Exception) -> Widget:
+    def _unreadable(
+        self, source: PosterSource, request: PosterRequest, wanted: _Wanted, exc: Exception
+    ) -> Widget:
         """The image widget cannot read the stored file: the panel says "no poster"."""
-        _LOG.warning("No Poster for %s: the file cannot be read (%s)", name, exc)
-        self._failed.add(request)
+        if request not in source.failed:
+            source.failed.add(request)
+            _LOG.warning("No Poster for %s: the file cannot be read (%s)", wanted.name, exc)
         # Called while the image widget draws, so the panel changes once that is done.
         self.call_later(self._draw)
         return Static("")
@@ -240,16 +250,17 @@ class PosterView(Vertical):
         event.stop()
         if event.state not in (WorkerState.SUCCESS, WorkerState.ERROR, WorkerState.CANCELLED):
             return
-        request = self._fetches.pop(event.worker, None)
-        if request is None:
+        fetch = self._fetches.pop(event.worker, None)
+        if fetch is None:
             return
+        request, source = fetch
         wanted = self._wanted
         is_wanted = wanted is not None and wanted.request == request
         fetched = event.worker.result if event.state is WorkerState.SUCCESS else None
         if event.state is WorkerState.ERROR:
             fetched = _Fetched(request, str(event.worker.error))
         if isinstance(fetched, _Fetched) and fetched.error is not None:
-            self._failed.add(request)
+            source.failed.add(request)
             name = wanted.name if wanted is not None and is_wanted else request.ref
             _LOG.warning("No Poster for %s: %s", name, fetched.error)
         if is_wanted:
@@ -261,8 +272,8 @@ class PosterPanel(Vertical):
 
     DEFAULT_CSS = f"""
     PosterPanel {{
-        width: {POSTER_WIDTH + 2};
-        height: {POSTER_HEIGHT + 2};
+        width: {PANEL_WIDTH};
+        height: {PANEL_HEIGHT};
         border: solid $tr-line;
         border-title-color: $tr-dim;
         border-title-align: left;
@@ -276,15 +287,29 @@ class PosterPanel(Vertical):
     def view(self) -> PosterView:
         return self.query_one(PosterView)
 
+    def use(self, source: PosterSource | None) -> None:
+        """See :meth:`PosterView.use`."""
+        self.view.use(source)
+
+    def pause(self, paused: bool) -> None:
+        """See :meth:`PosterView.pause`."""
+        self.view.pause(paused)
+
+    def clear(self) -> None:
+        """See :meth:`PosterView.clear`."""
+        self.view.clear()
+
     def show(
         self,
         name: str,
-        request: PosterRequest | None,
         *,
-        provider: str,
+        provider_id: str,
+        ref: str | None,
         label: str = "",
         download: bool,
     ) -> None:
-        """Show ``request``'s Poster for ``name``, with ``provider`` on the border."""
-        self.border_title = escape(provider)
+        """Show the Poster the Provider ``provider_id`` gave as ``ref`` (or none) for the
+        Title ``name``, with the Provider's name on the border."""
+        self.border_title = escape(provider_name(provider_id))
+        request = PosterRequest(provider_id, ref) if ref else None
         self.view.show(name, request, label=label, download=download)

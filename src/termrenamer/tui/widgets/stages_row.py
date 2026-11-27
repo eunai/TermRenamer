@@ -23,6 +23,10 @@ def stages_markup(current: Stage) -> str:
     return " [$tr-line]────[/] ".join(parts)
 
 
+STAGES_ROW_ROWS = 2
+"""The Stages row's rows, its bottom rule included."""
+
+
 class StagesRow(Horizontal):
     """The four Stages on the left and the current Stage's short count on the right."""
 

@@ -13,14 +13,14 @@ from __future__ import annotations
 import importlib
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
 from textual.widget import Widget
 
-from termrenamer.persistence.posters import PosterStore
+from termrenamer.persistence.posters import PosterRequest, PosterStore
 
 _LOG = logging.getLogger(__name__)
 
@@ -89,8 +89,10 @@ def detect_poster_support(
 
 @dataclass(frozen=True, slots=True)
 class PosterSource:
-    """Where the screen's Posters come from while they are shown: the poster store, and
-    the image widget that draws a stored file."""
+    """Where the screen's Posters come from while they are shown: the poster store, the
+    image widget that draws a stored file, and the requests that failed this session
+    (a failed download or an unreadable file), which every view leaves as "no poster"."""
 
     store: PosterStore
     image: ImageFactory
+    failed: set[PosterRequest] = field(default_factory=set)

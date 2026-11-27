@@ -52,6 +52,10 @@ def hints_markup(hints: Sequence[tuple[str, str]], width: int | None = None) -> 
     return "  ".join(out)
 
 
+FOOTER_FIXED_ROWS = 3
+"""The footer's rows besides the Stage's lines: the message with its rule (2), the keys (1)."""
+
+
 class AppFooter(Vertical):
     """The message line, up to two lines from the current Stage, and the key hints."""
 

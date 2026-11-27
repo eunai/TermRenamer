@@ -12,6 +12,9 @@ from textual.widgets import Static
 from termrenamer.core.models import ScanMode
 from termrenamer.tui.words import folder_text
 
+HEADER_ROWS = 1
+"""The header's rows."""
+
 
 class AppHeader(Horizontal):
     """One line: ``TermRenamer  Mode  TV  Film    Provider  TMDB ▾ … Destination root  <path>``."""

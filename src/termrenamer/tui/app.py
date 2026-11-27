@@ -44,6 +44,7 @@ from termrenamer.tui.log_book import LogBook, LogBookHandler
 from termrenamer.tui.poster_support import PosterSource, PosterSupport
 from termrenamer.tui.stage import Stage
 from termrenamer.tui.stages import AppliedStage, PlanStage, PreviewStage, QueueStage, StageView
+from termrenamer.tui.stages.preview import ROWS_FOR_POSTERS
 from termrenamer.tui.stages.title_list_stage import TitleListStage
 from termrenamer.tui.themes import THEMES
 from termrenamer.tui.views import HelpView, LogsView, SettingsView
@@ -63,7 +64,7 @@ _STAGE_IDS = {
 }
 
 
-MIN_POSTER_SIZE = (100, 30)
+MIN_POSTER_SIZE = (100, ROWS_FOR_POSTERS)
 """Below this many columns or rows the poster panel is hidden, as if Posters were off."""
 
 _BUILD = "build"
@@ -120,6 +121,12 @@ class TermRenamerApp(App[None]):
         self._wiring = wiring
         self.poster_support = poster_support or PosterSupport()
         """Whether this run can draw Posters, checked at start (none by default)."""
+        image, store = self.poster_support.image, wiring.posters
+        self._posters: PosterSource | None = (
+            PosterSource(store=store, image=image) if image is not None and store else None
+        )
+        """Where Posters come from in this run, when it can show them; one for the run, so
+        a failed Poster is remembered for every panel."""
         self.session_settings = SessionSettings(settings, keyed=wiring.keyed_providers())
         self.session_settings.add_listener(self._on_plan_setting_changed)
         self.session_settings.add_theme_listener(self._use_theme)
@@ -425,10 +432,7 @@ class TermRenamerApp(App[None]):
         plan = self.plan
         if plan is None or self._applying:
             return
-        confirm = ApplyConfirm(plan)
-        # Beside the poster panel, the confirm keeps to the right of it.
-        confirm.set_class(self._poster_source() is not None, "-beside-poster")
-        self.push_screen(confirm, self._apply_answered)
+        self.push_screen(ApplyConfirm(plan), self._apply_answered)
 
     def _apply_answered(self, yes: bool | None) -> None:
         plan = self.plan
@@ -548,14 +552,20 @@ class TermRenamerApp(App[None]):
         """Where Posters come from while the panel is shown, or ``None`` while it is not:
         Posters unavailable or hidden, or the screen (``size``, or the app's) below the
         size limit."""
-        image, store = self.poster_support.image, self._wiring.posters
-        if image is None or store is None or not self.session_settings.show_posters:
+        if self._posters is None or not self.session_settings.show_posters:
             return None
+        if self.posters_too_small(size) is not None:
+            return None
+        return self._posters
+
+    def posters_too_small(self, size: Size | None = None) -> str | None:
+        """The size Posters need when the screen (``size``, or the app's) is smaller, as
+        "at least 100 columns by 35 rows", or ``None`` when it is large enough."""
         width, height = size or self.size
         columns, rows = MIN_POSTER_SIZE
         if width < columns or height < rows:
-            return None
-        return PosterSource(store=store, image=image)
+            return f"at least {columns} columns by {rows} rows"
+        return None
 
     def _show_posters(self, size: Size | None = None) -> None:
         """Show or hide the poster panel on the main screen, under any open view too.
@@ -583,19 +593,21 @@ class TermRenamerApp(App[None]):
             self.screen.show_values()
         if not owner.show_posters:
             self.say("Posters hidden (i shows them).")
-        elif self._poster_source() is None:
-            columns, rows = MIN_POSTER_SIZE
-            self.say(
-                f"Posters on. They show when the screen is at least {columns} by {rows}.",
-                MessageKind.DIM,
-            )
+        elif (needed := self.posters_too_small()) is not None:
+            self.say(f"Posters on. They show when the screen is {needed}.", MessageKind.DIM)
         else:
             self.say("Posters shown.")
 
     # ------------------------------------------------------------- views
 
     def action_open_settings(self) -> None:
-        self.push_screen(SettingsView(self.session_settings, self.posters_unavailable))
+        self.push_screen(
+            SettingsView(
+                self.session_settings,
+                self.posters_unavailable,
+                posters_need=self.posters_too_small(),
+            )
+        )
 
     def action_open_logs(self) -> None:
         self._open_view(LogsView(self.log_book))

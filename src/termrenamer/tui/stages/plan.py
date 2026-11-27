@@ -31,7 +31,6 @@ from termrenamer.core.progress import (
     TitleLookedUp,
     TitleLookupStarted,
 )
-from termrenamer.persistence.posters import PosterRequest
 from termrenamer.tui.lookup_rate import LookupRate
 from termrenamer.tui.stages.title_list_stage import TitleListStage
 from termrenamer.tui.widgets.action_button import ActionButton
@@ -163,7 +162,7 @@ class PlanStage(TitleListStage):
         """The build ended or was cancelled: the rate stops moving, the panel empties."""
         self._stop_timer()
         self._building = False
-        self.query_one(PosterPanel).view.clear()
+        self.query_one(PosterPanel).clear()
 
     def _stop_timer(self) -> None:
         if self._timer is not None:
@@ -294,17 +293,16 @@ class PlanStage(TitleListStage):
         """The selected Title's Poster when the store holds it; nothing is downloaded."""
         panel = self.query_one(PosterPanel)
         if row is None or not self._building:
-            panel.view.clear()
+            panel.clear()
             return
         ref = row.match.poster_ref if row.match is not None else None
-        request = PosterRequest(self._provider_id, ref) if ref else None
         if row.status is StatusWord.LOOKING_UP:
             label = f"{row.status}…"
-        elif row.status is StatusWord.WAITING or request is not None:
+        elif row.status is StatusWord.WAITING or ref:
             label = str(row.status)
         else:
             label = NO_POSTER
-        panel.show(row.name, request, provider=self._provider, label=label, download=False)
+        panel.show(row.name, provider_id=self._provider_id, ref=ref, label=label, download=False)
 
     def posters_changed(self) -> None:
         self._draw_details()

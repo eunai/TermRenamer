@@ -17,6 +17,7 @@ from textual.widgets import Static
 
 from termrenamer.core.models import EntryStatus, Plan
 from termrenamer.core.title_rows import PlanCounts, sidecars_skipped_alone
+from termrenamer.tui.stages.title_list_stage import PANEL_RIGHT, TitleListStage
 from termrenamer.tui.widgets.action_button import ActionButton
 from termrenamer.tui.words import agree, folder_text, plural, sidecar_skipped, why_not_renamed
 
@@ -61,10 +62,6 @@ def confirm_lines(plan: Plan) -> tuple[str, ...]:
         lines.append(f"[$tr-dim]Leave {plural(len(named), 'video')} {that}.[/]")
     lines += ["", "[$warning]Nothing has been renamed yet.[/]"]
     return tuple(lines)
-
-
-BESIDE_POSTER = 29
-"""The columns the poster panel takes from the screen's left edge, its margin included."""
 
 
 class ApplyConfirm(ModalScreen[bool]):
@@ -126,11 +123,14 @@ class ApplyConfirm(ModalScreen[bool]):
         self._fit()
 
     def _fit(self) -> None:
-        """Beside the poster panel (class ``-beside-poster``), keep to the right of it."""
-        if self.has_class("-beside-poster"):
-            dialog = self.query_one("#confirm-dialog")
-            room = self.app.size.width - BESIDE_POSTER - dialog.styles.margin.right
+        """While the poster panel shows on the screen below, keep to the right of it."""
+        dialog = self.query_one("#confirm-dialog")
+        stages = self.app.screen_stack[0].query(TitleListStage)
+        if any(stage.posters_shown for stage in stages):
+            room = self.app.size.width - PANEL_RIGHT - dialog.styles.margin.right
             dialog.styles.max_width = max(room, 20)
+        else:
+            dialog.styles.max_width = None  # back to the stylesheet's 100%
 
     def on_action_button_clicked(self, event: ActionButton.Clicked) -> None:
         event.stop()

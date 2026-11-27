@@ -14,11 +14,13 @@ from textual.geometry import Region
 from textual.widgets import Switch
 
 from termrenamer.persistence.posters import PosterRequest
-from termrenamer.tui.app import TermRenamerApp
+from termrenamer.tui.app import MIN_POSTER_SIZE, TermRenamerApp
 from termrenamer.tui.dialogs import ApplyConfirm
 from termrenamer.tui.poster_support import NO_IMAGES, NOT_INSTALLED, PosterSupport
 from termrenamer.tui.stage import Stage
+from termrenamer.tui.stages.preview import ROWS_FOR_POSTERS
 from termrenamer.tui.views import HelpView, SettingsView
+from termrenamer.tui.widgets.action_button import ActionButton
 from termrenamer.tui.widgets.footer import AppFooter
 from termrenamer.tui.widgets.poster_panel import PosterPanel
 from termrenamer.tui.widgets.title_details import TitleDetails
@@ -43,6 +45,9 @@ from .screen_driver import (
 )
 
 HARBOUR_LIGHTS_POSTER = "https://image.tmdb.org/t/p/w342/hl.jpg"
+SMALLEST = (100, ROWS_FOR_POSTERS)
+"""The smallest screen that shows the poster panel."""
+SHORT = (100, ROWS_FOR_POSTERS - 1)
 
 
 def poster_app(
@@ -224,7 +229,7 @@ async def test_the_poster_is_fixed_outside_the_scrolling_details(tmp_path: Path)
     assert under_panel
 
 
-@pytest.mark.parametrize("size", [SIZE, (100, 30)])
+@pytest.mark.parametrize("size", [SIZE, (100, ROWS_FOR_POSTERS)])
 async def test_the_apply_confirm_does_not_cover_the_poster(
     tmp_path: Path, size: tuple[int, int]
 ) -> None:
@@ -401,8 +406,10 @@ async def test_i_in_settings_changes_the_row(tmp_path: Path) -> None:
     assert app.session_settings.show_posters is False
 
 
-async def test_below_100_columns_or_30_rows_the_panel_is_hidden(tmp_path: Path) -> None:
-    for size in ((99, 36), (120, 29)):
+async def test_below_100_columns_or_the_rows_for_posters_the_panel_is_hidden(
+    tmp_path: Path,
+) -> None:
+    for size in ((99, ROWS_FOR_POSTERS), SHORT):
         host = ImageHost()
         app = poster_app(tmp_path / f"{size[0]}x{size[1]}", host)
         (tmp_path / f"{size[0]}x{size[1]}").mkdir()
@@ -419,6 +426,141 @@ async def test_below_100_columns_or_30_rows_the_panel_is_hidden(tmp_path: Path) 
         assert nothing, size
         assert shown, size
         assert host.urls == [HARBOUR_LIGHTS_POSTER], size
+
+
+def test_posters_need_100_columns_and_35_rows_as_the_readme_says() -> None:
+    assert MIN_POSTER_SIZE == (100, ROWS_FOR_POSTERS) == (100, 35)
+
+
+async def test_at_the_smallest_size_the_details_and_actions_fit_under_the_panel(
+    tmp_path: Path,
+) -> None:
+    app = poster_app(tmp_path, ImageHost())
+    async with app.run_test(size=SMALLEST) as pilot:
+        await built(pilot, tmp_path)
+        shown = panel(app).display
+        scroll = app.query_one("#details-scroll")
+        overflow = scroll.max_scroll_y
+        details = app.query_one(TitleDetails).region
+        column = app.query_one("#details").region
+        footer = app.query_one(AppFooter).region
+        leave_out = app.query_one("#leave-out").region
+        apply = [b.region for b in app.query(ActionButton) if b.press_key == "enter"]
+        on_screen = screen_text(app)
+        panel_bottom = panel(app).region.bottom
+        [name_row] = [line for line in screen_lines(app) if line.startswith("   Harbour Lights ")]
+    assert shown
+    assert overflow == 0  # the compact details fit their scroll whole
+    assert details.y >= panel_bottom
+    assert "Harbour Lights" in on_screen and "ready · 1 season · 2 videos" in on_screen
+    assert "S01" in on_screen and "▔▔" in on_screen
+    assert name_row.index("Harbour Lights") == 3  # under the panel's left edge
+    assert column.contains_region(leave_out) and leave_out.bottom <= footer.y
+    assert [r for r in apply if r.area > 0 and r.bottom <= footer.y]
+
+
+async def test_at_the_smallest_size_a_second_action_fits_too(tmp_path: Path) -> None:
+    # #28 shows Change match beside Leave out; the threshold counts both.
+    app = poster_app(tmp_path, ImageHost())
+    async with app.run_test(size=SMALLEST) as pilot:
+        await built(pilot, tmp_path)
+        app.query_one("#change-match").display = True
+        await pilot.pause()
+        overflow = app.query_one("#details-scroll").max_scroll_y
+        footer = app.query_one(AppFooter).region
+        buttons = [app.query_one(f"#{name}").region for name in ("change-match", "leave-out")]
+    assert overflow == 0
+    assert all(b.height == 1 and b.bottom <= footer.y for b in buttons)
+    assert buttons[0].bottom <= buttons[1].y
+
+
+async def test_one_row_short_the_preview_looks_as_with_posters_off(tmp_path: Path) -> None:
+    app = poster_app(tmp_path, ImageHost())
+    async with app.run_test(size=SHORT) as pilot:
+        await built(pilot, tmp_path)
+        layout = (
+            panel(app).display,
+            app.query_one("#preview-summary").display,
+            app.query_one("#summary-under").display,
+            app.stage_view.has_class("-posters"),
+        )
+    assert layout == (False, True, False, False)
+
+
+async def test_at_the_smallest_size_the_plan_stage_shows_its_details(tmp_path: Path) -> None:
+    host = ImageHost()
+    app = poster_app(tmp_path, host, hold=True)
+    tv = app.tv_stand_in  # type: ignore[attr-defined]
+    async with app.run_test(size=SMALLEST) as pilot:
+        await queue(pilot, tv_backups(tmp_path))
+        await press(pilot, "b")
+        assert tv.first_done.wait(timeout=5)
+        await pilot.pause(0.2)
+        shown = panel(app, "#plan-poster").display
+        details = app.query_one("#plan-details").region
+        footer = app.query_one(AppFooter).region
+        on_screen = screen_text(app)
+        tv.go.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+    assert shown
+    assert details.height > 0 and details.bottom <= footer.y
+    assert "found · 2 videos" in on_screen
+
+
+async def test_the_confirm_moves_beside_the_panel_when_the_screen_grows(
+    tmp_path: Path,
+) -> None:
+    app = poster_app(tmp_path, ImageHost())
+    async with app.run_test(size=(99, ROWS_FOR_POSTERS)) as pilot:
+        await built(pilot, tmp_path)
+        await press(pilot, "enter")
+        assert isinstance(app.screen, ApplyConfirm)
+        await pilot.resize_terminal(*SMALLEST)
+        await pilot.pause(0.1)
+        dialog = app.screen.query_one("#confirm-dialog").region
+        frame = panel(app).region
+        drawn = frame_column(app)
+        shown = panel(app).display
+    assert shown
+    assert not frame.overlaps(dialog)
+    assert drawn == frame.x
+
+
+async def test_i_says_the_size_posters_need_when_the_screen_is_too_small(
+    tmp_path: Path,
+) -> None:
+    app = poster_app(tmp_path, ImageHost(), show_posters=False)
+    async with app.run_test(size=SHORT) as pilot:
+        await press(pilot, "i")
+        message = text_of(app, "#message")
+        await press(pilot, "s")
+        note = text_of(app, "#show-posters-note")
+    assert message == "Posters on. They show when the screen is at least 100 columns by 35 rows."
+    assert note == "Posters show when the screen is at least 100 columns by 35 rows."
+
+
+async def test_an_unreadable_poster_logs_one_line_across_the_plan_and_preview(
+    tmp_path: Path,
+) -> None:
+    host = ImageHost()
+    store = host.store(tmp_path / "posters")
+    store.fetch(PosterRequest("tmdb", "/hl.jpg"))
+    tv = tv_stand_in(hold=True)
+    app = make_app(wiring(tv=tv, posters=store), settings(), posters=POSTERS_UNREADABLE)
+    async with app.run_test(size=SIZE) as pilot:
+        await queue(pilot, tv_backups(tmp_path))
+        await press(pilot, "b")
+        assert tv.first_done.wait(timeout=5)
+        await pilot.pause(0.2)
+        plan_words = panel_text(app, "#plan-poster")
+        tv.go.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        preview_words = panel_text(app)
+        logs = [line for _n, line in app.log_book.lines_after(0) if "No Poster" in line]
+    assert "no poster" in plan_words and "no poster" in preview_words
+    assert len(logs) == 1
 
 
 # ------------------------------------------------------------- the build
@@ -482,19 +624,3 @@ async def test_help_shows_the_provider_credits() -> None:
     assert "This product uses the TMDB API but is not endorsed or certified by TMDB." in text
     assert "Metadata provided by TheTVDB." in text
     assert "https://thetvdb.com/" in text
-
-
-async def test_at_the_smallest_size_with_posters_leave_out_stays_on_screen(
-    tmp_path: Path,
-) -> None:
-    app = poster_app(tmp_path, ImageHost())
-    async with app.run_test(size=(100, 30)) as pilot:
-        await built(pilot, tmp_path)
-        shown = panel(app).display
-        button = app.query_one("#leave-out").region
-        details = app.query_one("#details").region
-        footer = app.query_one(AppFooter).region
-    assert shown
-    assert button.height > 0
-    assert details.contains_region(button)
-    assert button.bottom <= footer.y

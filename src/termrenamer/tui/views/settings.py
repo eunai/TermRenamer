@@ -4,7 +4,8 @@ Show posters and Theme.
 Every value is read from and written to the session's settings owner; a change lasts
 until the app quits, and the User settings file is never written. Season folder
 cannot be turned on while Folder rename is off. When Posters are unavailable, Show
-posters shows as unavailable with the reason.
+posters shows as unavailable with the reason; when the screen is too small for them, it
+says the size they need.
 """
 
 from __future__ import annotations
@@ -184,11 +185,20 @@ class SettingsView(Screen[None]):
     }
     """
 
-    def __init__(self, owner: SessionSettings, posters_unavailable: str | None = None) -> None:
-        """``posters_unavailable`` is why Posters cannot be shown, or ``None`` when they can."""
+    def __init__(
+        self,
+        owner: SessionSettings,
+        posters_unavailable: str | None = None,
+        *,
+        posters_need: str | None = None,
+    ) -> None:
+        """``posters_unavailable`` is why Posters cannot be shown, or ``None`` when they can;
+        ``posters_need`` is the screen size they need when the screen is smaller, such as
+        "at least 100 columns by 35 rows"."""
         super().__init__()
         self._owner = owner
         self._posters_unavailable = posters_unavailable
+        self._posters_need = posters_need
 
     def compose(self) -> ComposeResult:
         owner = self._owner
@@ -238,6 +248,12 @@ class SettingsView(Screen[None]):
             if self._posters_unavailable is not None:
                 yield Static(
                     escape(f"Unavailable: {self._posters_unavailable}."),
+                    id="show-posters-note",
+                    classes="setting-note",
+                )
+            elif self._posters_need is not None:
+                yield Static(
+                    escape(f"Posters show when the screen is {self._posters_need}."),
                     id="show-posters-note",
                     classes="setting-note",
                 )

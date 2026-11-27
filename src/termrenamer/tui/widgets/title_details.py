@@ -91,6 +91,11 @@ def _counts(row: TitleRow, mode: ScanMode) -> str:
     return " · ".join(parts)
 
 
+COMPACT_ROWS = 5
+"""The compact details' rows for a Title with one group of cells: its name, its status,
+a gap, and the cells with the mark under the selected one."""
+
+
 def _cells(row: TitleRow, mode: ScanMode, selected: int, *, compact: bool = False) -> str:
     """Three text rows per line of cells: the cells' top, their bottom with the season
     label, and the mark under the selected cell; ``compact`` leaves out the top. A line

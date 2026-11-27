@@ -75,9 +75,10 @@ uv tool install "termrenamer[posters] @ git+https://github.com/eunai/TermRenamer
 ```
 
 Posters are drawn only in a terminal that draws Sixel or Kitty images, for
-example iTerm2, Windows Terminal, kitty, WezTerm, Konsole, foot and xterm.
-Apple's Terminal, GNOME Terminal and the Windows Console draw neither, and
-there the panel stays hidden. The app checks the terminal once, at start.
+example iTerm2, Windows Terminal 1.22 or newer, kitty, WezTerm, Konsole, foot,
+and xterm when it is set up for Sixel (`xterm -ti vt340`). Apple's Terminal,
+GNOME Terminal and the Windows Console draw neither, and there the panel stays
+hidden. The app checks the terminal once, at start.
 
 To upgrade or remove it:
 
@@ -186,11 +187,11 @@ Keys:
   images, the Plan and Preview show the selected Title's Poster in a framed
   panel with the provider's name on its border. `i` or the Settings screen
   hides or shows it for the session; `TERMRENAMER_SHOW_POSTERS=false` starts
-  with it hidden. Below 100 columns or 30 rows the panel is hidden. Posters are
-  downloaded from TMDB's or TheTVDB's image host when a Title is selected at
-  the Preview, the first one as the Preview opens, never while the plan is
-  built, and kept for
-  30 days in a `termrenamer/posters` folder in your per-user cache folder
+  with it hidden. The panel needs a screen of at least 100 columns by 35 rows;
+  on a smaller one it is hidden. Posters are downloaded from TMDB's or
+  TheTVDB's image host when a Title is selected at the Preview, the first one
+  as the Preview opens, never while the plan is built, and kept for 30 days in
+  a `termrenamer/posters` folder in your per-user cache folder
   (`%LOCALAPPDATA%` on Windows, `~/.cache` or `XDG_CACHE_HOME` elsewhere).
 - **Name taken.** When a new name is already used, by something at that path
   or by an earlier file of the same plan, the file is marked "name taken". The

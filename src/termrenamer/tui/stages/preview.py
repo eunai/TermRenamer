@@ -21,16 +21,48 @@ from textual.widgets import Static
 from termrenamer.core.models import EntryStatus, Plan, PlanEntry
 from termrenamer.core.planning import PutBack, derive_plan
 from termrenamer.core.title_rows import PlanCounts, TitleRow, title_rows
-from termrenamer.persistence.posters import PosterRequest
 from termrenamer.tui.stages.title_list_stage import TitleListStage
 from termrenamer.tui.widgets.action_button import ActionButton
-from termrenamer.tui.widgets.poster_panel import PosterPanel
-from termrenamer.tui.widgets.title_details import TitleDetails
+from termrenamer.tui.widgets.footer import FOOTER_FIXED_ROWS
+from termrenamer.tui.widgets.header import HEADER_ROWS
+from termrenamer.tui.widgets.poster_panel import PANEL_HEIGHT, PosterPanel
+from termrenamer.tui.widgets.stages_row import STAGES_ROW_ROWS
+from termrenamer.tui.widgets.title_details import COMPACT_ROWS, TitleDetails
 from termrenamer.tui.widgets.title_list import ListRow, StatusWord, TitleList
-from termrenamer.tui.words import agree, match_name, plural, provider_name, why_not_renamed
+from termrenamer.tui.words import agree, match_name, plural, why_not_renamed
 
 _LABEL_WIDTH = 6
 """``from`` and ``to`` and the spaces after them, in the footer."""
+
+_DETAILS_PADDING_TOP = 1
+"""The row above the details in their scroll."""
+
+_ACTION_ROWS = 2
+"""Change match and Leave out, on rows of their own one under the other while the
+poster panel shows, as the mockup draws them."""
+
+_FOOTER_LINES = 2
+"""The Preview's lines in the footer: the selected file's ``from`` and ``to``."""
+
+ROWS_FOR_POSTERS = (
+    HEADER_ROWS
+    + STAGES_ROW_ROWS
+    + PANEL_HEIGHT
+    + _DETAILS_PADDING_TOP
+    + COMPACT_ROWS
+    + _ACTION_ROWS
+    + FOOTER_FIXED_ROWS
+    + _FOOTER_LINES
+)
+"""The fewest rows that hold the Preview with the poster panel: the panel, the compact
+details and both actions in the column, the header and footer above and below. Below
+this the panel is hidden, as if Posters were off."""
+
+
+def _apply_parts(note_id: str) -> ComposeResult:
+    """The Apply button and its note, for the summary beside the details or under the list."""
+    yield ActionButton("enter", "Apply…", press_key="enter", classes="-strong")
+    yield Static("Nothing moves until you confirm.", id=note_id)
 
 
 class _DetailsScroll(VerticalScroll, can_focus=False):
@@ -41,7 +73,8 @@ class _DetailsScroll(VerticalScroll, can_focus=False):
 class PreviewStage(TitleListStage):
     """The details column with the summary and Apply, and the Plan's Title list."""
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS = (
+        """
     PreviewStage #details {
         width: 39;
         height: 1fr;
@@ -49,7 +82,6 @@ class PreviewStage(TitleListStage):
     }
     PreviewStage #details-scroll {
         height: 1fr;
-        padding: 1 1 0 3;
         scrollbar-size-vertical: 1;
     }
     PreviewStage #details-actions {
@@ -94,7 +126,16 @@ class PreviewStage(TitleListStage):
     PreviewStage.-posters #summary-under {
         display: block;
     }
+    PreviewStage.-posters #details-actions ActionButton {
+        margin: 0;
+    }
     """
+        + f"""
+    PreviewStage #details-scroll {{
+        padding: {_DETAILS_PADDING_TOP} 1 0 3;
+    }}
+    """
+    )
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
@@ -118,8 +159,7 @@ class PreviewStage(TitleListStage):
                     )
                 with Vertical(id="preview-summary"):
                     yield Static("", id="summary-counts", classes="summary-counts")
-                    yield ActionButton("enter", "Apply…", press_key="enter", classes="-strong")
-                    yield Static("Nothing moves until you confirm.", id="preview-note")
+                    yield from _apply_parts("preview-note")
             with Vertical(classes="stage-body"):
                 yield from self.compose_heading()
                 yield TitleList(id="preview-titles")
@@ -127,8 +167,7 @@ class PreviewStage(TitleListStage):
                 with Vertical(id="summary-under"):
                     yield Static("", id="summary-counts-under", classes="summary-counts")
                     with Horizontal(id="summary-under-apply"):
-                        yield ActionButton("enter", "Apply…", press_key="enter", classes="-strong")
-                        yield Static("Nothing moves until you confirm.", id="summary-under-note")
+                        yield from _apply_parts("summary-under-note")
 
     def on_mount(self) -> None:
         # Each button shows once its key's action is built, here or on the app (#28).
@@ -222,13 +261,11 @@ class PreviewStage(TitleListStage):
         plan, row = self._plan, self.selected_row
         panel = self.query_one(PosterPanel)
         if plan is None or row is None:
-            panel.view.clear()
+            panel.clear()
             return
         name = row.name if row.title is None else match_name(row.title, plan.mode)
         ref = row.title.poster_ref if row.title is not None else None
-        provider_id = plan.options.provider_id
-        request = PosterRequest(provider_id, ref) if ref else None
-        panel.show(name, request, provider=provider_name(provider_id), download=True)
+        panel.show(name, provider_id=plan.options.provider_id, ref=ref, download=True)
 
     def posters_changed(self) -> None:
         self._show_details()
