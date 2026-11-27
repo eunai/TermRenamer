@@ -32,6 +32,7 @@ from termrenamer.core.models import (
     Title,
 )
 from termrenamer.core.parse import parse_filename, parse_film_filename
+from termrenamer.core.paths import path_key
 from termrenamer.core.scan import classify, scan
 from termrenamer.core.templates import format_film_destination, format_tv_destination
 from termrenamer.observability.events import ActivityEvent, ActivityEventKind, default_bus
@@ -52,20 +53,6 @@ def fingerprint(path: Path) -> PlanFingerprint:
     """The source's size and modification time, as planning records them and Apply checks."""
     st = path.stat()
     return PlanFingerprint(path=path, size=st.st_size, mtime_ns=int(st.st_mtime_ns))
-
-
-def _normalized_source_key(path: Path) -> str:
-    """A file's key: its folder resolved, then its own name, case folded.
-
-    The file's own name is not followed, so a symbolic link is a file of its own
-    and never stands in for its target.
-    """
-    return str(path.parent.resolve() / path.name).casefold()
-
-
-def planning_order_key(source: Path) -> str:
-    """The source-path order of a Plan's entries: the file's key, case folded."""
-    return _normalized_source_key(source)
 
 
 # --------------------------------------------------------------------------
@@ -166,11 +153,11 @@ def _collect(sources: Sequence[Path]) -> tuple[list[_Found], list[str]]:
         else:
             messages.append(f"Skipped {source}: it is not a video.")
             continue
-        for item in contributed:
-            key = _normalized_source_key(item.path)
+        for found_file in contributed:
+            key = path_key(found_file.path)
             if key not in owned or rank < owned[key][0]:
-                owned[key] = (rank, item)
-    return [item for _rank, item in owned.values()], messages
+                owned[key] = (rank, found_file)
+    return [found_file for _rank, found_file in owned.values()], messages
 
 
 def _entry(
@@ -208,10 +195,10 @@ def _titles(
     its first group.
     """
     merged: dict[str, tuple[list[_Video], tuple[Candidate, ...]]] = {}
-    unmatched: list[list[_Video]] = []
+    no_match: list[list[_Video]] = []
     for members, candidates_found in found_groups:
         if not candidates_found:
-            unmatched.append(members)
+            no_match.append(members)
         elif candidates_found[0].id in merged:
             merged[candidates_found[0].id][0].extend(members)
         else:
@@ -228,7 +215,7 @@ def _titles(
             candidates=candidates_found[1:],
         )
         title_of.update((v.path, title) for v in members)
-    for members in unmatched:
+    for members in no_match:
         title = Title(
             name=members[0].hint,
             year=members[0].year_hint,
@@ -330,18 +317,18 @@ def plan_queue(
     found, messages = _collect(sources)
     entries: list[PlanEntry] = []
     videos: list[_Video] = []
-    for item in sorted(found, key=lambda f: _normalized_source_key(f.path)):
-        if item.kind is not FileKind.VIDEO:
+    for found_file in sorted(found, key=lambda f: path_key(f.path)):
+        if found_file.kind is not FileKind.VIDEO:
             continue
         try:
-            parsed = _parse(item.path, options.mode)
+            parsed = _parse(found_file.path, options.mode)
         except ParseError:
-            _LOG.info("Not recognised: %s", item.path)
+            _LOG.info("Not recognised: %s", found_file.path)
             entries.append(
-                _entry(item, destination=None, status=EntryStatus.NOT_RECOGNISED, title=None)
+                _entry(found_file, destination=None, status=EntryStatus.NOT_RECOGNISED, title=None)
             )
             continue
-        videos.append(_Video(path=item.path, root=item.root, parsed=parsed))
+        videos.append(_Video(path=found_file.path, root=found_file.root, parsed=parsed))
 
     groups: dict[tuple[str, int], list[_Video]] = {}
     for video in videos:
@@ -387,9 +374,9 @@ def plan_queue(
         _report_found(video, title, episode_titles.get(video.path), shows_reported)
 
     by_pair: dict[tuple[str, str], PlanEntry] = {}
-    for video_entry in sorted(entries, key=lambda e: _normalized_source_key(e.source)):
+    for video_entry in sorted(entries, key=lambda e: path_key(e.source)):
         by_pair.setdefault(_pair_key(video_entry.source), video_entry)
-    for sidecar in sorted(found, key=lambda f: _normalized_source_key(f.path)):
+    for sidecar in sorted(found, key=lambda f: path_key(f.path)):
         owner = by_pair.get(_pair_key(sidecar.path)) if sidecar.kind is FileKind.SIDECAR else None
         if owner is None:
             continue
@@ -411,7 +398,7 @@ def plan_queue(
             )
         )
 
-    entries.sort(key=lambda e: _normalized_source_key(e.source))
+    entries.sort(key=lambda e: path_key(e.source))
     titles = sorted(set(title_of.values()), key=lambda t: (t.name.casefold(), t.year or 0))
     plan = Plan(options=options, titles=tuple(titles), entries=tuple(entries))
     return PlanBuild(plan=plan, messages=tuple(messages))

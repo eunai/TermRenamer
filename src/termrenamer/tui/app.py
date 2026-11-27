@@ -37,7 +37,7 @@ from termrenamer.core.models import (
 )
 from termrenamer.core.planning import plan_queue
 from termrenamer.core.queue import SourceQueue
-from termrenamer.session_settings import SessionSettings, SettingsLockedError
+from termrenamer.session_settings import SessionSettings, SettingsLockedError, locked_message
 from termrenamer.tui.screens import AddSourceQuickPick, HelpScreen, SettingsScreen
 from termrenamer.tui.widgets.activity_pane import ActivityPane
 from termrenamer.tui.widgets.mode_provider_bar import (
@@ -48,8 +48,6 @@ from termrenamer.tui.widgets.mode_provider_bar import (
 )
 from termrenamer.util.errors import ProviderError, ValidationError
 from termrenamer.wiring import PlanningWiring
-
-_LOCKED_MESSAGE = "[yellow]{what} cannot change while a Plan is being built or applied.[/yellow]"
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,7 +168,6 @@ class TermRenamerApp(App[None]):
         self.session_settings.add_listener(self._on_plan_setting_changed)
         self.queue = SourceQueue()
         self.theme = "gruvbox"
-        self._rename_working: bool = False
 
     @property
     def scan_mode(self) -> ScanMode:
@@ -222,7 +219,7 @@ class TermRenamerApp(App[None]):
     def _refused_while_locked(self, what: str) -> bool:
         """Say so and refuse while a Plan is being built or applied."""
         if self.session_settings.locked:
-            self._log_line(_LOCKED_MESSAGE.format(what=what))
+            self._log_line(f"[yellow]{locked_message(what)}[/yellow]")
             return True
         return False
 
@@ -298,7 +295,7 @@ class TermRenamerApp(App[None]):
 
     def _refuse_bar_change(self, what: str) -> None:
         """A bar change reached the owner after the lock: say so, and show the owner's values."""
-        self._log_line(_LOCKED_MESSAGE.format(what=what))
+        self._log_line(f"[yellow]{locked_message(what)}[/yellow]")
         self.query_one("#mode-bar", ModeProviderBar).show(self.scan_mode, self.provider_id)
 
     def _on_plan_setting_changed(self, setting: str) -> None:
@@ -405,7 +402,7 @@ class TermRenamerApp(App[None]):
         Planning runs in a **thread worker** so Provider HTTP and filesystem stat
         work do not block the Textual event loop (see :meth:`_run_build_plan_thread`).
         """
-        if self._rename_working:
+        if self.session_settings.locked:
             return
         if not self.queue:
             self._log_line(
@@ -481,7 +478,6 @@ class TermRenamerApp(App[None]):
             self._end_rename_work()
 
     def _begin_rename_work(self) -> None:
-        self._rename_working = True
         self.session_settings.lock()
         self.query_one("#mode-bar", ModeProviderBar).disabled = True
         for bid in (
@@ -495,7 +491,6 @@ class TermRenamerApp(App[None]):
             self.query_one(f"#{bid}", Button).disabled = True
 
     def _end_rename_work(self) -> None:
-        self._rename_working = False
         self.session_settings.unlock()
         self.query_one("#mode-bar", ModeProviderBar).disabled = False
         self.query_one("#add-files", Button).disabled = False
@@ -506,7 +501,7 @@ class TermRenamerApp(App[None]):
 
     def _apply_current_plan(self) -> None:
         """Apply the frozen plan after explicit user confirmation."""
-        if self._rename_working:
+        if self.session_settings.locked:
             return
         plan = self.current_plan
         if plan is None:

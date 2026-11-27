@@ -232,7 +232,7 @@ async def test_the_settings_screen_reads_and_writes_through_the_settings_owner(
 
 
 @pytest.mark.asyncio
-async def test_a_destination_root_is_ignored_while_folder_rename_is_off(tmp_path: Path) -> None:
+async def test_a_destination_root_is_not_used_while_folder_rename_is_off(tmp_path: Path) -> None:
     (tmp_path / "Show.Name.S01E01.mkv").write_bytes(b"a")
     app = TermRenamerApp(wiring=_wiring(), settings=_settings(tmp_path, folder_rename=False))
     async with app.run_test(size=_SIZE) as pilot:

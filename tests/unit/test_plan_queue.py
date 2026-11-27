@@ -189,16 +189,16 @@ def test_a_video_whose_name_cannot_be_read_is_not_recognised_with_its_sidecars(
 
 
 def test_a_group_the_search_finds_nothing_for_is_a_title_with_no_match(tmp_path: Path) -> None:
-    (tmp_path / "Unknown.Show.S01E01.mkv").write_bytes(b"a")
-    (tmp_path / "Unknown.Show.S01E01.srt").write_text("s", encoding="utf-8")
-    (tmp_path / "Unknown.Show.S02E03.mkv").write_bytes(b"b")
+    (tmp_path / "Nowhere.Show.S01E01.mkv").write_bytes(b"a")
+    (tmp_path / "Nowhere.Show.S01E01.srt").write_text("s", encoding="utf-8")
+    (tmp_path / "Nowhere.Show.S02E03.mkv").write_bytes(b"b")
 
     plan = plan_queue([tmp_path], _tv_options(), _show_name()).plan
 
     [title] = plan.titles
     assert title.match is None
     assert title.candidates == ()
-    assert title.name == "Unknown Show"
+    assert title.name == "Nowhere Show"
     assert title.seasons == (1, 2)
     assert len(plan.entries) == 3
     for entry in plan.entries:

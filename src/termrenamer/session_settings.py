@@ -18,6 +18,11 @@ PlanSettingListener = Callable[[str], None]
 """Called with a setting's name after a change to a setting a Plan is built with."""
 
 
+def locked_message(what: str) -> str:
+    """The one wording of the lock's refusal, for ``what`` (such as "Mode")."""
+    return f"{what} cannot change while a Plan is being built or applied."
+
+
 class SettingsLockedError(ValidationError):
     """A setting was changed while a Plan is being built or applied."""
 
@@ -74,7 +79,7 @@ class SessionSettings:
     def plan_options(self) -> PlanOptions:
         """The plan options for the current Mode, with the settings' rules applied.
 
-        A Destination root is ignored while Folder rename is off; Season folder applies
+        A Destination root is not used while Folder rename is off; Season folder applies
         only in TV Mode and only while Folder rename is on.
         """
         root = self._destination_roots[self._mode] if self._folder_rename else None
@@ -137,10 +142,7 @@ class SessionSettings:
 
     def _refuse_while_locked(self) -> None:
         if self._locked:
-            msg = (
-                "Settings, Mode and Provider cannot change while a Plan is being built or applied."
-            )
-            raise SettingsLockedError(msg)
+            raise SettingsLockedError(locked_message("Settings, Mode and Provider"))
 
     def _changed(self, name: str) -> None:
         for listener in self._listeners:

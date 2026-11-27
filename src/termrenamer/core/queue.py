@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from termrenamer.core.paths import path_key
 from termrenamer.util.errors import ValidationError
 
 
@@ -38,8 +39,8 @@ class SourceQueue:
             OSError: The path cannot be resolved.
         """
         resolved = path.expanduser().resolve()
-        key = str(resolved).casefold()
-        if any(str(queued).casefold() == key for queued in self._sources):
+        key = path_key(resolved)
+        if any(path_key(queued) == key for queued in self._sources):
             msg = f"Already queued: {resolved}"
             raise SourceAlreadyQueuedError(msg)
         self._sources.append(resolved)

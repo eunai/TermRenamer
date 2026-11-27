@@ -15,7 +15,8 @@ from termrenamer.core.models import (
     Plan,
     PlanEntry,
 )
-from termrenamer.core.planning import fingerprint, planning_order_key
+from termrenamer.core.paths import path_key
+from termrenamer.core.planning import fingerprint
 from termrenamer.util.errors import ValidationError
 
 _LOG = logging.getLogger(__name__)
@@ -67,7 +68,7 @@ def _kept_in_place(child: Path, entry_keys: frozenset[str], target_keys: frozens
     That is a file of the Plan or a folder holding one, and a folder that is,
     contains or lies inside a target folder (a folder an entry of the Plan moves into).
     """
-    key = str(child).casefold()
+    key = path_key(child)
     if any(k == key or k.startswith(key + os.sep) for k in entry_keys):
         return True
     return any(
@@ -90,7 +91,7 @@ def _merge_stragglers(
     maybe_empty: set[Path] = set()
     for old_p, new_p in sorted(
         merge_pairs,
-        key=lambda t: (str(t[0]).casefold(), str(t[1]).casefold()),
+        key=lambda t: (path_key(t[0]), path_key(t[1])),
     ):
         if not old_p.exists() or not old_p.is_dir():
             continue
@@ -177,7 +178,7 @@ def apply_plan(plan: Plan, *, confirmed: bool) -> list[ApplyResult]:
         msg = "Apply refused: user confirmation is required before filesystem changes"
         raise ValidationError(msg)
 
-    ordered = sorted(plan.entries, key=lambda e: (e.is_sidecar, planning_order_key(e.source)))
+    ordered = sorted(plan.entries, key=lambda e: (e.is_sidecar, path_key(e.source)))
     results: list[ApplyResult] = []
     applied_source_parents: set[Path] = set()
     merge_pairs: set[tuple[Path, Path]] = set()
@@ -210,9 +211,9 @@ def apply_plan(plan: Plan, *, confirmed: bool) -> list[ApplyResult]:
                 merge_pairs.add((entry.source.parent, dest.parent))
 
     if merge_pairs:
-        entry_keys = frozenset(str(e.source).casefold() for e in plan.entries)
+        entry_keys = frozenset(path_key(e.source) for e in plan.entries)
         target_keys = frozenset(
-            str(e.destination.parent).casefold() for e in plan.entries if e.destination
+            path_key(e.destination.parent) for e in plan.entries if e.destination
         )
         applied_source_parents |= _merge_stragglers(merge_pairs, occupied, entry_keys, target_keys)
 
