@@ -11,6 +11,7 @@ from termrenamer.core.collisions import allocate_destination, name_is_taken
 from termrenamer.core.models import (
     ApplyResult,
     ApplyStatus,
+    EntryStatus,
     Plan,
     PlanEntry,
 )
@@ -157,7 +158,8 @@ def apply_plan(plan: Plan, *, confirmed: bool) -> list[ApplyResult]:
 
     Applies the entries that have a destination: ready, and name taken with a numbered
     name (Name taken set to ``suffix``). Reports every other entry (no match, not
-    recognised, name taken under ``skip``) as skipped with its status as the reason.
+    recognised, name taken under ``skip``) as skipped with its status as the reason,
+    and each left out entry as left out; neither is touched.
     Each video is handled before the Sidecars, and a Sidecar is applied only when its
     video was renamed or unchanged in this Apply. While the Plan was built with Folder
     rename on, the files left in a folder that a video moved out of are merged into the
@@ -182,6 +184,17 @@ def apply_plan(plan: Plan, *, confirmed: bool) -> list[ApplyResult]:
     applied_sources: set[Path] = set()
 
     for entry in ordered:
+        if entry.status is EntryStatus.LEFT_OUT:
+            # Before every check: a left out file is reported as left out, not skipped.
+            results.append(
+                ApplyResult(
+                    source=entry.source,
+                    destination=None,
+                    status=ApplyStatus.LEFT_OUT,
+                    reason=EntryStatus.LEFT_OUT.value,
+                ),
+            )
+            continue
         if entry.video is not None and entry.video not in applied_sources:
             # The Plan left it without a name (its video's status), or its video was
             # skipped or failed in this Apply.

@@ -25,6 +25,11 @@ _LABEL_WIDTH = 6
 """``from`` and ``to`` and the spaces after them, in the footer."""
 
 
+class _DetailsScroll(VerticalScroll, can_focus=False):
+    """The details column's scroll. It never takes focus, so the arrows reach the app's
+    key table even when the column is taller than the screen."""
+
+
 class PreviewStage(TitleListStage):
     """The details column with the summary and Apply, and the Plan's Title list."""
 
@@ -69,7 +74,7 @@ class PreviewStage(TitleListStage):
     def compose(self) -> ComposeResult:
         with Horizontal():
             with Vertical(id="details"):
-                with VerticalScroll(id="details-scroll"):
+                with _DetailsScroll(id="details-scroll"):
                     yield TitleDetails()
                     with Vertical(id="details-actions"):
                         yield ActionButton(
@@ -87,9 +92,10 @@ class PreviewStage(TitleListStage):
                 yield TitleList(id="preview-titles")
 
     def on_mount(self) -> None:
-        # Each button shows once its key's action is built (#27, #28).
+        # Each button shows once its key's action is built, here or on the app (#28).
         for button_id, action in (("#change-match", "pick_match"), ("#leave-out", "leave_out")):
-            self.query_one(button_id).display = callable(getattr(self, f"action_{action}", None))
+            built = any(callable(getattr(n, f"action_{action}", None)) for n in (self, self.app))
+            self.query_one(button_id).display = built
 
     @property
     def plan(self) -> Plan | None:
@@ -111,11 +117,24 @@ class PreviewStage(TitleListStage):
             return None
         return row.files[min(self._file, len(row.files) - 1)]
 
-    def show_plan(self, plan: Plan) -> None:
-        """Show ``plan``'s Titles, and each not recognised video as a row of its own."""
+    def show_plan(self, plan: Plan, *, keep_selection: bool = False) -> None:
+        """Show ``plan``'s Titles, and each not recognised video as a row of its own.
+
+        A new Plan starts at its first row. With ``keep_selection``, as for a Plan
+        derived from the one shown, the selection stays on the same file (by its
+        source), in whichever row now holds it.
+        """
+        kept = self.selected_file if keep_selection else None
         self._plan = plan
         self._rows = title_rows(plan)
         self._file = 0
+        row_index = 0
+        if kept is not None:
+            for index, row in enumerate(self._rows):
+                sources = [entry.source for entry in row.files]
+                if kept.source in sources:
+                    row_index, self._file = index, sources.index(kept.source)
+                    break
         rows = [
             ListRow(
                 key=str(index),
@@ -128,6 +147,8 @@ class PreviewStage(TitleListStage):
         # Rows are keyed by their place, so clear first: a new Plan starts at its first row.
         self.title_list.set_rows([])
         self.title_list.set_rows(rows)
+        if rows:
+            self.title_list.highlighted = row_index
         self.show_heading_count(len(rows))
         self.query_one("#summary-counts", Static).update(_summary(PlanCounts.of(plan)))
         self._show_details()
@@ -139,6 +160,11 @@ class PreviewStage(TitleListStage):
     def _show_details(self) -> None:
         if self._plan is not None:
             self.query_one(TitleDetails).show(self.selected_row, self._plan.mode, self._file)
+        video = self.selected_file
+        left_out = video is not None and video.status is EntryStatus.LEFT_OUT
+        self.query_one("#leave-out", ActionButton).update(
+            "x  Put back" if left_out else "x  Leave out"
+        )
         self.changed()
 
     # ------------------------------------------------------------------ keys
@@ -183,10 +209,14 @@ class PreviewStage(TitleListStage):
         notes.extend(_sidecar_notes(row.sidecars_of(video), moves=why is None))
         note = "".join(f" · {n}" for n in notes)
         to = str(video.destination) if video.destination is not None else "not renamed"
+        if video.status is EntryStatus.LEFT_OUT and video.wanted is not None:
+            to = str(video.wanted)
         if why is None:
             colour = "$warning" if video.status is EntryStatus.NAME_TAKEN else "$accent"
         elif video.status is EntryStatus.READY:
             colour = "$tr-dim"
+        elif video.status is EntryStatus.LEFT_OUT:
+            colour = "$tr-dim strike"  # the name it would have, struck through
         else:
             colour = StatusWord(video.status).style
         return (
@@ -217,8 +247,7 @@ def _sidecar_notes(sidecars: tuple[PlanEntry, ...], *, moves: bool) -> list[str]
 
 
 def _summary(counts: PlanCounts) -> str:
-    """The Plan's videos counted by status, on three lines to fit the column. Left out
-    is dim until it has a status word of its own (#27)."""
+    """The Plan's videos counted by status, on three lines to fit the column."""
 
     def part(n: int, word: StatusWord) -> str:
         return f"[{word.style}]{n} {word.value}[/]"
@@ -232,6 +261,6 @@ def _summary(counts: PlanCounts) -> str:
             part(counts.no_match, StatusWord.NO_MATCH)
             + dot
             + part(counts.not_recognised, StatusWord.NOT_RECOGNISED),
-            f"[$tr-dim]{counts.left_out} left out[/]",
+            part(counts.left_out, StatusWord.LEFT_OUT),
         )
     )

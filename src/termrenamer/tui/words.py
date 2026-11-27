@@ -62,6 +62,8 @@ def why_not_renamed(entry: PlanEntry) -> str | None:
 
     A Sidecar has its video's status, so it gives its video's reason.
     """
+    if entry.status is EntryStatus.LEFT_OUT:
+        return "left out, so Apply does not touch it"
     if entry.status is EntryStatus.NOT_RECOGNISED:
         return "not recognised: its name could not be read"
     if entry.status is EntryStatus.NO_MATCH:

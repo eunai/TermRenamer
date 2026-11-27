@@ -1,7 +1,7 @@
 """The Applied Stage: what Apply did, counted in videos, and each file it did not rename.
 
 The left column holds the counts and the actions (New batch; Undo once #26 builds
-it). The right lists each skipped and each failed video with its reason, and each
+it). The right lists each skipped, failed and left out video with its reason, and each
 Sidecar that was not renamed while its video was. Every result, Sidecars included,
 is also in the Logs.
 """
@@ -102,6 +102,8 @@ class AppliedStage(StageView):
         if counts.unchanged:
             had = agree(counts.unchanged, "had its name", "had their names")
             line += f"\n[$tr-dim]{counts.unchanged} already {had}[/]"
+        if counts.left_out:
+            line += f"\n[$tr-dim]{counts.left_out} left out[/]"
         self.query_one("#applied-counts", Static).update(line)
         self.query_one("#applied-title", Static).update(
             "The Plan is applied." + ("" if counts.failed else "\nNothing failed.")
@@ -123,7 +125,7 @@ class AppliedStage(StageView):
 
 
 def not_renamed(plan: Plan, results: Sequence[ApplyResult]) -> list[tuple[PlanEntry, ApplyResult]]:
-    """Each video Apply skipped or failed, then each Sidecar it did not rename while
+    """Each video Apply skipped, failed or found left out, then each Sidecar it did not rename while
     renaming its video (or finding it already named), in Apply's order."""
     entries = {entry.source: entry for entry in plan.entries}
     status = {result.source: result.status for result in results}
@@ -141,6 +143,8 @@ def _lines_for(entry: PlanEntry, result: ApplyResult) -> str:
     """Two lines: the file's name and its folder, then why it was not renamed."""
     if result.status is ApplyStatus.FAIL:
         reason, colour = f"failed: {result.reason}", "$error"
+    elif result.status is ApplyStatus.LEFT_OUT:
+        reason, colour = "left out of the Plan", "$tr-dim"
     else:
         # A skip for the entry's status gives the Preview's reason; a check at Apply
         # time (a changed source, a taken destination) gives Apply's.
