@@ -37,7 +37,12 @@ class Download:
 
 
 class HttpClient:
-    """Thin wrapper around ``httpx.Client`` with retry/backoff (no secrets in logs)."""
+    """Thin wrapper around ``httpx.Client`` with retry/backoff.
+
+    Its own log lines name no URL. httpx logs each request's full URL, query string
+    included; a Provider key or token in it, or in any other log record, is masked by
+    the record factory of :mod:`termrenamer.util.logging`.
+    """
 
     def __init__(
         self,
