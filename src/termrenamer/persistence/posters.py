@@ -269,8 +269,10 @@ class PosterStore:
             download = self._http.download(address, max_bytes=MAX_POSTER_BYTES, go_on=go_on)
         except Abandoned as exc:
             raise PosterAbandoned(str(exc)) from exc
-        except (ProviderError, httpx.HTTPError) as exc:
+        except ProviderError as exc:  # the app's own words: a status, a size
             raise PosterError(f"download failed: {exc}") from exc
+        except httpx.HTTPError as exc:  # its text may quote the address: the kind only
+            raise PosterError(f"download failed: {type(exc).__name__}") from exc
         kind = download.content_type.split(";", 1)[0].strip().lower()
         body = download.content
         if (kind and not kind.startswith("image/")) or not _is_image(body) or not _decodes(body):

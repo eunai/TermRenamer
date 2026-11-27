@@ -293,6 +293,20 @@ def test_a_network_failure_is_a_poster_error(tmp_path: Path) -> None:
     assert files_in(tmp_path) == []
 
 
+def test_a_download_error_quotes_no_address_from_the_error_text(tmp_path: Path) -> None:
+    # The error is logged as "No Poster for ...: <message>"; an error a library raises
+    # may quote an address with a query, which never reaches the message.
+    def broken(request: httpx.Request) -> None:
+        raise httpx.RemoteProtocolError(
+            "peer closed https://image.tmdb.org/x.jpg?api_key=secretvalue", request=request
+        )
+
+    with pytest.raises(PosterError) as raised:
+        store_for(ImageHost(fail=broken), tmp_path, Clock()).fetch(TMDB)
+
+    assert str(raised.value) == "download failed: RemoteProtocolError"
+
+
 @pytest.mark.parametrize(
     ("platform", "variable", "folder"),
     [
