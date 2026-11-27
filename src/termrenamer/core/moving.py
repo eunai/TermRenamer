@@ -2,8 +2,10 @@
 
 Every new name is claimed by the call that makes it, and that call fails when anything
 is at the name, links not followed: a hard link, a file opened with exclusive create, a
-symbolic link, a folder made, or on Windows :func:`os.rename`. There is no check before
-the move that the move relies on, no ``shutil.move`` and no ``os.replace``. Each change is
+symbolic link, a folder made, or on Windows :func:`os.rename`. That rename takes a name
+that is the source's own file (another letter case of its name, a separate hard link of
+it), so on Windows that one name is refused by a check directly before the rename. There
+is no ``shutil.move`` and no ``os.replace``. Each change is
 recorded in :class:`Changes` at the moment the call that made it succeeds, before any
 call that can raise. A symbolic link or a Windows junction is never entered: it is moved
 as itself, and nothing behind it is read, moved or removed.
@@ -100,7 +102,8 @@ def move_no_replace(source: Path, dest: Path, changes: Changes) -> None:
 
     - A case-only rename (:func:`~termrenamer.core.collisions.is_case_only_rename`) is a
       plain :func:`os.rename`; afterwards the folder must list the new name.
-    - A file on Windows: :func:`os.rename`, which refuses a taken name.
+    - A file on Windows: :func:`os.rename`, which refuses a taken name; a name that is
+      the source's own file, which that rename would take, is refused just before it.
     - A file elsewhere: a hard link at ``dest``, then the source unlinked.
     - When that cannot be made for a reason other than a taken name (another drive, a
       filesystem with no hard links): a copy into a file opened with exclusive create,
@@ -207,6 +210,7 @@ def _move_file(source: Path, dest: Path, changes: Changes) -> None:
     st = os.lstat(source)
     before = _fingerprint(source, st)
     if os.name == "nt":
+        _refuse_the_source_itself(dest, st)  # the last call before the rename
         try:
             os.rename(source, dest)
         except FileExistsError:
@@ -274,7 +278,7 @@ def _copy_then_unlink(
         changes.files_left_behind.append(dest)
         made = os.lstat(dest)
     else:
-        fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW | _O_BINARY, 0o600)
+        fd = _create_new(dest)
         changes.files_left_behind.append(dest)
         try:
             made = os.fstat(fd)
@@ -302,6 +306,38 @@ def _copy_then_unlink(
         )
 
     _unlink_source(source, dest, made, unchanged, before, changes)
+
+
+def _refuse_the_source_itself(dest: Path, st: os.stat_result) -> None:
+    """Raise :class:`FileExistsError` when ``dest`` is the source's own entry (``st`` its
+    ``lstat``), under another letter case of its name or as a separate hard link of it.
+
+    Windows's :func:`os.rename` refuses every other name that exists, but takes one that
+    is the source itself, so that one name is refused here.
+    """
+    try:
+        there = os.lstat(dest)
+    except OSError:
+        return  # nothing there, or nothing readable: the rename refuses what exists
+    if os.path.samestat(there, st):
+        raise FileExistsError(errno.EEXIST, "the new name is the source's own file", str(dest))
+
+
+def _create_new(dest: Path) -> int:
+    """Open a new file at ``dest`` with exclusive create, for writing.
+
+    Raises:
+        FileExistsError: something is at ``dest``. Windows refuses an existing folder
+            with a permission error, so that error counts as a taken name when ``dest``
+            exists.
+    """
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW | _O_BINARY
+    try:
+        return os.open(dest, flags, 0o600)
+    except PermissionError as exc:
+        if os.path.lexists(dest):
+            raise FileExistsError(errno.EEXIST, "the new name exists", str(dest)) from exc
+        raise
 
 
 def _close(fd: int) -> None:
