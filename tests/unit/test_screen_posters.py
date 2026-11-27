@@ -18,6 +18,7 @@ from termrenamer.tui.dialogs import ApplyConfirm
 from termrenamer.tui.poster_support import NO_IMAGES, NOT_INSTALLED, PosterSupport
 from termrenamer.tui.stage import Stage
 from termrenamer.tui.views import HelpView, SettingsView
+from termrenamer.tui.widgets.footer import AppFooter
 from termrenamer.tui.widgets.poster_panel import PosterPanel
 from termrenamer.tui.widgets.title_details import TitleDetails
 
@@ -389,3 +390,19 @@ async def test_help_shows_the_provider_credits() -> None:
     assert "This product uses the TMDB API but is not endorsed or certified by TMDB." in text
     assert "Metadata provided by TheTVDB." in text
     assert "https://thetvdb.com/" in text
+
+
+async def test_at_the_smallest_size_with_posters_leave_out_stays_on_screen(
+    tmp_path: Path,
+) -> None:
+    app = poster_app(tmp_path, ImageHost())
+    async with app.run_test(size=(100, 30)) as pilot:
+        await built(pilot, tmp_path)
+        shown = panel(app).display
+        button = app.query_one("#leave-out").region
+        details = app.query_one("#details").region
+        footer = app.query_one(AppFooter).region
+    assert shown
+    assert button.height > 0
+    assert details.contains_region(button)
+    assert button.bottom <= footer.y

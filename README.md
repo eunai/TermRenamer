@@ -184,10 +184,12 @@ Keys:
   the Settings screen.
 - **Posters.** With the `posters` extra installed and a terminal that draws
   images, the Plan and Preview show the selected Title's Poster in a framed
-  panel with the provider's name on its border. `i` hides or shows it for the
-  session; `TERMRENAMER_SHOW_POSTERS=false` starts with it hidden. Below 100
-  columns or 30 rows the panel is hidden. Posters are downloaded from TMDB's
-  or TheTVDB's image host when you select a Title at the Preview, and kept for
+  panel with the provider's name on its border. `i` or the Settings screen
+  hides or shows it for the session; `TERMRENAMER_SHOW_POSTERS=false` starts
+  with it hidden. Below 100 columns or 30 rows the panel is hidden. Posters are
+  downloaded from TMDB's or TheTVDB's image host when a Title is selected at
+  the Preview, the first one as the Preview opens, never while the plan is
+  built, and kept for
   30 days in a `termrenamer/posters` folder in your per-user cache folder
   (`%LOCALAPPDATA%` on Windows, `~/.cache` or `XDG_CACHE_HOME` elsewhere).
 - **Name taken.** When a new name is already used, by something at that path
