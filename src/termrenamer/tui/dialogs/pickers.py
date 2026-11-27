@@ -1,6 +1,6 @@
 """The file and folder dialogs: textual_fspicker's, made safe for any folder.
 
-Four parts of the package's dialogs are swapped for the app's own:
+Parts of the package's dialogs are swapped for, or wrapped by, the app's own:
 
 - The folder listing reads its entry styles on the app's thread only. The dialog lists
   its folder in a thread, and that thread reads the listing widget's component
@@ -9,7 +9,11 @@ Four parts of the package's dialogs are swapped for the app's own:
   and stop the app.
 - A folder that cannot be listed or entered (it is gone, the disk refuses to list it,
   or its names can be read but not looked at) leaves the dialog open with an empty
-  listing and says why, in place of ending the app; backspace goes up.
+  listing and says why, in place of ending the app; backspace goes up. A listing is
+  shown only while its folder is the one the dialog is on: one the person left before
+  it ended changes nothing.
+- Enter (or a click) on a listed entry that the disk cannot say is a folder or a file
+  keeps the dialog on its folder and says why.
 - The file dialog's name field suggests a path as the person types; a path the disk
   cannot answer for gets no suggestion, and Enter on it says why on the error line,
   in place of ending the app.
@@ -20,32 +24,28 @@ Four parts of the package's dialogs are swapped for the app's own:
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Iterable, Iterator
 from pathlib import Path
-from typing import cast
 
 from rich.cells import cell_len
 from textual import on, work
 from textual.content import Content
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, OptionList
+from textual.worker import Worker, get_current_worker
 from textual_fspicker import FileOpen, SelectDirectory
 from textual_fspicker.file_dialog import BaseFileDialog
 from textual_fspicker.parts import CurrentDirectory, DirectoryNavigation
-from textual_fspicker.parts.directory_navigation import DirectoryEntryStyling
+from textual_fspicker.parts.directory_navigation import DirectoryEntry, DirectoryEntryStyling
+from textual_fspicker.safe_tests import is_dir, is_file
 from textual_fspicker.suggest_path import SuggestPath
-
-_PACKAGE_LOAD = cast(
-    "Callable[[DirectoryNavigation], None]",
-    DirectoryNavigation._load.__wrapped__,  # type: ignore[attr-defined]  # noqa: SLF001
-)
-"""The package's listing of a folder, without its worker decorator."""
 
 
 class _Listing(DirectoryNavigation):
     """The dialog's folder listing, reading its entry styles on the app's thread only,
-    and saying why when its folder cannot be listed."""
+    showing only the listing of the folder it is on, and saying why when the disk
+    fails it."""
 
     def __init__(self, location: Path) -> None:
         super().__init__(location)
@@ -63,26 +63,49 @@ class _Listing(DirectoryNavigation):
 
     @work(exclusive=True, thread=True)
     def _load(self) -> None:
+        """List the current folder off the app's thread, as the package does, into a
+        list of this listing's own; the app's thread shows it if it is still wanted."""
+        worker = get_current_worker()
+        location = self._location
+        styles = self._styles
+        entries: list[DirectoryEntry] = []
+        reason: str | None = None
         try:
-            _PACKAGE_LOAD(self)
-        except OSError as exc:
-            self._entries = []
-            self.app.call_from_thread(self._unreadable, exc)
+            for entry in location.iterdir():
+                if worker.is_cancelled:
+                    return
+                if is_dir(entry) or (is_file(entry) and self.show_files):
+                    entries.append(DirectoryEntry(location / entry.name, styles))
+        except OSError as exc:  # gone, refused, or the disk failed
+            entries, reason = [], exc.strerror or str(exc)
+        self.app.call_from_thread(self._listed, worker, location, entries, reason)
 
-    class Unreadable(Message):
-        """The folder could not be listed, for ``reason``.
-
-        It reaches the dialog after the ``Changed`` that cleared the dialog's error line
-        for this folder, as both travel the same way, so the reason stays shown."""
-
-        def __init__(self, reason: str) -> None:
-            super().__init__()
-            self.reason = reason
-
-    def _unreadable(self, error: OSError) -> None:
-        """Show the folder as empty, and tell the dialog why."""
+    def _listed(
+        self,
+        worker: Worker[None],
+        location: Path,
+        entries: list[DirectoryEntry],
+        reason: str | None,
+    ) -> None:
+        """Show ``entries``, read by ``worker`` from ``location``, unless the person
+        has moved on since: a later listing was started, or the folder changed."""
+        if worker.is_cancelled or location != self._location:
+            return
+        self._entries = entries
         self._repopulate_display()
-        self.post_message(self.Unreadable(error.strerror or str(error)))
+        if reason is not None:
+            self.post_message(self.Says(_CANNOT_READ.format(reason=reason)))
+
+    class Says(Message):
+        """The line the dialog's error line should show, as plain text.
+
+        A folder's reason reaches the dialog after the ``Changed`` that cleared the
+        error line for that folder, as both travel the same way, so the reason stays
+        shown."""
+
+        def __init__(self, text: str) -> None:
+            super().__init__()
+            self.text = text
 
     def _repopulate_display(self) -> None:
         """List the entries read, with ``..`` first. When even ``..`` cannot be looked at
@@ -92,7 +115,17 @@ class _Listing(DirectoryNavigation):
             super()._repopulate_display()
         except OSError as exc:
             self.clear_options()
-            self.post_message(self.Unreadable(exc.strerror or str(exc)))
+            self.post_message(self.Says(_CANNOT_READ.format(reason=exc.strerror or str(exc))))
+
+    def _on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        """Enter on an entry: the package's going in or choosing, in place of its own
+        handler; when the disk cannot say what the entry is, the dialog says why and
+        stays on its folder."""
+        event.prevent_default()
+        try:
+            DirectoryNavigation._on_option_list_option_selected(self, event)  # noqa: SLF001
+        except OSError as exc:
+            self.post_message(self.Says(_CANNOT_USE.format(reason=exc.strerror or str(exc))))
 
 
 class _Folder(CurrentDirectory):
@@ -123,11 +156,6 @@ is."""
 
 _CANNOT_READ = "This folder cannot be read: {reason}"
 """What the dialogs' error line says when a folder cannot be listed."""
-
-
-def _say_unreadable(dialog: FileOpen | SelectDirectory, reason: str) -> None:
-    """Say on ``dialog``'s error line, as plain text, why its folder cannot be listed."""
-    _say(dialog, _CANNOT_READ.format(reason=reason))
 
 
 def _say(dialog: FileOpen | SelectDirectory, text: str) -> None:
@@ -171,10 +199,10 @@ class FilePicker(FileOpen):
 
     ERROR_PERMISSION_ERROR = _CANNOT_READ.format(reason="Permission denied")
 
-    @on(_Listing.Unreadable)
-    def _on_unreadable(self, event: _Listing.Unreadable) -> None:
+    @on(_Listing.Says)
+    def _on_says(self, event: _Listing.Says) -> None:
         event.stop()
-        _say_unreadable(self, event.reason)
+        _say(self, event.text)
 
     @on(Input.Submitted)
     @on(Button.Pressed, "#select")
@@ -200,7 +228,7 @@ class FolderPicker(SelectDirectory):
 
     ERROR_PERMISSION_ERROR = _CANNOT_READ.format(reason="Permission denied")
 
-    @on(_Listing.Unreadable)
-    def _on_unreadable(self, event: _Listing.Unreadable) -> None:
+    @on(_Listing.Says)
+    def _on_says(self, event: _Listing.Says) -> None:
         event.stop()
-        _say_unreadable(self, event.reason)
+        _say(self, event.text)

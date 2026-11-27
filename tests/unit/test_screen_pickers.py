@@ -9,6 +9,7 @@ from __future__ import annotations
 import errno
 import os
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,7 @@ from .screen_driver import (
     screen_text,
     settings,
     text_of,
+    until,
 )
 
 WIDE = (200, 36)
@@ -144,7 +146,8 @@ async def test_a_typed_path_the_disk_cannot_answer_gets_no_suggestion_and_keeps_
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, number: int
 ) -> None:
     """The file dialog suggests as the person types; a path the disk refuses to look at
-    gets no suggestion, and the dialog, the typed text and the queue stay."""
+    gets no suggestion, so ``→`` at the end of the text adds nothing to it, and the
+    dialog, the typed text and the queue stay."""
     queued = tmp_path / "Queued"
     queued.mkdir()
     start = (tmp_path / "Start").resolve()
@@ -170,6 +173,8 @@ async def test_a_typed_path_the_disk_cannot_answer_gets_no_suggestion_and_keeps_
         await pilot.press(*typed)
         await wait_for_listing(pilot)
         await pilot.pause()
+        # → at the end of the text takes the suggestion shown, if there is one.
+        await pilot.press("right")
         shown = field.value
         dialog = app.screen
         monkeypatch.setattr(Path, "exists", exists)
@@ -270,6 +275,90 @@ async def test_a_folder_that_lists_but_cannot_be_entered_says_why_in_the_folder_
 
     assert isinstance(dialog, SelectDirectory)
     assert f"This folder cannot be read: {os.strerror(errno.EACCES)}" in text
+    assert running
+
+
+@pytest.mark.parametrize(("key", "kind"), [("a", FileOpen), ("f", SelectDirectory)])
+@pytest.mark.parametrize("call", ["is_dir", "resolve"])
+async def test_choosing_a_listed_folder_the_disk_cannot_answer_for_says_why_and_keeps_the_app(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, key: str, kind: type, call: str
+) -> None:
+    """Enter on a listed folder checks it on the disk; when the disk fails there, the
+    dialog stays open on its folder and says why, and the queue stays."""
+    queued = tmp_path / "Queued"
+    queued.mkdir()
+    start = (tmp_path / "Start").resolve()
+    inside = start / "Inside"
+    inside.mkdir(parents=True)
+    monkeypatch.chdir(start)
+    real = getattr(Path, call)
+
+    def failing(path: Path, *args: object, **kwargs: object) -> object:
+        if path.name == "Inside":
+            raise OSError(errno.EIO, os.strerror(errno.EIO), str(path))
+        return real(path, *args, **kwargs)
+
+    app = make_app()
+    async with app.run_test(size=WIDE) as pilot:
+        await queue(pilot, queued.resolve())
+        await press(pilot, key)
+        await wait_for_listing(pilot)
+        monkeypatch.setattr(Path, call, failing)
+        # The listing holds ``..`` then Inside.
+        await pilot.press("down", "enter")
+        await wait_for_listing(pilot)
+        text = screen_text(app)
+        dialog = app.screen
+        monkeypatch.setattr(Path, call, real)
+        await press(pilot, "escape")
+        sources = app.queue.sources
+        running = app.is_running
+
+    assert isinstance(dialog, kind)
+    assert f"This path cannot be used: {os.strerror(errno.EIO)}" in text
+    # Still on its own folder (the folder dialog cuts a long one from the left).
+    assert f"{os.sep}Start " in text
+    assert running
+    assert sources == (queued.resolve(),)
+
+
+@pytest.mark.parametrize("key", ["a", "f"])
+async def test_a_folder_left_before_its_listing_ends_changes_nothing_shown_after(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, key: str
+) -> None:
+    """The person goes up from a folder still being listed; when that listing then
+    fails, the folder above keeps its entries and no error line is shown for it."""
+    parent = (tmp_path / "Parent").resolve()
+    child = parent / "Child"
+    child.mkdir(parents=True)
+    (parent / "Sibling").mkdir()
+    monkeypatch.chdir(child)
+    listed = Path.iterdir
+    held, release = threading.Event(), threading.Event()
+
+    def slow(path: Path) -> object:
+        if path == child:
+            held.set()
+            assert release.wait(timeout=10)
+            raise OSError(errno.EIO, os.strerror(errno.EIO), str(path))
+        return listed(path)
+
+    monkeypatch.setattr(Path, "iterdir", slow)
+    app = make_app()
+    async with app.run_test(size=WIDE) as pilot:
+        await press(pilot, key)
+        assert held.wait(timeout=5)
+        await press(pilot, "backspace")
+        await until(pilot, lambda: "Sibling" in screen_text(app))
+        release.set()
+        await wait_for_listing(pilot)
+        await pilot.pause()
+        text = screen_text(app)
+        await press(pilot, "escape")
+        running = app.is_running
+
+    assert "Sibling" in text
+    assert "cannot be read" not in text
     assert running
 
 
