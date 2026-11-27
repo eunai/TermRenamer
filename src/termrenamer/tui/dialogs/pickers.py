@@ -41,6 +41,8 @@ from textual_fspicker.parts.directory_navigation import DirectoryEntry, Director
 from textual_fspicker.safe_tests import is_dir, is_file
 from textual_fspicker.suggest_path import SuggestPath
 
+from termrenamer.tui.words import error_reason
+
 
 class _Listing(DirectoryNavigation):
     """The dialog's folder listing, reading its entry styles on the app's thread only,
@@ -77,7 +79,7 @@ class _Listing(DirectoryNavigation):
                 if is_dir(entry) or (is_file(entry) and self.show_files):
                     entries.append(DirectoryEntry(location / entry.name, styles))
         except OSError as exc:  # gone, refused, or the disk failed
-            entries, reason = [], exc.strerror or str(exc)
+            entries, reason = [], error_reason(exc)
         self.app.call_from_thread(self._listed, worker, location, entries, reason)
 
     def _listed(
@@ -115,7 +117,7 @@ class _Listing(DirectoryNavigation):
             super()._repopulate_display()
         except OSError as exc:
             self.clear_options()
-            self.post_message(self.Says(_CANNOT_READ.format(reason=exc.strerror or str(exc))))
+            self.post_message(self.Says(_CANNOT_READ.format(reason=error_reason(exc))))
 
     def _on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         """Enter on an entry: the package's going in or choosing, in place of its own
@@ -125,7 +127,7 @@ class _Listing(DirectoryNavigation):
         try:
             DirectoryNavigation._on_option_list_option_selected(self, event)  # noqa: SLF001
         except OSError as exc:
-            self.post_message(self.Says(_CANNOT_USE.format(reason=exc.strerror or str(exc))))
+            self.post_message(self.Says(_CANNOT_USE.format(reason=error_reason(exc))))
 
 
 class _Folder(CurrentDirectory):
@@ -212,8 +214,8 @@ class FilePicker(FileOpen):
         event.prevent_default()
         try:
             BaseFileDialog._confirm_file(self, event)  # noqa: SLF001
-        except OSError as exc:
-            _say(self, _CANNOT_USE.format(reason=exc.strerror or str(exc)))
+        except (OSError, ValueError) as exc:  # ValueError: a NUL character in the path
+            _say(self, _CANNOT_USE.format(reason=error_reason(exc)))
 
 
 class FolderPicker(SelectDirectory):

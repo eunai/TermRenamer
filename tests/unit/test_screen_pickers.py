@@ -13,6 +13,7 @@ import threading
 from pathlib import Path
 
 import pytest
+from textual import events
 from textual.widgets import Input
 from textual_fspicker import FileOpen, SelectDirectory
 
@@ -27,6 +28,7 @@ from .screen_driver import (
     screen_text,
     settings,
     text_of,
+    tv_backups,
     until,
 )
 
@@ -382,3 +384,65 @@ async def test_a_root_with_an_unknown_user_in_settings_is_refused_and_the_old_on
     assert message.startswith("The TV Destination root ~nonexistent-user-of-termrenamer")
     assert "cannot be used" in message
     assert kept == root
+
+
+async def test_a_root_pasted_with_a_nul_character_is_refused_and_build_keeps_the_app(
+    tmp_path: Path,
+) -> None:
+    """No path can hold a NUL character: Settings refuses one pasted into a root and
+    keeps the root set before, so building the Plan afterwards works."""
+    root = tmp_path / "TV"
+    root.mkdir()
+    queued = tv_backups(tmp_path).resolve()
+    app = make_app(loaded=settings(folder_rename=True, tv_root=root))
+    async with app.run_test(size=SIZE) as pilot:
+        await queue(pilot, queued)
+        await press(pilot, "s")
+        field = app.screen.query_one("#tv-root", Input)
+        await pilot.press("end", "ctrl+u")
+        field.post_message(events.Paste(f"{tmp_path}{os.sep}bad\x00root"))
+        await pilot.pause()
+        await press(pilot, "enter")
+        message = text_of(app, "#settings-message")
+        await press(pilot, "escape")
+        kept = app.session_settings.destination_root(ScanMode.TV)
+        await press(pilot, "b")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        running, plan = app.is_running, app.plan
+
+    assert message.startswith(f"The TV Destination root {tmp_path}{os.sep}bad")
+    assert "cannot be used (a path cannot hold a NUL character)" in message
+    assert kept == root
+    assert running and plan is not None
+
+
+async def test_enter_on_a_typed_name_with_a_nul_character_says_why_and_keeps_the_app(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    queued = tmp_path / "Queued"
+    queued.mkdir()
+    start = (tmp_path / "Start").resolve()
+    start.mkdir()
+    monkeypatch.chdir(start)
+    app = make_app()
+    async with app.run_test(size=WIDE) as pilot:
+        await queue(pilot, queued.resolve())
+        await press(pilot, "a")
+        await wait_for_listing(pilot)
+        field = app.screen.query_one(Input)
+        await pilot.press("tab")
+        assert app.focused is field
+        field.post_message(events.Paste("bad\x00name"))
+        await pilot.pause()
+        await press(pilot, "enter")
+        text = screen_text(app)
+        dialog = app.screen
+        await press(pilot, "escape")
+        sources = app.queue.sources
+        running = app.is_running
+
+    assert isinstance(dialog, FileOpen)
+    assert "This path cannot be used: a path cannot hold a NUL character" in text
+    assert running
+    assert sources == (queued.resolve(),)

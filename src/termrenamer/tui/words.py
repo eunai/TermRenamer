@@ -14,6 +14,21 @@ from termrenamer.core.models import (
     Title,
 )
 
+NUL = "\x00"
+NO_NUL = "a path cannot hold a NUL character"
+"""Why a path holding :data:`NUL` (pasted, as a terminal allows) cannot be used."""
+
+
+def error_reason(exc: BaseException) -> str:
+    """Why ``exc`` happened, for the screen: an ``OSError``'s own words without its
+    number and path, :data:`NO_NUL` for a path that holds a NUL character, else the
+    error's text."""
+    if isinstance(exc, OSError) and exc.strerror:
+        return exc.strerror
+    if isinstance(exc, ValueError) and "null" in str(exc):
+        return NO_NUL
+    return str(exc)
+
 
 def noun(n: int, word: str) -> str:
     """``word``, with an ``s`` unless ``n`` is 1: ``Stage``, ``Stages``."""

@@ -70,7 +70,15 @@ from termrenamer.tui.widgets.action_button import ActionButton
 from termrenamer.tui.widgets.footer import AppFooter, MessageKind
 from termrenamer.tui.widgets.header import AppHeader
 from termrenamer.tui.widgets.stages_row import StagesRow
-from termrenamer.tui.words import and_list, match_name, mode_label, noun, plural, provider_name
+from termrenamer.tui.words import (
+    and_list,
+    error_reason,
+    match_name,
+    mode_label,
+    noun,
+    plural,
+    provider_name,
+)
 from termrenamer.util.errors import ProviderError, ValidationError
 from termrenamer.util.logging import quiet_request_urls
 from termrenamer.wiring import PlanningWiring
@@ -421,9 +429,9 @@ class TermRenamerApp(App[None]):
         owner = self.session_settings
         try:
             options = owner.plan_options()
-        except (OSError, RuntimeError) as exc:  # the Destination root cannot be resolved
+        except (OSError, RuntimeError, ValueError) as exc:  # the root cannot be resolved
             root = owner.destination_root(owner.mode)
-            reason = exc.strerror if isinstance(exc, OSError) and exc.strerror else str(exc)
+            reason = error_reason(exc)
             self.say(
                 f"The {mode_label(owner.mode)} Destination root {root} cannot be used: "
                 f"{reason}. No Plan was built.",
