@@ -179,6 +179,17 @@ async def test_question_mark_opens_help_listing_every_key_of_the_table() -> None
         assert f"{key.display} {key.where} {key.help_text}" in text
 
 
+async def test_help_says_how_the_match_picker_moves_on_its_tiles_and_its_list() -> None:
+    """The picker is tiles while Posters show and a list otherwise; ``←→`` and ``↑↓``
+    move on either."""
+    app = make_app()
+    async with app.run_test(size=(120, 60)) as pilot:
+        await press(pilot, "question_mark")
+        text = screen_text(app)
+    shown = "Match picker, tiles with Posters or a list (←→ ↑↓, 1 to 3, enter, / to type)"
+    assert shown in text
+
+
 async def test_q_quits_from_a_view() -> None:
     app = make_app()
     async with app.run_test(size=SIZE) as pilot:

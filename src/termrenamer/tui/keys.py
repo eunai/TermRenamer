@@ -124,7 +124,7 @@ KEYS: tuple[Key, ...] = (
         "t",
         _bound("t", "pick_match"),
         "Match",
-        "Open the Match picker (↑↓, 1 to 3, enter, / to type, esc)",
+        "Match picker, tiles with Posters or a list (←→ ↑↓, 1 to 3, enter, / to type)",
         frozenset({Stage.PREVIEW}),
     ),
     Key(
