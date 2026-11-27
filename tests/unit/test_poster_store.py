@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -25,6 +26,7 @@ from termrenamer.persistence.posters import (
 )
 from termrenamer.util.http import HttpClient, HttpClientConfig
 
+from .links import point_folder_at
 from .poster_images import BROKEN_JPEG, JPEG, PNG, WEBP
 
 if TYPE_CHECKING:
@@ -64,10 +66,12 @@ class ImageHost:
         return httpx.Response(self.status, headers=self.headers, content=self.body)
 
 
-def store_for(host: ImageHost, folder: Path, clock: Clock) -> PosterStore:
+def store_for(
+    host: ImageHost, folder: Path, clock: Clock, *, inside: Path | None = None
+) -> PosterStore:
     raw = httpx.Client(transport=httpx.MockTransport(host.handle))
     http = HttpClient(config=HttpClientConfig(max_attempts=2, backoff_base_seconds=0), client=raw)
-    return PosterStore(folder, http, clock=clock)
+    return PosterStore(folder, http, clock=clock, inside=inside)
 
 
 def files_in(folder: Path) -> list[Path]:
@@ -289,6 +293,20 @@ def test_a_network_failure_is_a_poster_error(tmp_path: Path) -> None:
     assert files_in(tmp_path) == []
 
 
+def test_a_download_error_quotes_no_address_from_the_error_text(tmp_path: Path) -> None:
+    # The error is logged as "No Poster for ...: <message>"; an error a library raises
+    # may quote an address with a query, which never reaches the message.
+    def broken(request: httpx.Request) -> None:
+        raise httpx.RemoteProtocolError(
+            "peer closed https://image.tmdb.org/x.jpg?api_key=secretvalue", request=request
+        )
+
+    with pytest.raises(PosterError) as raised:
+        store_for(ImageHost(fail=broken), tmp_path, Clock()).fetch(TMDB)
+
+    assert str(raised.value) == "download failed: RemoteProtocolError"
+
+
 @pytest.mark.parametrize(
     ("platform", "variable", "folder"),
     [
@@ -410,3 +428,68 @@ def test_a_folder_the_store_cannot_search_is_a_poster_error_never_a_crash(
 
     assert stored is None
     assert removed == 0
+
+
+def elsewhere_with_posters(folder: Path, clock: Clock) -> tuple[Path, Path]:
+    """``folder`` with a young stored Poster (TMDB's) and an old one, as a store left
+    them; the old one's path is returned too."""
+    young = store_for(ImageHost(), folder, clock).fetch(TMDB)
+    old = folder / ("0" * 64 + ".poster")
+    old.write_bytes(JPEG)
+    os.utime(old, (clock.now - 31 * DAY, clock.now - 31 * DAY))
+    return young, old
+
+
+def poster_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [r.getMessage() for r in caplog.records if "poster folder" in r.getMessage()]
+
+
+@pytest.mark.parametrize(
+    ("linked", "outside"), [("posters", True), ("termrenamer", True), ("termrenamer", False)]
+)
+def test_a_poster_folder_reached_through_a_link_is_never_read_or_written(
+    tmp_path: Path, linked: str, outside: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Either the posters folder or the termrenamer folder holding it is a link to a
+    # folder, outside the cache folder or inside it, where a store's files already are.
+    clock = Clock()
+    cache = tmp_path / "cache"
+    elsewhere = tmp_path / "elsewhere" if outside else cache / "elsewhere"
+    link = cache / "termrenamer" / "posters" if linked == "posters" else cache / "termrenamer"
+    link.parent.mkdir(parents=True)
+    target = elsewhere if linked == "posters" else elsewhere / "posters"
+    target.mkdir(parents=True)
+    young, old = elsewhere_with_posters(target, clock)
+    point_folder_at(link, elsewhere)
+    before = files_in(elsewhere)
+    host = ImageHost()
+    store = store_for(host, cache / "termrenamer" / "posters", clock, inside=cache)
+
+    stored = store.stored(TMDB)
+    with pytest.raises(PosterError):
+        store.fetch(TVDB)
+    removed = store.remove_old()
+
+    assert stored is None
+    assert removed == 0 and old.exists() and young.exists()
+    assert host.requests == []
+    assert files_in(elsewhere) == before
+    assert len(poster_lines(caplog)) == 1
+
+
+def test_the_wiring_keeps_the_poster_folder_inside_the_cache_folder(
+    isolated_settings_dirs: IsolatedDirs, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from termrenamer.wiring import bootstrap_wiring
+
+    monkeypatch.setenv("TERMRENAMER_OMDB_API_KEY", "k")
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / "posters").mkdir(parents=True)
+    elsewhere_with_posters(elsewhere / "posters", Clock(now=time.time()))
+    cache = poster_folder().parent.parent
+    cache.mkdir(parents=True, exist_ok=True)
+    point_folder_at(cache / "termrenamer", elsewhere)
+    _settings, wired = bootstrap_wiring()
+
+    assert wired.posters is not None
+    assert wired.posters.stored(TMDB) is None  # read from disk only; nothing is sent

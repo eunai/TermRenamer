@@ -11,7 +11,7 @@ from __future__ import annotations
 import io
 import re
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -197,6 +197,8 @@ class ImageHost:
     threads: list[threading.Thread] = field(default_factory=list)
     gate: threading.Event | None = None
     """When set, each answer waits until the gate opens."""
+    attempts: int = 1
+    """How many times the store's HTTP client tries a download that gets 429 or 503."""
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
@@ -213,7 +215,7 @@ class ImageHost:
 
     def store(self, folder: Path) -> PosterStore:
         raw = httpx.Client(transport=httpx.MockTransport(self.handle))
-        config = HttpClientConfig(max_attempts=1, backoff_base_seconds=0)
+        config = HttpClientConfig(max_attempts=self.attempts, backoff_base_seconds=0, jitter=False)
         return PosterStore(folder, HttpClient(config=config, client=raw))
 
 
@@ -279,6 +281,15 @@ def footer_keys(app: TermRenamerApp) -> list[str]:
 async def press(pilot: Pilot[None], *keys: str) -> None:
     await pilot.press(*keys)
     await pilot.pause()
+
+
+async def until(pilot: Pilot[None], done: Callable[[], bool]) -> None:
+    """Let the app run until ``done()`` is true; fail after about five seconds."""
+    for _ in range(100):
+        if done():
+            return
+        await pilot.pause(0.05)
+    raise AssertionError("waited too long")
 
 
 async def pick_in_dialog(pilot: Pilot[None], key: str, path: Path | None) -> None:
