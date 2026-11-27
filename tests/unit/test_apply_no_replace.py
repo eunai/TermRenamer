@@ -656,6 +656,33 @@ def test_a_junction_is_never_entered(
         assert (inner / "behind.txt").read_bytes() == b"behind"
 
 
+def test_a_link_moved_across_drives_is_made_again_with_its_target(
+    show: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    needs_symlinks(tmp_path)
+    elsewhere = tmp_path / "Elsewhere"
+    _write(elsewhere / "bonus.txt", b"bonus")
+    extras = show / "Disc 1" / "Extras"
+    extras.symlink_to(elsewhere, target_is_directory=True)
+    notes_link = show / "Disc 1" / "notes link.txt"
+    notes_link.symlink_to("notes.txt")
+    targets = {link.name: os.readlink(link) for link in (extras, notes_link)}
+    plan = _plan(show)
+
+    _across_drives(monkeypatch)
+    outcome = apply_plan(plan, confirmed=True)
+    monkeypatch.undo()
+
+    season = show / "Show Name" / "Season 01"
+    for name, target in targets.items():
+        assert _by_source(outcome.stragglers)[show / "Disc 1" / name] == (ApplyStatus.RENAMED, "ok")
+        assert (season / name).is_symlink()
+        assert os.readlink(season / name) == target  # a relative link stays relative
+    assert os.listdir(season / "Extras") == ["bonus.txt"]  # still a link to a folder
+    assert (season / "notes link.txt").read_bytes() == b"x"  # the notes moved beside it
+    assert (elsewhere / "bonus.txt").read_bytes() == b"bonus"
+
+
 @pytest.mark.skipif(not WINDOWS, reason="a junction exists only on Windows")
 def test_a_real_junction_is_moved_as_itself_and_never_entered(show: Path, tmp_path: Path) -> None:
     elsewhere = tmp_path / "Elsewhere"

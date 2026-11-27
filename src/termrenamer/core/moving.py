@@ -124,7 +124,7 @@ def move_no_replace(
 
     With ``expected`` (Undo's moves, each of a file or a link), the source must be no
     folder and have the recorded size and modification time, read with ``lstat`` as the
-    last call before the rename or the hard link.
+    last look at the source before the rename or the hard link.
 
     Apply cannot defend a name it has claimed against another program that deletes or
     writes over it during the same Apply.
@@ -238,7 +238,8 @@ def _move_file(
     source: Path, dest: Path, changes: Changes, expected: PlanFingerprint | None = None
 ) -> None:
     """Move a file, a symbolic link or a junction as itself; with ``expected``, only while
-    it is as recorded (:func:`_check`, the last call before the rename or hard link)."""
+    it is as recorded (:func:`_check`, the last look at the source before the rename or
+    hard link)."""
     st = os.lstat(source)
     if expected is not None:
         _check(source, st, expected)
@@ -339,7 +340,7 @@ def _make_copy(source: Path, st: os.stat_result, at: Path, changes: Changes) -> 
     """Make a copy of ``source`` (as ``st`` found it) at the new name ``at``, list ``at``
     as left behind from the moment it is made, and return the copy's ``lstat``."""
     if stat.S_ISLNK(st.st_mode):
-        os.symlink(os.readlink(source), at)
+        _remake_link(source, st, at)
         changes.files_left_behind.append(at)
         made = os.lstat(at)
     else:
@@ -366,6 +367,31 @@ def _make_copy(source: Path, st: os.stat_result, at: Path, changes: Changes) -> 
     if not os.path.samestat(os.lstat(at), made):
         raise OSError(errno.EIO, "the copy is not at the name it was made at", str(at))
     return made
+
+
+def _remake_link(source: Path, st: os.stat_result, at: Path) -> None:
+    r"""Make at ``at`` a symbolic link with the target text of the link ``source`` (``st``
+    its ``lstat``), so a relative link stays relative.
+
+    On Windows a link to a folder is made as one again, and the ``\\?\`` prefix that
+    :func:`os.readlink` puts before an absolute target is left off, as a link made from
+    a plain path has none.
+    """
+    target = os.readlink(source)
+    if os.name == "nt":
+        target = _without_long_path_prefix(target)
+    folder = bool(getattr(st, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_DIRECTORY)
+    os.symlink(target, at, target_is_directory=folder)
+
+
+def _without_long_path_prefix(target: str) -> str:
+    r"""``\\?\D:\Shows`` as ``D:\Shows`` and ``\\?\UNC\server\share`` as
+    ``\\server\share``; any other target as it is."""
+    if target.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + target[len("\\\\?\\UNC\\") :]
+    if target.startswith("\\\\?\\") and target[5:7] == ":\\":
+        return target[4:]
+    return target
 
 
 def _fresh_name(dest: Path) -> Path:
