@@ -11,7 +11,7 @@ import pytest
 
 from termrenamer.core.apply import apply_plan
 from termrenamer.core.models import ApplyResult, ApplyStatus, Plan
-from termrenamer.core.planning import plan_queue
+from termrenamer.core.planning import LeaveOut, PutBack, derive_plan, plan_queue
 
 from .links import needs_symlinks, point_folder_at
 from .test_plan_stragglers import _options, _provider, _two_discs, _write
@@ -198,3 +198,84 @@ def test_a_folder_straggler_that_is_a_file_at_apply_is_skipped(tmp_path: Path) -
         "stale: the Plan listed a folder and a file is there now",
     )
     assert subs.read_bytes() == b"a file now"
+
+
+def test_a_new_folder_that_was_a_link_when_the_plan_was_built_is_gone_through(
+    tmp_path: Path,
+) -> None:
+    show = _two_discs(tmp_path)
+    library = tmp_path / "Library"
+    library.mkdir()
+    elsewhere = tmp_path / "Other Disk" / "Show Name"
+    elsewhere.mkdir(parents=True)
+    point_folder_at(library / "Show Name", elsewhere)
+    options = _options(destination_root=library)
+    plan = plan_queue([show], options, _provider()).plan
+    video = show / "Disc 1" / "Show.Name.S01E01.mkv"
+    [dest] = [e.destination for e in plan.entries if e.source == video]
+    assert dest is not None and library / "Show Name" in dest.parents
+
+    outcome = apply_plan(plan, confirmed=True)
+
+    assert _by_source(outcome.results)[video] == (ApplyStatus.RENAMED, "ok")
+    assert (elsewhere / dest.relative_to(library / "Show Name")).read_bytes() == b"x"
+
+
+def test_a_folder_straggler_made_a_link_after_part_of_it_moved_fails_and_says_so(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    show = _two_discs(tmp_path)
+    subs = show / "Disc 1" / "Subs"
+    _write(subs / "French.srt", b"fr")
+    plan = _plan(show)
+    [dest] = [s.destination for s in plan.stragglers if s.source == subs]
+    assert dest is not None
+    elsewhere = _write(tmp_path / "Elsewhere" / "bonus.srt", b"bonus").parent
+    english = subs / "English.srt"
+    as_it_was = tmp_path / "Subs as it was"
+    done: list[bool] = []
+
+    def after(real: object) -> object:
+        def call(path: object, *args: object, **kwargs: object) -> object:
+            out = real(path, *args, **kwargs)  # type: ignore[operator]
+            if not done and os.fspath(path) == str(english):  # type: ignore[call-overload]
+                done.append(True)  # English.srt has left: Subs is swapped for a link
+                subs.rename(as_it_was)
+                point_folder_at(subs, elsewhere)
+            return out
+
+        return call
+
+    monkeypatch.setattr(os, "unlink", after(os.unlink))
+    monkeypatch.setattr(os, "rename", after(os.rename))
+    outcome = apply_plan(plan, confirmed=True)
+    monkeypatch.undo()
+
+    status, reason = _by_source(outcome.stragglers)[subs]
+    assert status == ApplyStatus.FAIL
+    assert f"the folder {subs} is now a link" in reason and "part of the folder moved" in reason
+    assert (dest / "English.srt").read_bytes() == b"x"
+    assert (as_it_was / "French.srt").read_bytes() == b"fr"
+    assert sorted(os.listdir(elsewhere)) == ["bonus.srt"]
+    assert [m.source for m in outcome.moves if m.source.parent == subs] == [english]
+
+
+def test_a_new_folder_made_a_link_after_the_preview_stays_one_in_a_derived_plan(
+    tmp_path: Path,
+) -> None:
+    show = _two_discs(tmp_path)
+    plan = _plan(show)
+    video = show / "Disc 1" / "Show.Name.S01E01.mkv"
+    [entry] = [e for e in plan.entries if e.source == video]
+    elsewhere = tmp_path / "Elsewhere"
+    elsewhere.mkdir()
+    point_folder_at(show / "Show Name", elsewhere)
+    # Left out and put back: its new name's folders are no new way to the derived Plan.
+    left_out = derive_plan(plan, LeaveOut(entry))
+    [out] = [e for e in left_out.entries if e.source == video]
+    derived = derive_plan(left_out, PutBack(out))
+
+    outcome = apply_plan(derived, confirmed=True)
+
+    assert _by_source(outcome.results)[video] == _now_a_link(show / "Show Name")
+    assert os.listdir(elsewhere) == []

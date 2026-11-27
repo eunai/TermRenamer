@@ -89,25 +89,25 @@ class Changes:
     folders_removed: list[Path] = field(default_factory=list)
     files_left_behind: list[Path] = field(default_factory=list)
 
-    def make_folders(self, folder: Path, *, below: Path | None = None) -> None:
+    def make_folders(self, folder: Path, *, real_folders: Sequence[Path] = ()) -> None:
         """Make ``folder`` and each missing folder above it, recording each one made.
 
-        With ``below``, each folder that exists on the way from ``below`` (not itself)
-        to ``folder`` must be a real folder: one that is a link or a junction raises
-        :class:`NowALink`, and nothing is made through it.
+        Each folder of ``real_folders`` (folders on the way to ``folder``, by the
+        recorded text) that exists, or appears while the others are made, must be a
+        real folder: one that is a link or a junction raises :class:`NowALink`, and
+        nothing is made through it.
         """
         missing: list[Path] = []
         current = folder
         while not current.exists(follow_symlinks=False) and current.parent != current:
             missing.append(current)
             current = current.parent
-        if below is not None and current.is_relative_to(below):
-            _guard([(f, None) for f in folders_between(below, current)])
+        _guard([(f, None) for f in real_folders if f == current or f in current.parents])
         for path in reversed(missing):
             try:
                 os.mkdir(path)
             except FileExistsError:
-                if below is not None:
+                if path in real_folders:
                     _guard([(path, None)])  # it appeared meanwhile: never one to go through
                 continue
             self.folders_created.append(path)
@@ -169,8 +169,8 @@ def move_no_replace(
         FileExistsError: something is at ``dest``; nothing was changed.
         NotAsRecorded: the source is not as ``expected`` or ``folder`` says; nothing
             was changed.
-        NowALink: a folder of ``real_folders`` is a link or a junction; nothing was
-            changed. In a folder's walk, what moved before it stays moved and recorded.
+        NowALink: a folder of ``real_folders``, or of a folder's walk before anything
+            in it moved, is a link or a junction; no file was moved.
         FolderMoveFailed: a child of a folder could not be moved; what moved before it
             stays moved and recorded, and the rest stays in the source folder.
         OSError: any other failure. Whatever the error, an interrupt included, the file
@@ -179,7 +179,9 @@ def move_no_replace(
             new name could not be confirmed afterwards, and a source whose old name
             another program removed once ``dest`` held it); ``dest`` in
             ``changes.files_left_behind`` means a copy or link is there beside the
-            source; with neither, the source is at its old name and nothing was made.
+            source; with neither, the source is at its old name and nothing was made,
+            but for an interrupt in the instant after the call that makes the new name
+            returns and before it is recorded.
     """
     guards: list[_Guard] = [(f, None) for f in real_folders]
     if expected is not None:
@@ -210,6 +212,20 @@ def folders_between(top: Path, folder: Path) -> list[Path]:
     for part in folder.relative_to(top).parts:
         current = current / part
         found.append(current)
+    return found
+
+
+def links_among(folders: Sequence[Path]) -> list[Path]:
+    """Each of ``folders`` that is a link or a junction now; a folder that cannot be
+    read is not one."""
+    found = []
+    for path in folders:
+        try:
+            st = os.lstat(path)
+        except OSError:
+            continue
+        if is_link(path, st):
+            found.append(path)
     return found
 
 
@@ -316,9 +332,11 @@ def _move_folder(
 ) -> None:
     """Move the folder ``source`` (``st`` its ``lstat``) as its files: make ``dest``, move
     each child there while ``source`` is still that folder and no folder on the way is a
-    link, then remove ``source``."""
+    link, then remove ``source``. A folder found to be a link after part of the walk
+    moved is a :class:`FolderMoveFailed` that says so, not a :class:`NowALink`."""
     os.mkdir(dest)
     changes.folders_created.append(dest)
+    moved_before = len(changes.moves)
     try:
         inner: list[_Guard] = [*guards, (source, st), (dest, os.lstat(dest))]
         _guard(inner)
@@ -332,8 +350,13 @@ def _move_folder(
                     _move_folder(child, child_st, dest / name, changes, inner)
                 else:
                     _move_file(child, dest / name, changes, inner)
-            except (FolderMoveFailed, NowALink):
+            except FolderMoveFailed:
                 raise
+            except NowALink as exc:
+                if len(changes.moves) == moved_before:
+                    raise
+                msg = f"{exc.reason}; part of the folder moved"
+                raise FolderMoveFailed(errno.ELOOP, msg) from exc
             except OSError as exc:
                 raise FolderMoveFailed(exc.errno or errno.EIO, f"{child}: {exc}") from exc
         leave_folder(source)
@@ -513,8 +536,7 @@ def _make_copy(
     bytes were written."""
     _guard(guards)
     if stat.S_ISLNK(st.st_mode):
-        _remake_link(source, st, at)
-        changes.files_left_behind.append(at)
+        _remake_link(source, st, at, changes)
         made = os.lstat(at)
     else:
         fd = os.open(at, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW | _O_BINARY, 0o600)
@@ -542,10 +564,11 @@ def _make_copy(
     return made
 
 
-def _remake_link(source: Path, st: os.stat_result, at: Path) -> None:
+def _remake_link(source: Path, st: os.stat_result, at: Path, changes: Changes) -> None:
     r"""Make at ``at`` a symbolic link of the kind and with the target text of the link
-    ``source`` (``st`` its ``lstat``), so a relative link stays relative, or raise with
-    nothing left at ``at``.
+    ``source`` (``st`` its ``lstat``), so a relative link stays relative, or raise. The
+    link is listed as left behind from the moment it is made, and taken off that list
+    only when this removes it again.
 
     On Windows a link is a link to a file or to a folder, and Windows makes a link to a
     folder whenever its target names one, so a link to a file whose target names a
@@ -557,6 +580,7 @@ def _remake_link(source: Path, st: os.stat_result, at: Path) -> None:
     target = os.readlink(source)
     if os.name != "nt":
         os.symlink(target, at)
+        changes.files_left_behind.append(at)
         return
     folder = _is_folder_link(st)
     if not folder and os.path.isdir(os.path.join(at.parent, target)):
@@ -564,11 +588,13 @@ def _remake_link(source: Path, st: os.stat_result, at: Path) -> None:
         raise OSError(errno.EXDEV, msg, str(source))
     for text in dict.fromkeys((_without_long_path_prefix(target), target)):
         os.symlink(text, at, target_is_directory=folder)
+        changes.files_left_behind.append(at)
         made = os.lstat(at)
         if os.readlink(at) == target and _is_folder_link(made) == folder:
             return
         if os.path.samestat(os.lstat(at), made):
             os.unlink(at)
+            _forget(changes.files_left_behind, at)
     msg = "the link could not be made again with its kind and target"
     raise OSError(errno.EXDEV, msg, str(source))
 

@@ -257,6 +257,10 @@ class Plan:
     Entries and Stragglers are in source-path order; Titles are in name order.
     ``source_folders`` holds the children of each source folder that Stragglers are
     listed from; a Plan built with Folder rename off lists no Stragglers.
+    ``folders_looked_at`` holds each folder on the way to a new name, read once, when
+    a Plan first went through it, and ``linked_folders`` those of them that were a link
+    or a junction then: Apply goes through these as the Preview showed, and through no
+    other link. A derived Plan keeps both and reads only the folders new to it.
     """
 
     options: PlanOptions
@@ -264,6 +268,8 @@ class Plan:
     entries: tuple[PlanEntry, ...]
     stragglers: tuple[Straggler, ...] = ()
     source_folders: tuple[SourceFolder, ...] = ()
+    folders_looked_at: tuple[Path, ...] = ()
+    linked_folders: tuple[Path, ...] = ()
 
     @property
     def mode(self) -> ScanMode:

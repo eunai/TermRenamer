@@ -450,6 +450,31 @@ def test_an_unexpected_error_stops_apply_and_the_outcome_so_far_is_returned(
     assert (show / "Disc 1" / "notes.txt").exists()
 
 
+def test_an_error_between_items_stops_apply_and_the_outcome_so_far_is_returned(
+    show: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan = _plan(show)
+    second = show / "Disc 2" / "Show.Name.S01E02.mkv"
+
+    def claim_key(path: Path) -> str:
+        raise RuntimeError("boom")  # once the first video has moved, outside any item
+
+    monkeypatch.setattr(apply_module, "claim_key", claim_key)
+    outcome = apply_plan(plan, confirmed=True)
+    monkeypatch.undo()
+
+    by_source = _by_source(outcome.results)
+    assert by_source[_video(show)] == (ApplyStatus.RENAMED, "ok")
+    stopped = (ApplyStatus.SKIP, "not applied: Apply stopped after an unexpected error")
+    assert by_source[second] == stopped
+    assert by_source[show / "Disc 1" / "Show.Name.S01E01.srt"] == stopped
+    assert len(outcome.results) == len(plan.entries)
+    assert set(_by_source(outcome.stragglers).values()) == {stopped}
+    assert [m.source for m in outcome.moves] == [_video(show)]
+    assert outcome.folders_removed == ()
+    assert second.exists()
+
+
 def test_a_hard_link_in_the_same_folder_under_another_exact_name_is_taken(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

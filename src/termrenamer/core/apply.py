@@ -16,7 +16,6 @@ from termrenamer.core.models import (
     Plan,
     PlanEntry,
     PlanFingerprint,
-    PlanOptions,
     Straggler,
 )
 from termrenamer.core.moving import (
@@ -51,25 +50,25 @@ def _stale(exc: NotAsRecorded) -> str:
 
 @dataclass(frozen=True, slots=True)
 class _Way:
-    """The folders one move goes through, as the Plan recorded them: ``below`` is the
-    Destination root (or, with none, the owning Source's folder) that new folders are
-    made below, and ``real_folders`` each folder from below it to the new name's folder
-    and from the owning Source's folder to the source's folder. Each must be a real
-    folder at the last look before the move; the Destination root itself may be a link."""
+    """The folders one move goes through that must be real folders at the last look
+    before it: ``new_side`` each folder from below the Destination root (or, with none,
+    the owning Source's folder) to the new name's folder, and ``real_folders`` those and
+    each folder from the owning Source's folder to the source's folder. A folder the
+    Plan found to be a link already is gone through as the Preview showed it, and the
+    Destination root itself may be a link."""
 
-    below: Path
+    new_side: tuple[Path, ...]
     real_folders: tuple[Path, ...]
 
 
-def _way(options: PlanOptions, root: Path, source: Path, dest: Path) -> _Way:
-    below = options.destination_root or root
+def _way(plan: Plan, root: Path, source: Path, dest: Path) -> _Way:
+    linked = {str(folder) for folder in plan.linked_folders}
+    below = plan.options.destination_root or root
+    new_side = tuple(f for f in folders_between(below, dest.parent) if str(f) not in linked)
+    old_side = (root, *folders_between(root, source.parent))
     return _Way(
-        below=below,
-        real_folders=(
-            *folders_between(below, dest.parent),
-            root,
-            *folders_between(root, source.parent),
-        ),
+        new_side=new_side,
+        real_folders=(*new_side, *(f for f in old_side if str(f) not in linked)),
     )
 
 
@@ -87,7 +86,7 @@ def _move(
     With ``expected``, the source must still have the size and modification time the
     Plan recorded; with ``folder``, it must still be of the kind the Plan listed."""
     try:
-        changes.make_folders(dest.parent, below=way.below)
+        changes.make_folders(dest.parent, real_folders=way.new_side)
     except NowALink as exc:
         return ApplyStatus.SKIP, exc.reason
     except OSError as exc:
@@ -139,7 +138,7 @@ def _unreadable(exc: OSError) -> tuple[ApplyStatus, str]:
     return ApplyStatus.FAIL, f"cannot read the source: {exc}"
 
 
-def _apply_entry(entry: PlanEntry, options: PlanOptions, changes: Changes) -> ApplyResult:
+def _apply_entry(entry: PlanEntry, plan: Plan, changes: Changes) -> ApplyResult:
     """Rename one entry after the checks; touch nothing when a check fails."""
     source = entry.source
     dest = entry.destination
@@ -160,13 +159,13 @@ def _apply_entry(entry: PlanEntry, options: PlanOptions, changes: Changes) -> Ap
         return result(ApplyStatus.SKIP, _STALE)
     if entry.has_its_name:
         return result(ApplyStatus.UNCHANGED, "already has its name")
-    way = _way(options, entry.root, source, dest)
+    way = _way(plan, entry.root, source, dest)
     return result(*_move(source, dest, changes, way, expected=entry.fingerprint))
 
 
 def _apply_straggler(
     straggler: Straggler,
-    options: PlanOptions,
+    plan: Plan,
     root_of: dict[str, Path],
     moved_out: set[str],
     changes: Changes,
@@ -190,7 +189,7 @@ def _apply_straggler(
         kind = errno.ENOTDIR if straggler.is_folder else errno.EISDIR
         return result(ApplyStatus.SKIP, _stale(NotAsRecorded(kind, "", str(source))))
     root = root_of.get(str(source.parent), source.parent)
-    way = _way(options, root, source, dest)
+    way = _way(plan, root, source, dest)
     return result(*_move(source, dest, changes, way, folder=straggler.is_folder))
 
 
@@ -310,7 +309,7 @@ def _apply_all(
             results.append(_skipped(entry.source, entry.destination, reason))
             continue
         try:
-            outcome = _apply_entry(entry, plan.options, changes)
+            outcome = _apply_entry(entry, plan, changes)
         except Exception as exc:
             results.append(_stopped_by(entry.source, entry.destination, exc))
             return True
@@ -327,7 +326,7 @@ def _apply_all(
 
     for straggler in plan.stragglers:
         try:
-            result = _apply_straggler(straggler, plan.options, root_of, moved_out, changes)
+            result = _apply_straggler(straggler, plan, root_of, moved_out, changes)
         except Exception as exc:
             stragglers.append(_stopped_by(straggler.source, straggler.destination, exc))
             return True
