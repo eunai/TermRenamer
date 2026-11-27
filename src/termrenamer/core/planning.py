@@ -51,6 +51,9 @@ from termrenamer.util.errors import ParseError
 
 _LOG = logging.getLogger(__name__)
 
+NO_TV_MATCH_BY_HAND = "Matching a not recognised TV file by hand is not available yet."
+"""Why a not recognised TV file cannot be given a Match (ticket #14 will allow it)."""
+
 
 def fingerprint(path: Path) -> PlanFingerprint:
     """The source's size and modification time, as planning records them and Apply checks."""
@@ -301,9 +304,27 @@ def _wanted_name(
 
 
 def _episode_of(parsed: ParseResult | FilmParseResult) -> tuple[int, int] | None:
+    """A parsed TV name's season and first episode; ``None`` for a film."""
     if isinstance(parsed, ParseResult):
         return (parsed.season, parsed.primary_episode)
     return None
+
+
+def _recorded_episode(entry: PlanEntry) -> tuple[int, int] | None:
+    """The season and first episode the build recorded for ``entry``; ``None`` for a film."""
+    if entry.season is None or entry.episode is None:
+        return None
+    return (entry.season, entry.episode)
+
+
+def _named_status(wanted: Path | None) -> EntryStatus:
+    """A video's status before names are claimed: ready when it has a name, else no match."""
+    return EntryStatus.READY if wanted is not None else EntryStatus.NO_MATCH
+
+
+def _title_order(title: Title) -> tuple[str, int]:
+    """Titles are listed by name, ignoring case, then by year."""
+    return (title.name.casefold(), title.year or 0)
 
 
 @overload
@@ -452,7 +473,7 @@ def plan_queue(
             )
         )
 
-    titles = sorted(set(title_of.values()), key=lambda t: (t.name.casefold(), t.year or 0))
+    titles = sorted(set(title_of.values()), key=_title_order)
     # Source-path order is fixed here, once; a derived Plan keeps it.
     entries.sort(key=lambda e: path_key(e.source))
     plan = _plan_of(options, tuple(titles), _claim_names(entries, options))
@@ -541,7 +562,7 @@ class PickMatch:
     ``target`` is a Title of the Plan, or a not recognised Film video of it, which
     then forms a Title of its own or joins the Title that already has ``match``.
     ``found`` is the search the picker showed ``match`` from, in the Provider's order;
-    the Title's Candidates become those results beside ``match``. In TV Mode,
+    the Title's Candidates become the other Candidates that search found. In TV Mode,
     ``episodes`` holds the episode title the picked show gives each of the Title's
     videos, by the source the Plan recorded, ``None`` where the episode was not found:
     :func:`look_up_episodes` asks the Provider for them before the Plan is derived.
@@ -576,7 +597,7 @@ def derive_plan(plan: Plan, change: PlanChange) -> Plan:
         OSError: testing a wanted path on disk failed.
     """
     if isinstance(change, PickMatch):
-        titles, entries = _picked(plan, change)
+        titles, entries = _with_picked_match(plan, change)
         return _plan_of(plan.options, titles, _claim_names(entries, plan.options))
     video = change.video
     if video not in plan.entries:
@@ -596,14 +617,16 @@ def derive_plan(plan: Plan, change: PlanChange) -> Plan:
             raise ValueError(msg)
         # Worked out again when the names are claimed. A video whose picked show has
         # no such episode comes back with no match.
-        status = EntryStatus.READY if video.wanted is not None else EntryStatus.NO_MATCH
+        status = _named_status(video.wanted)
     entries = tuple(
         replace(entry, status=status) if entry == video else entry for entry in plan.entries
     )
     return _plan_of(plan.options, plan.titles, _claim_names(entries, plan.options))
 
 
-def _picked(plan: Plan, change: PickMatch) -> tuple[tuple[Title, ...], tuple[PlanEntry, ...]]:
+def _with_picked_match(
+    plan: Plan, change: PickMatch
+) -> tuple[tuple[Title, ...], tuple[PlanEntry, ...]]:
     """The Titles and entries of ``plan`` once ``change``'s target has its new Match.
 
     The target's videos take names from the Match; the Title that already had that
@@ -624,8 +647,7 @@ def _picked(plan: Plan, change: PickMatch) -> tuple[tuple[Title, ...], tuple[Pla
             msg = f"{target.source} is not a not recognised file: pick a Match for its Title."
             raise ValueError(msg)
         if options.mode is ScanMode.TV:
-            msg = "Matching a not recognised TV file by hand is not available yet."
-            raise ValueError(msg)
+            raise ValueError(NO_TV_MATCH_BY_HAND)
         videos = (target,)
     if options.mode is ScanMode.TV:
         missing = [v.source for v in videos if v.source not in change.episodes]
@@ -665,15 +687,10 @@ def _picked(plan: Plan, change: PickMatch) -> tuple[tuple[Title, ...], tuple[Pla
     entries: list[PlanEntry] = []
     for entry in plan.entries:
         if entry.source in moved and not entry.is_sidecar:
-            episode = (
-                (entry.season, entry.episode)
-                if entry.season is not None and entry.episode is not None
-                else None
-            )
             wanted = _wanted_name(
                 entry.source,
                 entry.root,
-                episode,
+                _recorded_episode(entry),
                 match,
                 change.episodes.get(entry.source),
                 options,
@@ -681,7 +698,7 @@ def _picked(plan: Plan, change: PickMatch) -> tuple[tuple[Title, ...], tuple[Pla
             if entry.status is EntryStatus.LEFT_OUT:
                 status = EntryStatus.LEFT_OUT  # the person's choice holds
             else:
-                status = EntryStatus.READY if wanted is not None else EntryStatus.NO_MATCH
+                status = _named_status(wanted)
             entries.append(replace(entry, title=title, wanted=wanted, status=status))
         elif entry.title in replaced or (entry.is_sidecar and entry.video in moved):
             # A Sidecar's status follows its video when the names are claimed.
@@ -690,7 +707,7 @@ def _picked(plan: Plan, change: PickMatch) -> tuple[tuple[Title, ...], tuple[Pla
             entries.append(entry)
     titles = [t for t in plan.titles if t not in replaced]
     titles.append(title)
-    titles.sort(key=lambda t: (t.name.casefold(), t.year or 0))
+    titles.sort(key=_title_order)
     return tuple(titles), tuple(entries)
 
 
@@ -762,10 +779,17 @@ def search_typed(
     return that_year or shows
 
 
-def _first_hint(videos: Sequence[PlanEntry], mode: ScanMode) -> tuple[str, int]:
+def _first_hint(videos: Sequence[PlanEntry], mode: ScanMode) -> tuple[bool, tuple[str, int]]:
     """The group key that sorts first among ``videos``: their title hints read again
     from the recorded file names, with the year hint for Film, as the build grouped
-    them. Only names are read, never the disk."""
-    return min(
-        _Video(path=v.source, root=v.root, parsed=_parse(v.source, mode)).group_key for v in videos
-    )
+    them. Only names are read, never the disk. A file the parser cannot read (one
+    that was not recognised and was given its Match by hand) has no title hint; a
+    group with no hint at all sorts after every group that has one."""
+    keys = []
+    for video in videos:
+        try:
+            parsed = _parse(video.source, mode)
+        except ParseError:
+            continue
+        keys.append(_Video(path=video.source, root=video.root, parsed=parsed).group_key)
+    return (False, min(keys)) if keys else (True, ("", 0))

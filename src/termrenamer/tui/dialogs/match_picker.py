@@ -1,12 +1,12 @@
 """The Match picker: pick a different Match for a Title, or type a title to search again.
 
-It lists the current Match first (marked), then the first of the search's results
+It lists the current Match first (marked), then the first Candidate the search found
 that is not the current Match, then the "type a title" row, as a plain list. With
-no current Match it lists the first two results. ``↑`` ``↓`` move, ``1`` to ``3`` or
+no current Match it lists the first two Candidates found. ``↑`` ``↓`` move, ``1`` to ``3`` or
 ``enter`` choose, ``/`` goes to typing, and Escape closes it with nothing picked.
 
 Typing a title and pressing ``enter`` searches the Provider again, off the screen's
-thread; the results replace the Candidates listed. The picker returns a
+thread; the Candidates it finds replace the ones listed. The picker returns a
 :class:`Picked` or ``None``; it never changes the Plan itself.
 """
 
@@ -36,15 +36,15 @@ _CANDIDATE_ROWS = 2
 
 @dataclass(frozen=True, slots=True)
 class Picked:
-    """What the person chose: ``match``, from the search results ``found``."""
+    """What the person chose: ``match``, from the Candidates the search ``found``."""
 
     match: Candidate
     found: tuple[Candidate, ...]
 
 
 def picker_choices(current: Candidate | None, found: Sequence[Candidate]) -> tuple[Candidate, ...]:
-    """The Candidates the picker lists: the current Match, then the first result that is
-    not it; with no current Match, the first two results. No Match is listed twice."""
+    """The Candidates the picker lists: the current Match, then the first one found that
+    is not it; with no current Match, the first two found. No Match is listed twice."""
     if current is None:
         return tuple(found[:_CANDIDATE_ROWS])
     others = (c for c in found if c.id != current.id)

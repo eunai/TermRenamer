@@ -353,6 +353,25 @@ def test_a_not_recognised_film_joins_the_title_that_has_its_match(tmp_path: Path
     ]
 
 
+@pytest.mark.parametrize("pick_on", ["Heat", "Heat Wave"])
+def test_a_title_formed_from_a_not_recognised_film_can_merge_with_another_title(
+    tmp_path: Path, pick_on: str
+) -> None:
+    plan = plan_queue([_not_recognised(tmp_path)], _film_options(), _heat()).plan
+    plan = derive_plan(plan, PickMatch(plan.entries[0], HEAT_WAVE, found=(HEAT_WAVE, HEAT)))
+    heat = _title(plan, "Heat")
+    target = _title(plan, pick_on)
+    other = HEAT_WAVE if pick_on == "Heat" else HEAT
+
+    derived = derive_plan(plan, PickMatch(target, other, found=(other, HEAT_1986)))
+
+    [merged] = derived.titles
+    # A not recognised file has no title hint, so Heat's group sorts first.
+    expected = (HEAT_1986,) if pick_on == "Heat" else heat.candidates
+    assert (merged.match, merged.candidates) == (other, expected)
+    assert all(e.title == merged for e in derived.entries)
+
+
 def test_a_not_recognised_tv_file_cannot_be_given_a_match(tmp_path: Path) -> None:
     (tmp_path / "holiday.mkv").write_bytes(b"?")
     plan = plan_queue([tmp_path], _tv_options(), _harbour()).plan

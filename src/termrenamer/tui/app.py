@@ -38,6 +38,7 @@ from termrenamer.core.models import (
     Title,
 )
 from termrenamer.core.planning import (
+    NO_TV_MATCH_BY_HAND,
     LeaveOut,
     PickMatch,
     PlanChange,
@@ -102,12 +103,12 @@ class _PickOutcome:
 @dataclass(frozen=True, slots=True)
 class _PendingPick:
     """A picked TV Match whose episodes are being looked up: the Plan it was picked on,
-    the change waiting for the answers, what was picked for, and the lookup's cancel
+    the change waiting for the answers, the name the Title was shown under, and the lookup's cancel
     signal and worker."""
 
     plan: Plan
     change: PickMatch
-    was: str
+    shown_as: str
     cancel: threading.Event
     worker: Worker[_PickOutcome] | None = None
 
@@ -419,7 +420,7 @@ class TermRenamerApp(App[None]):
         plan = self.plan
         preview = self.query_one(PreviewStage)
         video = preview.selected_file
-        if plan is None or video is None or self._applying or self._still_picking():
+        if plan is None or video is None or self._applying or self._refuse_while_picking():
             return
         if video.status in (EntryStatus.NO_MATCH, EntryStatus.NOT_RECOGNISED):
             self.say(
@@ -453,7 +454,7 @@ class TermRenamerApp(App[None]):
         """
         plan = self.plan
         row = self.query_one(PreviewStage).selected_row
-        if plan is None or row is None or self._applying or self._still_picking():
+        if plan is None or row is None or self._applying or self._refuse_while_picking():
             return
         mode = plan.mode
         target: Title | PlanEntry
@@ -462,7 +463,7 @@ class TermRenamerApp(App[None]):
         if row.title is None:
             if mode is ScanMode.TV:
                 self.say(
-                    "Matching a not recognised TV file by hand is not available yet.",
+                    NO_TV_MATCH_BY_HAND,
                     MessageKind.WARNING,
                 )
                 return
@@ -502,8 +503,11 @@ class TermRenamerApp(App[None]):
 
         self.push_screen(picker, picked)
 
-    def _still_picking(self) -> bool:
-        """Whether a picked Match's episodes are being looked up; the key says so."""
+    def _refuse_while_picking(self) -> bool:
+        """Whether a picked Match's episodes are being looked up, saying so when they are.
+
+        The Preview hides Apply, Leave out and Change match meanwhile; this refuses
+        such a key or button press that still reaches the app."""
         if self._pick is None:
             return False
         self.say("Looking up the episodes for the new Match. esc abandons the change.")
@@ -513,7 +517,7 @@ class TermRenamerApp(App[None]):
         self,
         plan: Plan,
         target: Title | PlanEntry,
-        was: str,
+        shown_as: str,
         lookup: TvLookup | FilmLookup,
         answer: Picked | None,
     ) -> None:
@@ -525,13 +529,13 @@ class TermRenamerApp(App[None]):
             return
         change = PickMatch(target, answer.match, found=answer.found)
         if plan.mode is ScanMode.FILM or not isinstance(target, Title):
-            self._use_pick(plan, change, was)
+            self._use_pick(plan, change, shown_as)
             return
         assert isinstance(lookup, TvLookup)
         cancel = threading.Event()
         self.session_settings.lock()
         self.query_one(PreviewStage).mark_looking_up()
-        self._pick = _PendingPick(plan=plan, change=change, was=was, cancel=cancel)
+        self._pick = _PendingPick(plan=plan, change=change, shown_as=shown_as, cancel=cancel)
         worker = self._look_up_pick(plan, target, answer.match, lookup, cancel)
         self._pick = replace(self._pick, worker=worker)
         self.say(
@@ -563,7 +567,7 @@ class TermRenamerApp(App[None]):
             if outcome.error is not None:
                 self.say(f"{outcome.error} The Plan is unchanged.", MessageKind.ERROR)
             return
-        self._use_pick(pick.plan, replace(pick.change, episodes=outcome.episodes), pick.was)
+        self._use_pick(pick.plan, replace(pick.change, episodes=outcome.episodes), pick.shown_as)
 
     def _abandon_pick(self) -> None:
         """Escape during a picked Match's lookups: the old Plan stays. A lookup already
@@ -580,7 +584,7 @@ class TermRenamerApp(App[None]):
         self._pick = None
         self.session_settings.unlock()
 
-    def _use_pick(self, plan: Plan, change: PickMatch, was: str) -> None:
+    def _use_pick(self, plan: Plan, change: PickMatch, shown_as: str) -> None:
         """Show the Plan ``plan`` becomes with ``change``, the same Title selected."""
         preview = self.query_one(PreviewStage)
         try:
@@ -589,14 +593,19 @@ class TermRenamerApp(App[None]):
             preview.show_plan(plan, keep_selection=True)
             self.say(f"The new names could not be checked on disk: {exc}", MessageKind.ERROR)
             return
+        except ValueError as exc:  # a change the Plan refuses; the screen offers none
+            self._messages.warning("Match change refused: %s", exc)
+            preview.show_plan(plan, keep_selection=True)
+            self.say(f"{exc} The Plan is unchanged.", MessageKind.ERROR)
+            return
         self.plan = derived
         preview.show_plan(derived, keep_selection=True)
-        self.say(f"{was} now matches {match_name(change.match, plan.mode)}.")
+        self.say(f"{shown_as} now matches {match_name(change.match, plan.mode)}.")
 
     def action_apply(self) -> None:
         """Open the Apply confirm; only its yes applies the Plan."""
         plan = self.plan
-        if plan is None or self._applying or self._still_picking():
+        if plan is None or self._applying or self._refuse_while_picking():
             return
         self.push_screen(ApplyConfirm(plan), self._apply_answered)
 
