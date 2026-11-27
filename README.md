@@ -136,7 +136,7 @@ The settings:
 | `TERMRENAMER_HTTP_TIMEOUT_SECONDS`      | `30`     | Timeout of one request to a Provider, in seconds.                                      |
 | `TERMRENAMER_HTTP_MAX_ATTEMPTS`         | `4`      | Attempts for one request, at least 1.                                                  |
 | `TERMRENAMER_HTTP_BACKOFF_BASE_SECONDS` | `0.5`    | Wait before the second attempt, in seconds. It doubles with each attempt, up to 60.    |
-| `TERMRENAMER_HTTP_JITTER`               | `true`   | Shorten each wait by a random amount, up to half of it.                                |
+| `TERMRENAMER_HTTP_JITTER`               | `true`   | Shorten each backoff wait by a random amount, up to half. A `Retry-After` wait is not. |
 | `TERMRENAMER_LOG_FILE`                  | unset    | No effect yet ([#4](https://github.com/eunai/TermRenamer/issues/4)).                   |
 
 The on and off values are `true` or `false`, `1` or `0`, `yes` or `no`, and `on`
@@ -294,8 +294,9 @@ Apply and Undo confirms, the Match picker, the file and folder dialogs).
   while the Plan is built, and kept for 30 days in a `termrenamer/posters`
   folder in your per-user cache folder (`%LOCALAPPDATA%` on Windows, `~/.cache`
   or `XDG_CACHE_HOME` elsewhere). OMDb gives no Posters.
-- **Logs.** `l` opens every log line of the session and every message the
-  screen gave, including what happened to each file Apply and Undo handled.
+- **Logs.** `l` opens the last 5000 log lines of the session, which include the
+  messages the screen gave and what happened to each file Apply and Undo
+  handled.
 - **Metadata cache.** Setting `TERMRENAMER_CACHE_DB_PATH` switches on a SQLite
   cache for TMDB, TheTVDB and OMDb lookups. Each Provider's answers are kept
   apart, and a search that found nothing is not stored. It is safe to delete.
