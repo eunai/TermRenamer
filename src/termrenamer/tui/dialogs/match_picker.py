@@ -53,7 +53,6 @@ class TileSize:
     """The tiles' size: the Poster's cells, each tile's columns, and the columns of
     padding on each side of the row of tiles."""
 
-    name: str
     poster: tuple[int, int]
     tile: int
     padding: int
@@ -67,8 +66,8 @@ class TileSize:
 _TILE_GAP = 1
 
 TILE_SIZES = (
-    TileSize("large", poster=(20, 15), tile=26, padding=2),
-    TileSize("small", poster=(19, 14), tile=21, padding=1),
+    TileSize(poster=(20, 15), tile=26, padding=2),
+    TileSize(poster=(19, 14), tile=21, padding=1),
 )
 """The mockup's tiles, and smaller ones that fit beside the poster panel on a screen of
 100 columns; the largest that fits is used."""
@@ -163,12 +162,12 @@ class ChoiceRow(Horizontal):
         self.set_class(selected, "-selected")
 
 
-class CandidateTile(Vertical):
+class PickerTile(Vertical):
     """One tile of the picker with Posters shown: a framed picture, then the name, the
     year and the tile's key under it.
 
-    A Candidate's tile frames its Poster; the "type a title" tile frames ``typed``, the
-    typing field, in its place.
+    A Candidate's tile frames its Poster (:attr:`view`); the "type a title" tile frames
+    ``typed``, the typing field, in its place, and has no :attr:`view`.
     """
 
     def __init__(
@@ -405,10 +404,8 @@ class MatchPicker(ModalScreen[Picked | None]):
             else:
                 with Horizontal(id="picker-tiles"):
                     for index in range(_CANDIDATE_ROWS):
-                        yield CandidateTile(
-                            str(index + 1), self._tile_size, id=f"picker-tile-{index}"
-                        )
-                    yield CandidateTile(
+                        yield PickerTile(str(index + 1), self._tile_size, id=f"picker-tile-{index}")
+                    yield PickerTile(
                         "/", self._tile_size, typed=_TypedTitle(self._typed), id="picker-tile-type"
                     )
             yield Static("", id="picker-status")
@@ -475,11 +472,12 @@ class MatchPicker(ModalScreen[Picked | None]):
         rows = len(choices) + 1
         self._selected = max(0, min(self._selected, rows - 1))
         keys = f"1-{rows}" if rows > 1 else "1"
+        arrows, typing = ("←→", "type a title") if self._tile_size else ("↑↓", "type")
+        self.query_one("#picker-hint", Static).update(
+            f"{arrows} choose · {keys} or enter use it · / {typing} · esc close"
+        )
         if self._tile_size is not None:
             self._show_tiles(choices)
-            self.query_one("#picker-hint", Static).update(
-                f"←→ choose · {keys} or enter use it · / type a title · esc close"
-            )
             return
         for index in range(_CANDIDATE_ROWS):
             row = self.query_one(f"#picker-choice-{index}", ChoiceRow)
@@ -492,13 +490,10 @@ class MatchPicker(ModalScreen[Picked | None]):
         self.query_one("#picker-type", ChoiceRow).show(
             "/", "Type a title", selected=self._selected == len(choices)
         )
-        self.query_one("#picker-hint", Static).update(
-            f"↑↓ choose · {keys} or enter use it · / type · esc close"
-        )
 
     def _show_tiles(self, choices: tuple[Candidate, ...]) -> None:
         for index in range(_CANDIDATE_ROWS):
-            tile = self.query_one(f"#picker-tile-{index}", CandidateTile)
+            tile = self.query_one(f"#picker-tile-{index}", PickerTile)
             tile.display = index < len(choices)
             if index >= len(choices):
                 tile.view.clear()
@@ -507,7 +502,7 @@ class MatchPicker(ModalScreen[Picked | None]):
             year = _year_text(candidate, current=candidate == self._current)
             tile.show(candidate.name, year, selected=index == self._selected)
             tile.view.show(candidate.name, self._request(candidate), download=True)
-        self.query_one("#picker-tile-type", CandidateTile).show(
+        self.query_one("#picker-tile-type", PickerTile).show(
             "Type a title", "", selected=self._selected == len(choices)
         )
 
@@ -521,10 +516,11 @@ class MatchPicker(ModalScreen[Picked | None]):
     # ------------------------------------------------------------------ keys
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        # ``←`` ``→`` move between tiles; the plain list leaves them to the app.
+        # ``←`` ``→`` move between tiles; the plain list has no use for them.
         return action != "move_across" or self._tile_size is not None
 
     def action_move_across(self, step: int) -> None:
+        """``←`` ``→``: as ``↑`` ``↓``, while the tiles show (see :meth:`check_action`)."""
         self.action_move(step)
 
     def action_move(self, step: int) -> None:

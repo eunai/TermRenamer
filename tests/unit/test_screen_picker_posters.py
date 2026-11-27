@@ -16,9 +16,10 @@ import pytest
 from textual.pilot import Pilot
 
 from termrenamer.core.models import Candidate
+from termrenamer.core.paths import path_key
 from termrenamer.persistence.posters import PosterRequest
 from termrenamer.tui.app import TermRenamerApp
-from termrenamer.tui.dialogs.match_picker import CandidateTile, MatchPicker
+from termrenamer.tui.dialogs.match_picker import MatchPicker, PickerTile
 
 from .screen_driver import (
     POSTERS_AVAILABLE,
@@ -122,8 +123,8 @@ def selected_tile(app: TermRenamerApp) -> str | None:
     return tile.id
 
 
-def tile(app: TermRenamerApp, index: int) -> CandidateTile:
-    return app.screen.query_one(f"#picker-tile-{index}", CandidateTile)
+def tile(app: TermRenamerApp, index: int) -> PickerTile:
+    return app.screen.query_one(f"#picker-tile-{index}", PickerTile)
 
 
 def tile_images(app: TermRenamerApp, index: int) -> list[StandInImage]:
@@ -320,10 +321,18 @@ async def test_while_the_picker_is_open_the_main_poster_is_blank_and_returns_whe
     assert host.urls == [f"{IMAGES}/hl.jpg"]  # stored once, drawn from disk after
 
 
-def stored(app: TermRenamerApp, ref: str) -> Path | None:
+def stored(app: TermRenamerApp, ref: str) -> str:
+    """The key of the stored file for ``ref``, to compare with :func:`drawn`."""
     assert app.plan is not None
     request = PosterRequest(app.plan.options.provider_id, ref)
-    return app.poster_store.stored(request)  # type: ignore[attr-defined, no-any-return]
+    path = app.poster_store.stored(request)  # type: ignore[attr-defined]
+    assert path is not None
+    return path_key(path)
+
+
+def drawn(images: list[StandInImage]) -> list[str]:
+    """The keys of the files the images draw."""
+    return [path_key(image.image) for image in images if image.image is not None]
 
 
 async def test_a_typed_search_replaces_the_tiles_candidates_and_their_posters(
@@ -336,12 +345,12 @@ async def test_a_typed_search_replaces_the_tiles_candidates_and_their_posters(
         await type_a_title(pilot, "Heat Wave 1990")
         await settle(pilot)
         words = tile_words(app)
-        [image] = tile_images(app, 1)
+        shown = drawn(tile_images(app, 1))
         await press(pilot, "2")
         await settle(pilot)
         plan = app.plan
     assert words[:2] == ["Heat | (1995) (current) | 1", "Heat Wave | (1990) | 2"]
-    assert image.image == stored(app, "/wave.jpg")
+    assert shown == [stored(app, "/wave.jpg")]
     assert host.urls[-1] == f"{IMAGES}/wave.jpg"
     assert plan is not None and plan.titles[0].match == HEAT_WAVE_POSTER
 
@@ -353,17 +362,19 @@ async def test_a_late_poster_of_a_candidate_no_longer_shown_does_not_draw_over_t
     app = tiles_app(tmp_path, host, film=poster_films())
     async with app.run_test(size=SIZE) as pilot:
         await film_preview(pilot, tmp_path)
+        assert app.plan is not None
+        late = PosterRequest(app.plan.options.provider_id, "/heat86.jpg")
         await press(pilot, "t")
         await until(pilot, lambda: f"{IMAGES}/heat86.jpg" in host.urls)
         await type_a_title(pilot, "Heat Wave 1990")
         await until(pilot, lambda: len(tile_images(app, 1)) == 1)
         host.release.set()
-        await until(pilot, lambda: stored(app, "/heat86.jpg") is not None)
+        await until(pilot, lambda: app.poster_store.stored(late) is not None)  # type: ignore[attr-defined]
         await settle(pilot)
-        images = tile_images(app, 1)
+        shown = drawn(tile_images(app, 1))
         words = tile_words(app)
     assert words[1] == "Heat Wave | (1990) | 2"
-    assert [image.image for image in images] == [stored(app, "/wave.jpg")]
+    assert shown == [stored(app, "/wave.jpg")]
 
 
 def list_rows(app: TermRenamerApp) -> list[str]:
@@ -459,3 +470,27 @@ async def test_every_tile_the_typing_field_the_status_and_the_hint_fit_beside_th
         assert inside.contains_region(region), selector
     assert len(frames) == 3 and all(inside.contains_region(frame) for frame in frames)
     assert hint == "←→ choose · 1-3 or enter use it · / type a title · esc close"
+
+
+async def test_a_poster_already_downloading_is_not_downloaded_again_after_a_resize(
+    tmp_path: Path,
+) -> None:
+    # A resize to smaller tiles makes the tiles again while the second one's Poster
+    # is still on its way; the new tile waits for that download.
+    held = f"{IMAGES}/heat86.jpg"
+    host = HoldingHost(held={held})
+    app = tiles_app(tmp_path, host, film=poster_films())
+    async with app.run_test(size=SIZE) as pilot:
+        await film_preview(pilot, tmp_path)
+        await press(pilot, "t")
+        await until(pilot, lambda: held in host.urls)
+        picker = app.screen
+        assert isinstance(picker, MatchPicker)
+        await pilot.resize_terminal(105, 36)
+        await until(pilot, lambda: picker.tiles is not None and picker.tiles.tile == 21)
+        await pilot.pause(0.2)
+        host.release.set()
+        await settle(pilot)
+        shown = drawn(tile_images(app, 1))
+    assert host.urls.count(held) == 1
+    assert shown == [stored(app, "/heat86.jpg")]
