@@ -7,10 +7,10 @@ A file or folder the person queues for renaming, which is a backup of their own 
 _Avoid_: release, rip, torrent, scene, download (as names for these files)
 
 **Plan**:
-The immutable batch of planned renames, covering each video and its sidecars, that preview shows and apply executes unchanged.
+The immutable batch of planned renames, covering each video and its sidecars, that preview shows and apply executes unchanged. Picking a different Match or leaving a file out makes a new Plan; a Plan itself never changes.
 
 **Preview**:
-The view of a plan, as source and destination folder trees, that the user reviews before confirming apply.
+The view of a Plan that the user reviews before confirming Apply.
 
 **Apply**:
 Executing a confirmed plan on the filesystem; nothing is renamed before the user confirms.
@@ -41,6 +41,41 @@ _Avoid_: stray file
 **User settings file**:
 The per-user dotenv file the app reads its settings from, overridden by a `.env` in the current folder and by environment variables.
 _Avoid_: config file, global .env
+
+**Stage**:
+One of the four steps a batch goes through, in order: Queue, Plan, Preview, Applied.
+_Avoid_: step, phase
+
+**Title**:
+One show or film that the files in a Plan belong to. The Preview lists Titles, one row each.
+_Avoid_: item, entry
+
+**Match**:
+The Provider entry a Title is tied to, which gives its files their new names. A Title the Provider found nothing for has no Match.
+_Avoid_: hit, result
+
+**Candidate**:
+Another entry the Provider returned for a Title, which the user can pick as the Match instead.
+_Avoid_: alternative, suggestion
+
+**Poster**:
+The Provider's image for a Match, shown for the selected Title. Showing Posters is optional.
+_Avoid_: cover, artwork, thumbnail
+
+**Left out**:
+Said of a file the user removed from the Plan before Apply; Apply does not touch it. Distinct from a file Apply skips.
+_Avoid_: excluded, ignored
+
+**Not recognised**:
+Said of a queued video whose name the app cannot read a title from (and, in TV Mode, a season and episode). It is listed, and Apply does not touch it. Distinct from a Title with no Match, whose name was read but which the Provider did not find.
+_Avoid_: unparsed, unknown
+
+**Name taken**:
+Said of a planned rename whose new name already exists at the destination. A setting decides whether the Plan adds a number to the name or leaves the file where it is.
+
+**Undo**:
+Reversing the last Apply: files, Sidecars and Stragglers go back where they were. Offered until the user starts a new batch or quits.
+_Avoid_: revert, rollback
 
 ## Agent workflow
 
