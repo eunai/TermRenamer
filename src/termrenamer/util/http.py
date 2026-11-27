@@ -17,6 +17,10 @@ from termrenamer.util.errors import ProviderError
 _LOG = logging.getLogger(__name__)
 
 
+class Abandoned(ProviderError):
+    """A request given up between attempts because its answer is no longer wanted."""
+
+
 @dataclass(frozen=True, slots=True)
 class HttpClientConfig:
     """Transport knobs: timeout, retry attempts and backoff."""
@@ -85,12 +89,16 @@ class HttpClient:
             lambda: self._client.request(method, url, follow_redirects=False, **kwargs),
         )
 
-    def download(self, url: str, *, max_bytes: int) -> Download:
+    def download(
+        self, url: str, *, max_bytes: int, go_on: Callable[[], bool] | None = None
+    ) -> Download:
         """GET ``url`` with retries, as :meth:`request` does, reading at most ``max_bytes``.
 
         A redirect is not followed, as for :meth:`request`, and the request carries only
         the client's default headers. A body longer than ``max_bytes`` stops the read and
-        raises ``ProviderError``, as does any status but 200.
+        raises ``ProviderError``, as does any status but 200. Before each attempt after the
+        first, ``go_on`` is asked whether the answer is still wanted; when it says no,
+        the download raises :class:`Abandoned` without sending again.
         """
 
         too_large = f"Download larger than {max_bytes} bytes"
@@ -110,7 +118,7 @@ class HttpClient:
                         raise ProviderError(too_large)
                 return response
 
-        response = self._answer("GET", url, send)
+        response = self._answer("GET", url, send, go_on)
         if response.status_code != 200:
             raise ProviderError(f"HTTP {response.status_code}")
         return Download(
@@ -118,18 +126,28 @@ class HttpClient:
             content_type=response.headers.get("Content-Type", ""),
         )
 
-    def _answer(self, method: str, url: str, send: Callable[[], httpx.Response]) -> httpx.Response:
+    def _answer(
+        self,
+        method: str,
+        url: str,
+        send: Callable[[], httpx.Response],
+        go_on: Callable[[], bool] | None = None,
+    ) -> httpx.Response:
         """Send with retries, log the answer, and refuse a redirect."""
-        response = self._with_retries(send)
+        response = self._with_retries(send, go_on)
         _log_answer(method, url, response)
         if 300 <= response.status_code < 400:
             host = httpx.URL(url).host
             raise ProviderError(f"HTTP {response.status_code} redirect from {host} not followed")
         return response
 
-    def _with_retries(self, send: Callable[[], httpx.Response]) -> httpx.Response:
+    def _with_retries(
+        self, send: Callable[[], httpx.Response], go_on: Callable[[], bool] | None = None
+    ) -> httpx.Response:
         last_error: BaseException | None = None
         for attempt in range(self._config.max_attempts):
+            if attempt and go_on is not None and not go_on():
+                raise Abandoned("given up before another attempt: no longer wanted")
             try:
                 response = send()
             except (

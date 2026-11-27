@@ -16,7 +16,7 @@ from termrenamer.core.models import (
     Straggler,
 )
 from termrenamer.core.moving import Changes, is_folder, leave_folder, move_no_replace
-from termrenamer.core.paths import claim_key, path_key
+from termrenamer.core.paths import path_key
 from termrenamer.core.planning import fingerprint
 from termrenamer.util.errors import ValidationError
 
@@ -191,9 +191,10 @@ def apply_plan(plan: Plan, *, confirmed: bool) -> ApplyOutcome:
             applied_sources.add(entry.source)
         if outcome.status is not ApplyStatus.RENAMED or entry.destination is None:
             continue
-        # As the Plan judged it: a source folder by its recorded path, "another folder"
-        # by the claim key.
-        if claim_key(entry.source.parent) != claim_key(entry.destination.parent):
+        # A source folder is told apart by its recorded path as text. A move into the
+        # same folder under another spelling leaves the file in it, and the Plan lists
+        # no Straggler from it, so marking that folder moves and removes nothing.
+        if str(entry.source.parent) != str(entry.destination.parent):
             emptied.add(entry.source.parent)
             moved_out.add(str(entry.source.parent))
 

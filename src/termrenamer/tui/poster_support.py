@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,7 +21,13 @@ from typing import Any
 
 from textual.widget import Widget
 
-from termrenamer.persistence.posters import PosterRequest, PosterStore
+from termrenamer.persistence.posters import (
+    PosterAbandoned,
+    PosterError,
+    PosterFolderRefused,
+    PosterRequest,
+    PosterStore,
+)
 
 _LOG = logging.getLogger(__name__)
 
@@ -87,12 +94,88 @@ def detect_poster_support(
     return PosterSupport(image=make)
 
 
+@dataclass(slots=True)
+class _Download:
+    """One download in progress: who still wants it, and its error once it failed."""
+
+    wants: list[Callable[[], bool]]
+    done: threading.Event = field(default_factory=threading.Event)
+    error: str | None = None
+
+    def wanted(self) -> bool:
+        return any(want() for want in list(self.wants))
+
+
 @dataclass(frozen=True, slots=True)
 class PosterSource:
     """Where the screen's Posters come from while they are shown: the poster store, the
-    image widget that draws a stored file, and the requests that failed this session
-    (a failed download or an unreadable file), which every view leaves as "no poster"."""
+    image widget that draws a stored file, and the requests that failed this run (a
+    failed download or an unreadable file), which every view leaves as "no poster".
+    It downloads each Poster once at a time, for every view that asks, and records how
+    the download ended itself, whether or not a view is still there to see it."""
 
     store: PosterStore
     image: ImageFactory
     failed: set[PosterRequest] = field(default_factory=set)
+    _downloads: dict[PosterRequest, _Download] = field(
+        default_factory=dict, repr=False, compare=False
+    )
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
+
+    def fetch(self, request: PosterRequest, *, name: str, wanted: Callable[[], bool]) -> None:
+        """Store the file for ``request``, the Poster of the Title ``name``, downloading
+        it when it is not stored. Blocks, so call it off the screen's thread.
+
+        While one download of ``request`` runs, a second call joins it and ends as it
+        does, so two views never download one Poster twice. A download that fails (an
+        error status, a body that is not an image, a file that cannot be stored) is
+        added to :attr:`failed` and logged in one line, here, before a new call can
+        start another. Before each new attempt the download asks ``wanted`` of every
+        call that joined it; when none still wants the Poster it is given up, records
+        nothing, and a later call tries again.
+
+        Raises:
+            PosterError: The download failed or was given up.
+        """
+        with self._lock:
+            running = self._downloads.get(request)
+            if running is None:
+                download = self._downloads[request] = _Download([wanted])
+            else:
+                running.wants.append(wanted)
+        if running is not None:
+            running.done.wait()
+            if running.error is not None:
+                raise PosterError(running.error)
+            return
+        error: str | None = None
+        logged = False  # the store logs a refused folder itself, once
+        try:
+            self.store.fetch(request, go_on=download.wanted)
+        except PosterAbandoned as exc:
+            download.error = str(exc)
+            raise
+        except Exception as exc:  # a Poster never stops the screen
+            error = str(exc) if isinstance(exc, PosterError) else f"{type(exc).__name__}: {exc}"
+            logged = isinstance(exc, PosterFolderRefused)
+            download.error = error
+            raise PosterError(error) from exc
+        finally:
+            with self._lock:
+                if error is not None:
+                    self._record_failure(request, name, error, log=not logged)
+                del self._downloads[request]
+            download.done.set()
+
+    def record_failure(self, request: PosterRequest, name: str, why: str) -> None:
+        """Remember that ``request`` failed for the run, and log it once, for the Title
+        ``name``: every view then leaves "no poster"."""
+        with self._lock:
+            self._record_failure(request, name, why, log=True)
+
+    def _record_failure(self, request: PosterRequest, name: str, why: str, *, log: bool) -> None:
+        if request in self.failed:
+            return
+        self.failed.add(request)
+        if log:
+            _LOG.warning("No Poster for %s: %s", name, why)

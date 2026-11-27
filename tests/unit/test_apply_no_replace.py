@@ -777,7 +777,7 @@ def test_a_pipe_is_never_copied_and_apply_returns(
     assert (subs / "pipe").exists()
 
 
-def test_the_working_folder_is_left_when_the_plan_spells_its_folder_in_another_case(
+def test_the_working_folder_is_left_when_its_folder_is_queued_in_another_case(
     show: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     typed = show.parent / show.name.lower()
@@ -789,4 +789,5 @@ def test_the_working_folder_is_left_when_the_plan_spells_its_folder_in_another_c
     outcome = apply_plan(plan, confirmed=True)
 
     assert os.path.samestat(os.stat(os.getcwd()), os.stat(show))
-    assert typed / "Disc 1" / "Subs" in outcome.folders_removed
+    # The Plan spells the queued folder as the disk lists it.
+    assert str(show / "Disc 1" / "Subs") in {str(f) for f in outcome.folders_removed}
