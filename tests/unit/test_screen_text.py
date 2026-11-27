@@ -16,8 +16,10 @@ from termrenamer.tui.widgets.header import AppHeader
 from termrenamer.tui.words import folder_text
 
 from .screen_driver import (
+    POSTERS_AVAILABLE,
     SIZE,
     FilmStandIn,
+    ImageHost,
     TvStandIn,
     build,
     make_app,
@@ -154,3 +156,29 @@ async def test_the_match_picker_shows_candidates_names_as_they_are(tmp_path: Pat
         "/ Type a title",
     ]
     assert "Pick a match for [$accent]Heat[/] \\ (1995) · TMDB" in text
+
+
+async def test_the_match_picker_tiles_show_candidates_names_as_they_are(tmp_path: Path) -> None:
+    first = Candidate(id="1", name="[$accent]Heat \\", year=1995, poster_ref="/heat.jpg")
+    second = Candidate(id="2", name="[Group] Heat[i]", year=1986)
+    films = FilmStandIn(films={("heat", 1995): (first, second)})
+    folder = tmp_path / "Films"
+    _write(folder / "Heat.1995.mkv")
+    host = ImageHost(status=404)
+    wired = wiring(film=films, posters=host.store(tmp_path / "posters"))
+    app = make_app(wired=wired, posters=POSTERS_AVAILABLE)
+    async with app.run_test(size=SIZE) as pilot:
+        await press(pilot, "m")
+        await queue(pilot, folder)
+        await build(pilot)
+        await press(pilot, "t")
+        await app.workers.wait_for_complete()
+        await app.screen.workers.wait_for_complete()
+        await pilot.pause()
+        names = [text_of(app, f"#picker-tile-{n} .tile-name") for n in (0, 1)]
+        text = screen_text(app)
+
+    assert names == ["[$accent]Heat \\", "[Group] Heat[i]"]
+    # In place of each Poster: the name, then "no poster".
+    assert "┃ [$accent]Heat \\ ┃" in text
+    assert "│ [Group] Heat[i] │" in text

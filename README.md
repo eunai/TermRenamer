@@ -190,7 +190,8 @@ Keys:
   with it hidden. The panel needs a screen of at least 100 columns by 35 rows;
   on a smaller one it is hidden. Posters are downloaded from TMDB's or
   TheTVDB's image host when a Title is selected at the Preview, the first one
-  as the Preview opens, never while the plan is built, and kept for 30 days in
+  as the Preview opens, and when the Match picker shows a Candidate, never
+  while the plan is built, and kept for 30 days in
   a `termrenamer/posters` folder in your per-user cache folder
   (`%LOCALAPPDATA%` on Windows, `~/.cache` or `XDG_CACHE_HOME` elsewhere).
 - **Name taken.** When a new name is already used, by something at that path

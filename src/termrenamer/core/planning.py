@@ -1,8 +1,9 @@
 """Plan the queued Sources: the one entry point that builds a Plan.
 
 :func:`plan_queue` takes the queue, the plan options and the build's Provider, and
-returns one Plan. It touches the filesystem only to list the Sources and the source
-folders, to stat their files and to test the wanted names; nothing is renamed.
+returns one Plan. It touches the filesystem only to find where each Source is and how
+its folders spell it, to list the Sources and the source folders, to stat their files
+and to test the wanted names; nothing is renamed.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ from termrenamer.core.models import (
 )
 from termrenamer.core.moving import folders_between, links_among
 from termrenamer.core.parse import parse_filename, parse_film_filename
-from termrenamer.core.paths import claim_key, path_key
+from termrenamer.core.paths import claim_key, source_order, source_place
 from termrenamer.core.progress import (
     BuildFinished,
     CancelSignal,
@@ -124,15 +125,23 @@ def _hint_key(hint: str) -> str:
 
 
 def _pair_key(path: Path) -> tuple[str, str]:
-    """The pairing rule's key: a Sidecar belongs to the video in its folder with its stem."""
-    return (str(path.parent).casefold(), path.stem.casefold())
+    """The pairing rule's key: a Sidecar belongs to the video in its folder with its stem,
+    letter case aside. The folder is its recorded path as text, so a Sidecar never pairs
+    with a video in a folder whose name differs only in letter case."""
+    return (str(path.parent), path.stem.casefold())
 
 
 def _file_source(path: Path) -> list[_Found]:
-    """A file Source's video, and the Sidecars the pairing rule ties to it."""
+    """A file Source's video, and the Sidecars the pairing rule ties to it. When its
+    folder cannot be listed, the video alone, with a logged warning."""
     root = path.parent
     found = [_Found(path=path, root=root, kind=FileKind.VIDEO)]
-    for sibling in sorted(root.iterdir(), key=lambda p: p.name.casefold()):
+    try:
+        siblings = sorted(root.iterdir(), key=source_order)
+    except OSError as exc:
+        _LOG.warning("Cannot list %s for the Sidecars of %s: %s", root, path.name, exc)
+        return found
+    for sibling in siblings:
         if (
             sibling.is_file()
             and classify(sibling.suffix) is FileKind.SIDECAR
@@ -145,17 +154,27 @@ def _file_source(path: Path) -> list[_Found]:
 def _collect(sources: Sequence[Path]) -> tuple[list[_Found], list[str]]:
     """Every video and Sidecar the queued Sources contribute, each once.
 
-    A file reached by more than one Source belongs to the outermost folder Source
-    that contains it, otherwise to its file Source.
+    Each Source is taken where it is on disk, spelled as its folders list it
+    (:func:`~termrenamer.core.paths.source_place`), so every file has one path as text
+    and is told apart by it: two files whose names differ only in letter case, on a
+    disk that tells them apart, are two files. A file reached by more than one Source
+    belongs to the outermost folder Source that contains it, otherwise to its file
+    Source. A file Source that is a symbolic link is the link itself; a folder Source
+    that is now a link or junction to a folder is reported and skipped.
     """
     owned: dict[str, tuple[tuple[int, int], _Found]] = {}
     messages: list[str] = []
     for source in sources:
-        resolved = source.resolve()
+        if (source.is_symlink() or source.is_junction()) and source.is_dir():
+            # The queue resolves a folder link when it is added, so this one became a
+            # link after; planning never enters a link.
+            messages.append(f"Skipped {source}: it is now a link to a folder, not entered.")
+            continue
+        resolved = source_place(source)
         if not resolved.exists():
             messages.append(f"Skipped {source}: it no longer exists.")
             continue
-        if resolved.is_dir():
+        if resolved.is_dir(follow_symlinks=False) and not resolved.is_junction():
             rank = (0, len(resolved.parts))
             contributed = [
                 _Found(path=f.path, root=resolved, kind=f.kind, in_folder_source=True)
@@ -168,7 +187,7 @@ def _collect(sources: Sequence[Path]) -> tuple[list[_Found], list[str]]:
             messages.append(f"Skipped {source}: it is not a video.")
             continue
         for found_file in contributed:
-            key = path_key(found_file.path)
+            key = str(found_file.path)
             if key not in owned or rank < owned[key][0]:
                 owned[key] = (rank, found_file)
     return [found_file for _rank, found_file in owned.values()], messages
@@ -204,8 +223,10 @@ def _entry(
 
 def _titles(
     found_groups: Sequence[tuple[list[_Video], tuple[Candidate, ...]]],
-) -> dict[Path, Title]:
+) -> dict[str, Title]:
     """Make the Titles: groups with the same Match are one Title, a group with none its own.
+
+    Each video's Title is keyed by its path as text.
 
     ``found_groups`` is in title-hint order; a merged Title keeps the Candidates of
     its first group.
@@ -220,7 +241,7 @@ def _titles(
         else:
             merged[candidates_found[0].id] = (list(members), candidates_found)
 
-    title_of: dict[Path, Title] = {}
+    title_of: dict[str, Title] = {}
     for members, candidates_found in merged.values():
         match = candidates_found[0]
         title = Title(
@@ -230,7 +251,7 @@ def _titles(
             match=match,
             candidates=candidates_found[1:],
         )
-        title_of.update((v.path, title) for v in members)
+        title_of.update((str(v.path), title) for v in members)
     for members in no_match:
         title = Title(
             name=members[0].hint,
@@ -239,7 +260,7 @@ def _titles(
             match=None,
             candidates=(),
         )
-        title_of.update((v.path, title) for v in members)
+        title_of.update((str(v.path), title) for v in members)
     return title_of
 
 
@@ -379,7 +400,7 @@ def plan_queue(
     found, messages = _collect(sources)
     entries: list[PlanEntry] = []
     videos: list[_Video] = []
-    for found_file in sorted(found, key=lambda f: path_key(f.path)):
+    for found_file in sorted(found, key=lambda f: source_order(f.path)):
         if found_file.kind is not FileKind.VIDEO:
             continue
         try:
@@ -416,7 +437,7 @@ def plan_queue(
 
     # Lookups: one search per group, then in TV Mode one episode lookup per file.
     found_groups: list[tuple[list[_Video], tuple[Candidate, ...]]] = []
-    episode_titles: dict[Path, str | None] = {}
+    episode_titles: dict[str, str | None] = {}
     for members in ordered:
         name, year = members[0].hint, members[0].year_hint
         if cancelled():
@@ -442,7 +463,7 @@ def plan_queue(
                 season=video.parsed.season,
                 episode=video.parsed.primary_episode,
             )
-            episode_titles[video.path] = episode_title
+            episode_titles[str(video.path)] = episode_title
             tell(FileLookedUp(path=video.path, matched=episode_title is not None))
     tell(BuildFinished())
 
@@ -450,14 +471,14 @@ def plan_queue(
 
     # Each video's wanted name; the names are claimed below, with the Sidecars'.
     for video in videos:
-        title = title_of[video.path]
+        title = title_of[str(video.path)]
         wanted = (
             _wanted_name(
                 video.path,
                 video.root,
                 _episode_of(video.parsed),
                 title.match,
-                episode_titles.get(video.path),
+                episode_titles.get(str(video.path)),
                 options,
             )
             if title.match is not None
@@ -467,9 +488,9 @@ def plan_queue(
         entries.append(_entry(video, destination=None, status=status, title=title, wanted=wanted))
 
     by_pair: dict[tuple[str, str], PlanEntry] = {}
-    for video_entry in sorted(entries, key=lambda e: path_key(e.source)):
+    for video_entry in sorted(entries, key=lambda e: source_order(e.source)):
         by_pair.setdefault(_pair_key(video_entry.source), video_entry)
-    for sidecar in sorted(found, key=lambda f: path_key(f.path)):
+    for sidecar in sorted(found, key=lambda f: source_order(f.path)):
         owner = by_pair.get(_pair_key(sidecar.path)) if sidecar.kind is FileKind.SIDECAR else None
         if owner is None:
             continue
@@ -485,7 +506,7 @@ def plan_queue(
 
     titles = sorted(set(title_of.values()), key=_title_order)
     # Source-path order is fixed here, once; a derived Plan keeps it.
-    entries.sort(key=lambda e: path_key(e.source))
+    entries.sort(key=lambda e: source_order(e.source))
     # The children of each source folder are recorded once, here; a derived Plan keeps
     # them, so its Stragglers are worked out without listing a folder again.
     # A folder is told apart by its path as the scan found it, so two folders whose
@@ -505,9 +526,9 @@ def _source_folders(folders: Iterable[Path]) -> tuple[SourceFolder, ...]:
     """
     unique = {str(folder): folder for folder in folders}
     recorded = []
-    for folder in sorted(unique.values(), key=lambda f: (path_key(f), str(f))):
+    for folder in sorted(unique.values(), key=source_order):
         try:
-            children = sorted(folder.iterdir(), key=path_key)
+            children = sorted(folder.iterdir(), key=source_order)
         except OSError as exc:
             _LOG.warning("Cannot list %s for Stragglers: %s", folder, exc)
             children = []
@@ -539,35 +560,46 @@ def _claim_names(entries: Sequence[PlanEntry], options: PlanOptions) -> tuple[Pl
     """
     ordered = tuple(entries)
     occupied: set[str] = set()
-    named: dict[Path, PlanEntry] = {}
+    named: dict[str, PlanEntry] = {}
     for entry in ordered:
         if entry.is_sidecar:
             continue
         if entry.status is EntryStatus.LEFT_OUT or entry.wanted is None:
-            named[entry.source] = replace(entry, destination=None)
+            named[str(entry.source)] = replace(entry, destination=None)
             continue
         final = claim_name(
             entry.wanted, source=entry.source, occupied=occupied, policy=options.name_taken
         )
-        status = EntryStatus.READY if final == entry.wanted else EntryStatus.NAME_TAKEN
-        named[entry.source] = replace(entry, destination=final, status=status)
+        named[str(entry.source)] = replace(
+            entry, destination=final, status=_claimed_status(final, entry.wanted)
+        )
     for entry in ordered:
         if not entry.is_sidecar:
             continue
         assert entry.video is not None
         # A Sidecar's ``video`` is its video entry's own ``source``, copied when the
         # Plan was built, so the key is the Plan's record, not a file on disk.
-        owner = named[entry.video]
+        owner = named[str(entry.video)]
         if owner.destination is None:
-            named[entry.source] = replace(entry, destination=None, status=owner.status)
+            named[str(entry.source)] = replace(entry, destination=None, status=owner.status)
             continue
         desired = owner.destination.with_suffix(entry.source.suffix.lower())
         final = claim_name(
             desired, source=entry.source, occupied=occupied, policy=options.name_taken
         )
-        status = EntryStatus.READY if final == desired else EntryStatus.NAME_TAKEN
-        named[entry.source] = replace(entry, destination=final, status=status)
-    return tuple(named[entry.source] for entry in ordered)
+        named[str(entry.source)] = replace(
+            entry, destination=final, status=_claimed_status(final, desired)
+        )
+    return tuple(named[str(entry.source)] for entry in ordered)
+
+
+def _claimed_status(final: Path | None, wanted: Path) -> EntryStatus:
+    """Ready when the claim gave the wanted name, else name taken. The claim may spell
+    the wanted name's folder as the source's folder is recorded, but a numbered name or
+    none always changes the name itself."""
+    if final is not None and final.name == wanted.name:
+        return EntryStatus.READY
+    return EntryStatus.NAME_TAKEN
 
 
 def folders_on_the_way(options: PlanOptions, root: Path, dest: Path) -> list[Path]:
@@ -654,8 +686,9 @@ class PickMatch:
     then forms a Title of its own or joins the Title that already has ``match``.
     ``found`` is the search the picker showed ``match`` from, in the Provider's order;
     the Title's Candidates become the other Candidates that search found. In TV Mode,
-    ``episodes`` holds the episode title the picked show gives each of the Title's
-    videos, by the source the Plan recorded, ``None`` where the episode was not found:
+    ``episodes`` holds the episode title the picked show gives each video the Title
+    will hold (its own, and those of the Title that already has ``match``), by the
+    source the Plan recorded, ``None`` where the episode was not found:
     :func:`look_up_episodes` asks the Provider for them before the Plan is derived.
     """
 
@@ -724,8 +757,10 @@ def _with_picked_match(
 ) -> tuple[tuple[Title, ...], tuple[PlanEntry, ...]]:
     """The Titles and entries of ``plan`` once ``change``'s target has its new Match.
 
-    The target's videos take names from the Match; the Title that already had that
-    Match, if any, becomes one Title with them. Entries stay in the Plan's order.
+    The Title that already had that Match, if any, becomes one Title with the target.
+    Every video of the new Title takes its name from the one Match, as a fresh build
+    with that Match names a merged group: the joined Title's videos too, whose old
+    Match may have had another name or year. Entries stay in the Plan's order.
     """
     options, match = plan.options, change.match
     target = change.target
@@ -744,8 +779,10 @@ def _with_picked_match(
         if options.mode is ScanMode.TV:
             raise ValueError(NO_TV_MATCH_BY_HAND)
         videos = (target,)
+    joined = _title_with_match(plan, match, besides=target)
+    joined_videos = tuple(v for v in plan.videos if joined is not None and v.title == joined)
     if options.mode is ScanMode.TV:
-        missing = [v.source for v in videos if v.source not in change.episodes]
+        missing = [v.source for v in videos + joined_videos if v.source not in change.episodes]
         if missing:
             msg = f"No episode title was looked up for {missing[0]}."
             raise ValueError(msg)
@@ -753,13 +790,8 @@ def _with_picked_match(
         msg = f"{match.name} has no year, so it cannot name a film."
         raise ValueError(msg)
 
-    joined = next(
-        (t for t in plan.titles if t != target and t.match is not None and t.match.id == match.id),
-        None,
-    )
     candidates = tuple(c for c in change.found if c.id != match.id)
     if joined is not None:
-        joined_videos = tuple(v for v in plan.videos if v.title == joined)
         # The merged Title keeps the Candidates of the group whose title hint sorts
         # first; a not recognised file has no hint, so it joins the Title as it is.
         if not isinstance(target, Title) or _first_hint(joined_videos, options.mode) < _first_hint(
@@ -777,11 +809,11 @@ def _with_picked_match(
         candidates=candidates,
     )
     replaced = {t for t in (target, joined) if isinstance(t, Title)}
-    moved = {v.source for v in videos}
+    moved = {str(v.source) for v in members}
 
     entries: list[PlanEntry] = []
     for entry in plan.entries:
-        if entry.source in moved and not entry.is_sidecar:
+        if str(entry.source) in moved and not entry.is_sidecar:
             wanted = _wanted_name(
                 entry.source,
                 entry.root,
@@ -795,7 +827,7 @@ def _with_picked_match(
             else:
                 status = _named_status(wanted)
             entries.append(replace(entry, title=title, wanted=wanted, status=status))
-        elif entry.title in replaced or (entry.is_sidecar and entry.video in moved):
+        elif entry.is_sidecar and str(entry.video) in moved:
             # A Sidecar's status follows its video when the names are claimed.
             entries.append(replace(entry, title=title))
         else:
@@ -806,6 +838,15 @@ def _with_picked_match(
     return tuple(titles), tuple(entries)
 
 
+def _title_with_match(plan: Plan, match: Candidate, *, besides: Title | PlanEntry) -> Title | None:
+    """The Title of ``plan`` other than ``besides`` whose Match is the Provider entry
+    ``match``, which a pick of ``match`` merges with; ``None`` when there is none."""
+    return next(
+        (t for t in plan.titles if t != besides and t.match is not None and t.match.id == match.id),
+        None,
+    )
+
+
 def look_up_episodes(
     plan: Plan,
     title: Title,
@@ -814,7 +855,8 @@ def look_up_episodes(
     *,
     cancel: CancelSignal | None = None,
 ) -> dict[Path, str | None] | None:
-    """The episode title ``show`` gives each video of ``title``, a TV Title of ``plan``.
+    """The episode title ``show`` gives each video of ``title``, a TV Title of ``plan``,
+    and of the Title that already has ``show``, which the pick merges with ``title``.
 
     The answers are keyed by the source the Plan recorded for each video, ``None``
     where the episode is not found, ready for a :class:`PickMatch`. Each video's
@@ -824,9 +866,10 @@ def look_up_episodes(
     """
     lookup = _lookup(provider, ScanMode.TV)
     assert isinstance(lookup, TvLookup)
+    joined = _title_with_match(plan, show, besides=title)
     episodes: dict[Path, str | None] = {}
     for video in plan.videos:
-        if video.title != title or video.season is None or video.episode is None:
+        if video.title not in (title, joined) or video.season is None or video.episode is None:
             continue
         if cancel is not None and cancel.is_set():
             return None

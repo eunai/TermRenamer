@@ -10,6 +10,7 @@ from termrenamer.api.base import id_field, leading_year, text_field
 from termrenamer.core.models import Candidate, EpisodeMetadata, MovieMetadata
 from termrenamer.util.errors import ProviderError
 from termrenamer.util.http import HttpClient
+from termrenamer.util.logging import keep_out_of_logs
 
 _TMDB_DEFAULT_BASE = "https://api.themoviedb.org/3"
 
@@ -71,6 +72,7 @@ class TmdbProvider:
     ) -> None:
         self._http = http
         self._api_key = api_key.strip()
+        keep_out_of_logs(self._api_key)
         self._base = base_url.rstrip("/")
 
     def _params(self, **kwargs: str) -> dict[str, str]:

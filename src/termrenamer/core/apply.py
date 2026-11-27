@@ -29,7 +29,7 @@ from termrenamer.core.moving import (
     leave_folder,
     move_no_replace,
 )
-from termrenamer.core.paths import claim_key
+from termrenamer.core.paths import claim_key, source_order
 from termrenamer.core.planning import fingerprint, folders_on_the_way, source_roots
 from termrenamer.util.errors import ValidationError
 
@@ -129,7 +129,7 @@ def _remove_empty_source_dirs(applied_source_parents: set[Path], changes: Change
     parent first (same idea as anipyrenamer). Each folder removed is recorded in
     ``changes``.
     """
-    for dir_path in sorted(applied_source_parents, key=lambda p: (-len(p.parts), claim_key(p))):
+    for dir_path in sorted(applied_source_parents, key=lambda p: (-len(p.parts), source_order(p))):
         try:
             if not is_folder(dir_path, os.lstat(dir_path)) or any(dir_path.iterdir()):
                 continue
@@ -326,9 +326,10 @@ def _apply_all(
             applied_sources.add(entry.source)
         if outcome.status is not ApplyStatus.RENAMED or entry.destination is None:
             continue
-        # As the Plan judged it: a source folder by its recorded path, "another folder"
-        # by the claim key.
-        if claim_key(entry.source.parent) != claim_key(entry.destination.parent):
+        # A source folder is told apart by its recorded path as text. A move into the
+        # same folder under another spelling leaves the file in it, and the Plan lists
+        # no Straggler from it, so marking that folder moves and removes nothing.
+        if str(entry.source.parent) != str(entry.destination.parent):
             emptied.add(entry.source.parent)
             moved_out.add(str(entry.source.parent))
 

@@ -72,6 +72,7 @@ from termrenamer.tui.widgets.header import AppHeader
 from termrenamer.tui.widgets.stages_row import StagesRow
 from termrenamer.tui.words import and_list, match_name, mode_label, noun, plural, provider_name
 from termrenamer.util.errors import ProviderError, ValidationError
+from termrenamer.util.logging import quiet_request_urls
 from termrenamer.wiring import PlanningWiring
 
 _STAGE_IDS = {
@@ -551,6 +552,8 @@ class TermRenamerApp(App[None]):
             search=search,
             typed=typed,
             typing=not picker_choices(current, found),
+            posters=self._poster_source(),
+            provider_id=plan.options.provider_id,
         )
 
         def picked(answer: Picked | None) -> None:
@@ -922,6 +925,9 @@ class TermRenamerApp(App[None]):
         current = self.stage_view
         for view in self.screen_stack[0].query(TitleListStage):
             view.show_posters(source, paused=covered or view is not current)
+        for screen in self.screen_stack[1:]:
+            if isinstance(screen, MatchPicker):
+                screen.use_posters(source)
 
     def action_toggle_posters(self) -> None:
         """``i``: hide or show Posters for the session; when unavailable, say why."""
@@ -975,6 +981,7 @@ class TermRenamerApp(App[None]):
 
     def _install_log_handler(self) -> None:
         """Send every log record to the log book in place of stderr, while the screen runs."""
+        quiet_request_urls()
         root = logging.getLogger()
         for handler in root.handlers[:]:
             if isinstance(handler, logging.StreamHandler) and not isinstance(

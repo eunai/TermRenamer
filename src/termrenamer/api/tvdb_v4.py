@@ -13,6 +13,7 @@ from termrenamer.api.base import TvMetadataProvider, leading_year, text_field
 from termrenamer.core.models import Candidate
 from termrenamer.util.errors import ProviderError
 from termrenamer.util.http import HttpClient
+from termrenamer.util.logging import keep_out_of_logs
 
 _LOG = logging.getLogger(__name__)
 
@@ -59,6 +60,7 @@ class TvdbV4Provider:
         self._http = http
         self._api_key = api_key.strip()
         self._pin = subscriber_pin.strip() if subscriber_pin else None
+        keep_out_of_logs(self._api_key, self._pin)
         self._base = base_url.rstrip("/")
         self._token: str | None = None
 
@@ -140,6 +142,7 @@ class TvdbV4Provider:
         token = _extract_token(payload)
         if not token:
             raise ProviderError("TheTVDB login response missing token")
+        keep_out_of_logs(token)
         self._token = token
 
     def _ensure_token(self) -> None:

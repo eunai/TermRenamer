@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import errno
 import os
-import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -451,35 +450,28 @@ def test_an_unexpected_error_stops_apply_and_the_outcome_so_far_is_returned(
     assert (show / "Disc 1" / "notes.txt").exists()
 
 
-def test_an_error_between_items_stops_apply_and_the_outcome_so_far_is_returned(
+def test_an_error_outside_any_item_stops_apply_and_an_outcome_is_returned(
     show: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     plan = _plan(show)
-    second = show / "Disc 2" / "Show.Name.S01E02.mkv"
 
-    real = apply_module.claim_key
+    def source_roots(entries: object) -> dict[str, Path]:
+        raise RuntimeError("boom")  # before the first item, outside any of them
 
-    def claim_key(path: Path) -> str:
-        # Raised only between items: where Apply, after an item's result, works out
-        # whether its folder was moved out of; inside an item it answers as usual.
-        if sys._getframe(1).f_code.co_name == "_apply_all":
-            raise RuntimeError("boom")
-        return real(path)
-
-    monkeypatch.setattr(apply_module, "claim_key", claim_key)
+    monkeypatch.setattr(apply_module, "source_roots", source_roots)
     outcome = apply_plan(plan, confirmed=True)
     monkeypatch.undo()
 
-    by_source = _by_source(outcome.results)
-    assert by_source[_video(show)] == (ApplyStatus.RENAMED, "ok")
     stopped = (ApplyStatus.SKIP, "not applied: Apply stopped after an unexpected error")
-    assert by_source[second] == stopped
-    assert by_source[show / "Disc 1" / "Show.Name.S01E01.srt"] == stopped
-    assert len(outcome.results) == len(plan.entries)
+    assert [r.source for r in outcome.results] == [
+        *(e.source for e in plan.entries if not e.is_sidecar),
+        *(e.source for e in plan.entries if e.is_sidecar),
+    ]
+    assert set(_by_source(outcome.results).values()) == {stopped}
     assert set(_by_source(outcome.stragglers).values()) == {stopped}
-    assert [m.source for m in outcome.moves] == [_video(show)]
-    assert outcome.folders_removed == ()
-    assert second.exists()
+    assert len(outcome.stragglers) == len(plan.stragglers)
+    assert outcome.moves == () and outcome.folders_created == ()
+    assert all(e.source.exists() for e in plan.entries)
 
 
 def test_a_hard_link_in_the_same_folder_under_another_exact_name_is_taken(
@@ -811,7 +803,7 @@ def test_a_pipe_is_never_copied_and_apply_returns(
     assert (subs / "pipe").exists()
 
 
-def test_the_working_folder_is_left_when_the_plan_spells_its_folder_in_another_case(
+def test_the_working_folder_is_left_when_its_folder_is_queued_in_another_case(
     show: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     typed = show.parent / show.name.lower()
@@ -823,7 +815,8 @@ def test_the_working_folder_is_left_when_the_plan_spells_its_folder_in_another_c
     outcome = apply_plan(plan, confirmed=True)
 
     assert os.path.samestat(os.stat(os.getcwd()), os.stat(show))
-    assert typed / "Disc 1" / "Subs" in outcome.folders_removed
+    # The Plan spells the queued folder as the disk lists it.
+    assert str(show / "Disc 1" / "Subs") in {str(f) for f in outcome.folders_removed}
 
 
 def _after_the_claim(

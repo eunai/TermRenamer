@@ -217,3 +217,12 @@ async def test_building_with_a_provider_that_has_no_key_gives_its_message_and_no
         assert app.plan is None
         assert app.stage is Stage.QUEUE
         assert message in text_of(app, "#message")
+
+
+async def test_help_says_left_and_right_select_a_file_at_the_preview_only() -> None:
+    app = make_app()
+    async with app.run_test(size=(120, 60)) as pilot:
+        await press(pilot, "question_mark")
+        text = screen_text(app)
+    assert "←→ Preview Select a file of the Title" in text
+    assert "←→ Plan, Preview" not in text
