@@ -166,7 +166,7 @@ Keys:
 | `m`     | Queue, Preview                                 | Change mode (TV or Film)              |
 | `p`     | Queue, Preview                                 | Change provider                       |
 | `s`     | Queue, Preview, Applied                        | Settings                              |
-| `i`     | Anywhere but a text field or the Apply confirm | Hide or show Posters                  |
+| `i`     | Anywhere but a text field or a dialog          | Hide or show Posters                  |
 | `l`     | Anywhere but a text field                      | Logs                                  |
 | `?`     | Anywhere but a text field                      | Help                                  |
 | `q`     | Anywhere but a text field                      | Quit                                  |
