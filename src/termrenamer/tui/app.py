@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -24,24 +24,39 @@ from textual.message import Message
 from textual.widgets import ContentSwitcher
 from textual.worker import Worker, WorkerState
 
+from termrenamer.api.lookup import FilmLookup, TvLookup
 from termrenamer.app_bootstrap import Settings, ThemeName
 from termrenamer.core.apply import apply_plan
 from termrenamer.core.models import (
     ApplyOutcome,
     ApplyStatus,
+    Candidate,
     EntryStatus,
     Plan,
+    PlanEntry,
     PlanOptions,
     ScanMode,
+    Title,
     UndoOutcome,
 )
-from termrenamer.core.planning import LeaveOut, PlanChange, PutBack, derive_plan, plan_queue
+from termrenamer.core.planning import (
+    NO_TV_MATCH_BY_HAND,
+    LeaveOut,
+    PickMatch,
+    PlanChange,
+    PutBack,
+    derive_plan,
+    look_up_episodes,
+    plan_queue,
+    search_typed,
+)
 from termrenamer.core.progress import PlanEvent
 from termrenamer.core.queue import SourceQueue
 from termrenamer.core.undo import undo_apply
 from termrenamer.session_settings import SessionSettings, locked_message
 from termrenamer.tui import keys
 from termrenamer.tui.dialogs import ApplyConfirm, FilePicker, FolderPicker, UndoConfirm
+from termrenamer.tui.dialogs.match_picker import MatchPicker, Picked, candidate_text, picker_choices
 from termrenamer.tui.log_book import LogBook, LogBookHandler
 from termrenamer.tui.stage import Stage
 from termrenamer.tui.stages import AppliedStage, PlanStage, PreviewStage, QueueStage, StageView
@@ -51,7 +66,7 @@ from termrenamer.tui.widgets.action_button import ActionButton
 from termrenamer.tui.widgets.footer import AppFooter, MessageKind
 from termrenamer.tui.widgets.header import AppHeader
 from termrenamer.tui.widgets.stages_row import StagesRow
-from termrenamer.tui.words import and_list, mode_label, noun, plural, provider_name
+from termrenamer.tui.words import and_list, match_name, mode_label, noun, plural, provider_name
 from termrenamer.util.errors import ProviderError, ValidationError
 from termrenamer.wiring import PlanningWiring
 
@@ -64,9 +79,13 @@ _STAGE_IDS = {
 
 
 _BUILD = "build"
+"""The worker that builds the Plan."""
 _APPLY = "apply"
+"""The worker that applies the Plan."""
+_PICK = "pick"
+"""The worker that looks up a picked TV Match's episodes."""
 _UNDO = "undo"
-"""The names of the three workers: the build of the Plan, its Apply and the Undo."""
+"""The worker that undoes the last Apply."""
 
 
 def _start_folder() -> Path:
@@ -85,6 +104,28 @@ class _BuildOutcome:
     plan: Plan | None
     skipped: tuple[str, ...]
     error: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _PickOutcome:
+    """What a picked TV Match's lookups hand back: the episode titles, or why there are
+    none (``episodes`` is ``None`` when the lookups were cancelled)."""
+
+    episodes: dict[Path, str | None] | None
+    error: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingPick:
+    """A picked TV Match whose episodes are being looked up: the Plan it was picked on,
+    the change waiting for the answers, the name the Title was shown under, and the lookup's cancel
+    signal and worker."""
+
+    plan: Plan
+    change: PickMatch
+    shown_as: str
+    cancel: threading.Event
+    worker: Worker[_PickOutcome] | None = None
 
 
 class BuildProgress(Message):
@@ -141,6 +182,8 @@ class TermRenamerApp(App[None]):
         self._build_worker: Worker[_BuildOutcome] | None = None
         """The running build's cancel signal and worker, or ``None`` while no build runs.
         A cancelled build's thread may still finish a lookup; what it reports is dropped."""
+        self._pick: _PendingPick | None = None
+        """The picked TV Match whose episodes are being looked up, or ``None``."""
         self._messages = logging.getLogger("termrenamer.tui")
         self._messages.setLevel(logging.INFO)
         self._log_handler: LogBookHandler | None = None
@@ -219,8 +262,19 @@ class TermRenamerApp(App[None]):
                 continue
             actions = [action for _name, action in key.bindings]
             if all(self._target(a) is not None and view.key_enabled(a) for a in actions):
+                if self._pick is not None and "discard_plan" in actions:
+                    key = replace(key, hint="Abandon change")  # what esc does meanwhile
                 shown.append(key)
         return shown
+
+    def _locked_message(self, what: str) -> str:
+        """Why ``what`` (such as "Mode") cannot change now that the settings are locked."""
+        if self._pick is not None:
+            return (
+                f"{what} cannot change while the new Match's episodes are looked up. "
+                "esc abandons the change."
+            )
+        return locked_message(what)
 
     def _target(self, action: str) -> DOMNode | None:
         """Where ``action`` is implemented: the current Stage's view, else the app."""
@@ -244,7 +298,7 @@ class TermRenamerApp(App[None]):
             if not on_main and not key.anywhere:
                 continue
             if key.guarded and self.session_settings.locked:
-                self.say(locked_message(key.guarded), MessageKind.WARNING)
+                self.say(self._locked_message(key.guarded), MessageKind.WARNING)
                 return
             target = self._target(action)
             if on_main and self.stage not in key.stages:
@@ -377,6 +431,9 @@ class TermRenamerApp(App[None]):
     def action_discard_plan(self) -> None:
         if self._applying:
             return
+        if self._pick is not None:
+            self._abandon_pick()
+            return
         self.plan = None
         self._show_stage(Stage.QUEUE)
         self.say("Plan discarded. Nothing was renamed.")
@@ -391,7 +448,7 @@ class TermRenamerApp(App[None]):
         plan = self.plan
         preview = self.query_one(PreviewStage)
         video = preview.selected_file
-        if plan is None or video is None or self._applying:
+        if plan is None or video is None or self._applying or self._refuse_while_picking():
             return
         if video.status in (EntryStatus.NO_MATCH, EntryStatus.NOT_RECOGNISED):
             self.say(
@@ -415,10 +472,168 @@ class TermRenamerApp(App[None]):
         preview.show_plan(self.plan, keep_selection=True)
         self.say(said)
 
+    # ------------------------------------------------------- the Match picker
+
+    def action_pick_match(self) -> None:
+        """Open the Match picker for the selected Title, or for a not recognised film.
+
+        Nothing changes until a Candidate is picked; then a new Plan is derived, for TV
+        after the picked show's episodes are looked up off the screen's thread.
+        """
+        plan = self.plan
+        row = self.query_one(PreviewStage).selected_row
+        if plan is None or row is None or self._applying or self._refuse_while_picking():
+            return
+        mode = plan.mode
+        target: Title | PlanEntry
+        current: Candidate | None
+        found: tuple[Candidate, ...]
+        if row.title is None:
+            if mode is ScanMode.TV:
+                self.say(
+                    NO_TV_MATCH_BY_HAND,
+                    MessageKind.WARNING,
+                )
+                return
+            target = row.files[0]
+            name, now = target.source.name, f"Not recognised: {target.source.name}"
+            current, found, typed = None, (), target.source.stem
+        else:
+            target = title = row.title
+            name = match_name(title, mode)
+            current = title.match
+            found = (title.match, *title.candidates) if title.match is not None else ()
+            now = f"Now: {candidate_text(title.match)}" if title.match else "No match found."
+            typed = title.name
+            if mode is ScanMode.FILM and title.year is not None:
+                typed = f"{title.name} {title.year}"
+        try:
+            lookup = self._wiring.resolve(mode=mode, provider_id=plan.options.provider_id)
+        except ValidationError as exc:
+            self.say(str(exc), MessageKind.ERROR)
+            return
+
+        def search(text: str) -> tuple[Candidate, ...]:
+            return search_typed(text, mode, lookup)
+
+        picker = MatchPicker(
+            heading=f"Pick a match for {name} · {provider_name(plan.options.provider_id)}",
+            now=now,
+            current=current,
+            found=found,
+            search=search,
+            typed=typed,
+            typing=not picker_choices(current, found),
+        )
+
+        def picked(answer: Picked | None) -> None:
+            self._match_picked(plan, target, name, lookup, answer)
+
+        self.push_screen(picker, picked)
+
+    def _refuse_while_picking(self) -> bool:
+        """Whether a picked Match's episodes are being looked up, saying so when they are.
+
+        The Preview hides Apply, Leave out and Change match meanwhile; this refuses
+        such a key or button press that still reaches the app."""
+        if self._pick is None:
+            return False
+        self.say("Looking up the episodes for the new Match. esc abandons the change.")
+        return True
+
+    def _match_picked(
+        self,
+        plan: Plan,
+        target: Title | PlanEntry,
+        shown_as: str,
+        lookup: TvLookup | FilmLookup,
+        answer: Picked | None,
+    ) -> None:
+        if answer is None or self.plan is not plan:
+            return
+        current = target.match if isinstance(target, Title) else None
+        if current is not None and answer.match.id == current.id:
+            self.say("Kept the current match.", MessageKind.DIM)
+            return
+        change = PickMatch(target, answer.match, found=answer.found)
+        if plan.mode is ScanMode.FILM or not isinstance(target, Title):
+            self._use_pick(plan, change, shown_as)
+            return
+        assert isinstance(lookup, TvLookup)
+        cancel = threading.Event()
+        self.session_settings.lock()
+        self.query_one(PreviewStage).mark_looking_up()
+        self._pick = _PendingPick(plan=plan, change=change, shown_as=shown_as, cancel=cancel)
+        worker = self._look_up_pick(plan, target, answer.match, lookup, cancel)
+        self._pick = replace(self._pick, worker=worker)
+        self.say(
+            f"Looking up the episodes of {candidate_text(answer.match)}… esc abandons the change."
+        )
+
+    @work(thread=True, group=_PICK, exit_on_error=False, name=_PICK)
+    def _look_up_pick(
+        self,
+        plan: Plan,
+        title: Title,
+        show: Candidate,
+        lookup: TvLookup,
+        cancel: threading.Event,
+    ) -> _PickOutcome:
+        try:
+            episodes = look_up_episodes(plan, title, show, lookup, cancel=cancel)
+        except ProviderError as exc:
+            return _PickOutcome(episodes=None, error=str(exc))
+        return _PickOutcome(episodes=episodes, error=None)
+
+    def _pick_looked_up(self, outcome: _PickOutcome) -> None:
+        pick = self._pick
+        if pick is None:
+            return
+        self._end_pick()
+        if outcome.error is not None or outcome.episodes is None:
+            self.query_one(PreviewStage).show_plan(pick.plan, keep_selection=True)
+            if outcome.error is not None:
+                self.say(f"{outcome.error} The Plan is unchanged.", MessageKind.ERROR)
+            return
+        self._use_pick(pick.plan, replace(pick.change, episodes=outcome.episodes), pick.shown_as)
+
+    def _abandon_pick(self) -> None:
+        """Escape during a picked Match's lookups: the old Plan stays. A lookup already
+        under way finishes on its thread, and its answer is dropped."""
+        pick = self._pick
+        if pick is None:
+            return
+        pick.cancel.set()
+        self._end_pick()
+        self.query_one(PreviewStage).show_plan(pick.plan, keep_selection=True)
+        self.say("Match change abandoned. The Plan is unchanged.")
+
+    def _end_pick(self) -> None:
+        self._pick = None
+        self.session_settings.unlock()
+
+    def _use_pick(self, plan: Plan, change: PickMatch, shown_as: str) -> None:
+        """Show the Plan ``plan`` becomes with ``change``, the same Title selected."""
+        preview = self.query_one(PreviewStage)
+        try:
+            derived = derive_plan(plan, change)
+        except OSError as exc:
+            preview.show_plan(plan, keep_selection=True)
+            self.say(f"The new names could not be checked on disk: {exc}", MessageKind.ERROR)
+            return
+        except ValueError as exc:  # a change the Plan refuses; the screen offers none
+            self._messages.warning("Match change refused: %s", exc)
+            preview.show_plan(plan, keep_selection=True)
+            self.say(f"{exc} The Plan is unchanged.", MessageKind.ERROR)
+            return
+        self.plan = derived
+        preview.show_plan(derived, keep_selection=True)
+        self.say(f"{shown_as} now matches {match_name(change.match, plan.mode)}.")
+
     def action_apply(self) -> None:
         """Open the Apply confirm; only its yes applies the Plan."""
         plan = self.plan
-        if plan is None or self._applying:
+        if plan is None or self._applying or self._refuse_while_picking():
             return
         self.push_screen(ApplyConfirm(plan), self._apply_answered)
 
@@ -473,6 +688,9 @@ class TermRenamerApp(App[None]):
         if worker.name == _UNDO:
             self._undo_state_changed(event)
             return
+        if worker.name == _PICK:
+            self._pick_worker_changed(event)
+            return
         if worker.name not in (_BUILD, _APPLY):
             return
         if worker.name == _BUILD and worker is not self._build_worker:
@@ -492,6 +710,18 @@ class TermRenamerApp(App[None]):
                 self.session_settings.unlock()
             self.say(f"{what} failed: {worker.error}", MessageKind.ERROR)
             self._refresh_chrome()
+
+    def _pick_worker_changed(self, event: Worker.StateChanged) -> None:
+        pick, worker = self._pick, event.worker
+        if pick is None or worker is not pick.worker:
+            return  # an abandoned change
+        if event.state is WorkerState.SUCCESS and isinstance(worker.result, _PickOutcome):
+            self._pick_looked_up(worker.result)
+        elif event.state in (WorkerState.ERROR, WorkerState.CANCELLED):
+            self._pick_looked_up(
+                _PickOutcome(episodes=None, error=f"Lookup failed: {worker.error}")
+            )
+        self._refresh_chrome()
 
     # -------------------------------------------------------------- Applied
 
