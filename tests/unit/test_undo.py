@@ -353,8 +353,9 @@ def test_a_case_only_rename_the_disk_never_made_is_found_at_its_old_place(
 
     undone = undo_apply(outcome)
 
-    assert undone.results[0].status is ApplyStatus.RENAMED
+    assert undone.results[0].status is ApplyStatus.UNCHANGED
     assert undone.results[0].reason == "already at its old place"
+    assert (undone.put_back, undone.not_put_back) == (0, 0)
     assert undone.moves == ()
     assert os.listdir(tmp_path) == ["show name.mkv"]
 
@@ -399,10 +400,10 @@ def test_an_apply_stopped_by_an_unexpected_error_is_undone_from_its_record(
     second = show / "Disc 2" / "Show.Name.S01E02.mkv"
     real = apply_module.move_no_replace
 
-    def move(source: Path, dest: Path, changes: Changes) -> None:
+    def move(source: Path, dest: Path, changes: Changes, **kwargs: object) -> None:
         if source == second:
             raise RuntimeError("boom")
-        real(source, dest, changes)
+        real(source, dest, changes, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr(apply_module, "move_no_replace", move)
     applied = apply_plan(plan, confirmed=True)
@@ -608,3 +609,86 @@ def test_a_different_file_at_the_old_name_of_a_case_only_rename_is_left(
         "changed since Apply: its size or modification time changed",
     )
     assert undone.put_back == 0
+
+
+@pytest.mark.skipif(not WINDOWS, reason="only a Windows move looks at the old place first")
+def test_a_file_written_while_undo_looks_at_its_old_place_is_left(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    show = _show(tmp_path)
+    applied = apply_plan(_plan(show), confirmed=True)
+    notes = _season(show) / "notes.txt"
+    old = show / "Disc 1" / "notes.txt"
+    real_lstat = os.lstat
+    looks: list[bool] = []
+
+    def lstat(path: object, *args: object, **kwargs: object) -> os.stat_result:
+        # The file changes while Undo makes sure its old place is not the file itself,
+        # the look a Windows move makes before the rename.
+        if os.fspath(path) == str(old):  # type: ignore[call-overload]
+            looks.append(True)
+            notes.write_bytes(b"written as Undo looked at its old place")
+        return real_lstat(path, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(os, "lstat", lstat)
+    undone = undo_apply(applied)
+    monkeypatch.undo()
+
+    assert looks
+    assert _by_source(undone.results)[notes][0] is ApplyStatus.SKIP
+    assert notes.read_bytes() == b"written as Undo looked at its old place"
+    assert not old.exists()
+
+
+@pytest.mark.parametrize("holding", ["a file", "nothing"])
+def test_a_folder_straggler_whose_old_place_is_taken_stays_at_its_new_place(
+    tmp_path: Path, holding: str
+) -> None:
+    show = _show(tmp_path)
+    _write(show / "Disc 1" / "Subs" / "French.srt", b"fr")
+    applied = apply_plan(_plan(show), confirmed=True)
+    subs = show / "Disc 1" / "Subs"
+    moved = _season(show) / "Subs"
+    # Apply removed Subs and its emptied Disc 1; a folder is at Subs again.
+    subs.mkdir(parents=True)
+    if holding == "a file":
+        _write(subs / "Other.srt", b"other")
+
+    undone = undo_apply(applied)
+
+    taken = (ApplyStatus.SKIP, "its folder's old place is taken")
+    for name in ("English.srt", "French.srt"):
+        assert _by_source(undone.results)[moved / name] == taken
+        assert (moved / name).exists()
+    assert os.listdir(subs) == (["Other.srt"] if holding == "a file" else [])
+    assert (show / "Disc 1" / "notes.txt").read_bytes() == b"x"
+    assert subs not in undone.folders_made_again
+
+
+def test_a_file_that_changes_while_undo_copies_it_to_another_drive_is_left(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    show = _show(tmp_path)
+    applied = apply_plan(_plan(show), confirmed=True)
+    notes = _season(show) / "notes.txt"
+    real_open = os.open
+    written: list[bool] = []
+
+    def open_(path: object, flags: int, *args: object, **kwargs: object) -> int:
+        if os.fspath(path) == str(notes) and not flags & os.O_CREAT and not written:  # type: ignore[call-overload]
+            written.append(True)  # opened to be copied back: another program writes now
+            notes.write_bytes(b"written during the copy back")
+        return real_open(path, flags, *args, **kwargs)  # type: ignore[arg-type]
+
+    _to_another_drive(monkeypatch)
+    monkeypatch.setattr(os, "open", open_)
+    undone = undo_apply(applied)
+    monkeypatch.undo()
+
+    status, reason = _by_source(undone.results)[notes]
+    assert (status, "changed during the copy" in reason) == (ApplyStatus.FAIL, True)
+    assert notes.read_bytes() == b"written during the copy back"
+    old = show / "Disc 1"
+    assert not (old / "notes.txt").exists()
+    assert not [n for n in os.listdir(old) if n.startswith(".termrenamer-")]
+    assert undone.files_left_behind == ()

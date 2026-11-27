@@ -59,8 +59,9 @@ NO_TV_MATCH_BY_HAND = "Matching a not recognised TV file by hand is not availabl
 
 
 def fingerprint(path: Path) -> PlanFingerprint:
-    """The source's size and modification time, as planning records them and Apply checks."""
-    st = path.stat()
+    """The source's size and modification time, as planning records them and Apply checks;
+    a symbolic link's own, as Apply moves it as itself."""
+    st = os.lstat(path)
     return PlanFingerprint(path=path, size=st.st_size, mtime_ns=int(st.st_mtime_ns))
 
 

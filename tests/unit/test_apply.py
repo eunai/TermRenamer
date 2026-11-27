@@ -9,7 +9,7 @@ import pytest
 from conftest import plan_folder
 from termrenamer.api.tmdb import StaticTvMetadataProvider
 from termrenamer.core.apply import apply_plan
-from termrenamer.core.models import ApplyStatus, EpisodeMetadata, ScanMode
+from termrenamer.core.models import ApplyStatus, EpisodeMetadata, Plan, ScanMode
 from termrenamer.util.errors import ValidationError
 
 
@@ -48,7 +48,7 @@ def test_apply_skips_stale_source(tmp_path: Path) -> None:
     assert results[0].status is ApplyStatus.SKIP
 
 
-def test_apply_operation_order_lexical(tmp_path: Path) -> None:
+def _two_shows(tmp_path: Path) -> Plan:
     (tmp_path / "b.S01E01.mkv").write_bytes(b"b")
     (tmp_path / "a.S01E01.mkv").write_bytes(b"a")
     provider = StaticTvMetadataProvider(
@@ -57,8 +57,29 @@ def test_apply_operation_order_lexical(tmp_path: Path) -> None:
             ("a", 1, 1): EpisodeMetadata(show_title="A", episode_title="E"),
         },
     )
-    plan = plan_folder(tmp_path, ScanMode.TV, provider)
-    assert [e.source.name for e in plan.entries] == ["a.S01E01.mkv", "b.S01E01.mkv"]
+    return plan_folder(tmp_path, ScanMode.TV, provider)
+
+
+def test_apply_moves_in_source_path_order(tmp_path: Path) -> None:
+    outcome = apply_plan(_two_shows(tmp_path), confirmed=True)
+
+    assert [m.source.name for m in outcome.moves] == ["a.S01E01.mkv", "b.S01E01.mkv"]
+
+
+def test_apply_orders_by_the_plan_and_reads_no_path_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan = _two_shows(tmp_path)
+
+    def resolve(self: Path, strict: bool = False) -> Path:
+        raise RuntimeError("Apply read a path from the disk again")
+
+    monkeypatch.setattr(Path, "resolve", resolve)
+    outcome = apply_plan(plan, confirmed=True)
+    monkeypatch.undo()
+
+    assert [m.source.name for m in outcome.moves] == ["a.S01E01.mkv", "b.S01E01.mkv"]
+    assert [r.status for r in outcome.results] == [ApplyStatus.RENAMED] * 2
 
 
 def test_remove_empty_source_dirs_skips_non_empty(tmp_path: Path) -> None:

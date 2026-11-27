@@ -240,11 +240,14 @@ class Straggler:
     (a folder an entry of the Plan moves into), at the path the Plan fixed for it.
 
     ``source`` is the child as found when the Plan was built; its parent is the source
-    folder. ``destination`` is its path in the target folder.
+    folder. ``destination`` is its path in the target folder. ``is_folder`` says whether
+    it was a folder then (a symbolic link counts as a file): Apply skips it when it is
+    of the other kind at Apply.
     """
 
     source: Path
     destination: Path
+    is_folder: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -351,8 +354,10 @@ class UndoOutcome:
 
     ``results`` holds one result per move of the Apply, last move first: ``source`` is
     the file's new place and ``destination`` its old place. ``RENAMED`` means it went
-    back; ``SKIP`` that a check left it (it changed, or its old place is taken);
-    ``FAIL`` that an error left it. ``moves`` lists every move Undo made.
+    back; ``UNCHANGED`` that it was found at its old place already (a case-only rename
+    the disk may never have made), which counts neither as put back nor as left;
+    ``SKIP`` that a check left it (it changed, or its old place is taken); ``FAIL`` that
+    an error left it. ``moves`` lists every move Undo made.
     ``folders_made_again`` lists each folder Apply removed that Undo made again, each
     before the folders inside it; ``emptied_folders_removed`` each folder Apply made that
     Undo left empty and removed. ``files_left_behind`` lists each file Undo made at an old
@@ -374,4 +379,4 @@ class UndoOutcome:
     @property
     def not_put_back(self) -> int:
         """How many files Undo left at their new places."""
-        return len(self.results) - self.put_back
+        return sum(1 for r in self.results if r.status in (ApplyStatus.SKIP, ApplyStatus.FAIL))
