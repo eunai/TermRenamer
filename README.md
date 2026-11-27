@@ -53,9 +53,10 @@ backups, until you trust the results.
 
 ## Install
 
-You need [uv](https://docs.astral.sh/uv/) and a
-[TMDB API key](https://www.themoviedb.org/settings/api). TermRenamer needs
-Python 3.13 or newer. uv picks a matching Python and, by default, downloads one
+You need [uv](https://docs.astral.sh/uv/) and an API key from at least one
+provider: [TMDB](https://www.themoviedb.org/settings/api) (TV and films),
+TheTVDB (TV) or OMDb (films). One is enough. TermRenamer needs Python 3.13 or
+newer. uv picks a matching Python and, by default, downloads one
 when your machine has none.
 
 ```bash
@@ -63,7 +64,8 @@ uv tool install git+https://github.com/eunai/TermRenamer
 termrenamer
 ```
 
-Without a key, the app prints the full path of the settings file it expects.
+Without any provider key, the app exits with status 2 and prints the three key
+settings and the full path of the settings file it expects.
 See [Configure](#configure).
 
 To upgrade or remove it:
@@ -88,17 +90,23 @@ file. `TERMRENAMER_*` environment variables override both. A blank value
 (`NAME=`) counts as not set, so a value from a lower source still applies. The
 app only reads these files and never writes them.
 
-A minimal file:
+A minimal file sets one provider key, for example:
 
 ```dotenv
 TERMRENAMER_TMDB_API_KEY=...
 ```
 
+The app starts when at least one of `TERMRENAMER_TMDB_API_KEY`,
+`TERMRENAMER_TVDB_API_KEY` and `TERMRENAMER_OMDB_API_KEY` is set. A TheTVDB
+subscriber PIN alone is not a key. A provider whose key is missing is marked
+"no key" in the provider bar; building a plan with it names the setting to add
+and builds no plan.
+
 The main settings:
 
 | Setting                             | Default | Purpose                                                             |
 | ----------------------------------- | ------- | ------------------------------------------------------------------- |
-| `TERMRENAMER_TMDB_API_KEY`          | none    | TMDB key. Required to start the app.                                |
+| `TERMRENAMER_TMDB_API_KEY`          | none    | TMDB key. Needed to build a plan with TMDB.                         |
 | `TERMRENAMER_TVDB_API_KEY`          | none    | TheTVDB v4 key. Needed to build a plan with TheTVDB.                |
 | `TERMRENAMER_OMDB_API_KEY`          | none    | OMDb key. Needed to build a plan with OMDb.                         |
 | `TERMRENAMER_ENABLE_FOLDER_RENAME`  | `false` | Move files into show or film folders, not just rename the filename. |
@@ -115,7 +123,8 @@ session only.
 
 1. Run `termrenamer`.
 2. Queue sources with **+ folder** or **+ file**.
-3. Pick **TV** or **Film** and a provider.
+3. Pick **TV** or **Film** and a provider. A provider without a key is marked
+   "no key".
 4. Build the plan with **plan**.
 5. Review the preview: it shows the source and destination folder trees.
 6. Choose **apply** to rename, or **cancel** to change nothing.
@@ -163,8 +172,6 @@ Key bindings:
 
 ## Known limitations
 
-- A TMDB key is required at start-up, even if you only use TheTVDB
-  ([#3](https://github.com/eunai/TermRenamer/issues/3)).
 - `TERMRENAMER_LOG_FILE` has no effect yet
   ([#4](https://github.com/eunai/TermRenamer/issues/4)).
 - OMDb lookups are not cached

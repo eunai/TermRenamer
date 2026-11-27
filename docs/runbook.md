@@ -2,17 +2,17 @@
 
 This document complements the [README](../README.md) with practical troubleshooting. **Never commit API keys**; use the user settings file, a `.env` or your shell environment (see [`.env.example`](../.env.example)).
 
-Settings come from three sources, highest first: `TERMRENAMER_*` environment variables, a `.env` in the folder you start the app from (that folder only, no parent folders), then the **user settings file**: `%APPDATA%\termrenamer\.env` on Windows (`AppData\Roaming` in your home folder when `APPDATA` is unset or empty), `$XDG_CONFIG_HOME/termrenamer/.env` on macOS and Linux (`~/.config/termrenamer/.env` when `XDG_CONFIG_HOME` is unset, empty or relative). A start-up error about a missing key prints the user settings file's full path.
+Settings come from three sources, highest first: `TERMRENAMER_*` environment variables, a `.env` in the folder you start the app from (that folder only, no parent folders), then the **user settings file**: `%APPDATA%\termrenamer\.env` on Windows (`AppData\Roaming` in your home folder when `APPDATA` is unset or empty), `$XDG_CONFIG_HOME/termrenamer/.env` on macOS and Linux (`~/.config/termrenamer/.env` when `XDG_CONFIG_HOME` is unset, empty or relative). The app starts when at least one Provider key is set; with none, the start-up error names the three key settings and prints the user settings file's full path.
 
 ## Common failures
 
 | Symptom | Likely cause | What to check |
 |--------|----------------|----------------|
-| `TMDB API key is required` on startup (exit status 2) | `TERMRENAMER_TMDB_API_KEY` unset in every source | Copy `.env.example` to the user settings file path the message prints, set the key, restart the app; for a clone, a `.env` at the repository root works when you start from that root |
+| `No Provider API key is set` on startup (exit status 2) | None of `TERMRENAMER_TMDB_API_KEY`, `TERMRENAMER_TVDB_API_KEY` and `TERMRENAMER_OMDB_API_KEY` is set in any source (a `TERMRENAMER_TVDB_SUBSCRIBER_PIN` alone is not a key) | Copy `.env.example` to the user settings file path the message prints, set any one of the three keys, restart the app; for a clone, a `.env` at the repository root works when you start from that root |
 | A key in a clone's `.env` is not found | The app reads a `.env` only from the exact folder it starts in, and no longer searches parent folders or its own source folder | Start from the folder that holds the `.env`, or move the keys to the user settings file |
 | `Cannot read settings file` on startup (exit status 2) | The user settings file or a `.env` is unreadable or not UTF-8 | Fix the file's permissions, or save it as UTF-8 |
-| Must set TMDB key even when only using TheTVDB | `python -m termrenamer` loads settings with TMDB required by default | Set `TERMRENAMER_TMDB_API_KEY` in the user settings file or `.env` anyway (a known limitation, not a blocker) |
-| `OMDb requires an API key` | `TERMRENAMER_OMDB_API_KEY` unset when OMDb selected as film provider | Set `TERMRENAMER_OMDB_API_KEY` in the user settings file the message names (or `.env`), or use TMDB for film mode instead |
+| `TMDB requires an API key` | `TERMRENAMER_TMDB_API_KEY` unset when TMDB is the selected provider (marked "no key") | Set `TERMRENAMER_TMDB_API_KEY` in the user settings file the message names (or `.env`), or press `p` to pick a provider that has a key |
+| `OMDb requires an API key` | `TERMRENAMER_OMDB_API_KEY` unset when OMDb selected as film provider | Set `TERMRENAMER_OMDB_API_KEY` in the user settings file the message names (or `.env`), or press `p` to pick TMDB when its key is set |
 | `TheTVDB requires an API key` | `TERMRENAMER_TVDB_API_KEY` unset when TheTVDB selected as TV provider | Set `TERMRENAMER_TVDB_API_KEY` (and `TERMRENAMER_TVDB_SUBSCRIBER_PIN` if your account needs it) in the user settings file the message names (or `.env`) |
 | `ValidationError` for invalid numeric/boolean env | Bad value for `TERMRENAMER_HTTP_TIMEOUT_SECONDS`, `TERMRENAMER_HTTP_BACKOFF_BASE_SECONDS`, `TERMRENAMER_HTTP_MAX_ATTEMPTS`, or `TERMRENAMER_HTTP_JITTER` | Use numbers for timeouts/backoff/max attempts; for jitter use `true`/`false`/`1`/`0`/`yes`/`no`/`on`/`off` (see `load_settings()` in `app_bootstrap.py`) |
 | `TERMRENAMER_HTTP_MAX_ATTEMPTS must be >= 1` | Max attempts set to 0 or negative | Set to at least `1` |

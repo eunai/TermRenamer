@@ -14,7 +14,7 @@ Keep the `Unreleased` section at the top, newest entries first, and the six chan
 
 SemVer requires a declared public API. This repo's is:
 
-- The `termrenamer` console script and `python -m termrenamer`: how they start, and the exit status `2` on a settings validation error.
+- The `termrenamer` console script and `python -m termrenamer`: how they start (at least one of the TMDB, TheTVDB and OMDb keys set), and the exit status `2` on a settings validation error, which includes no Provider key set.
 - The `TERMRENAMER_*` environment variables listed in `.env.example`: their names, accepted values and defaults (API keys, HTTP timeout and retry tuning, Film and TV destination folders, `TERMRENAMER_ENABLE_FOLDER_RENAME`, `TERMRENAMER_ENABLE_SEASON_FOLDERS`, the cache path and the log file path).
 - The user settings file's location: `%APPDATA%\termrenamer\.env` on Windows (`AppData\Roaming` in the home folder when `APPDATA` is unset or empty); `$XDG_CONFIG_HOME/termrenamer/.env` everywhere else, macOS included (`~/.config` when `XDG_CONFIG_HOME` is unset, empty or relative).
 - The settings precedence, highest first: environment variables, a `.env` in the current working folder (that folder only), then the user settings file. A blank value counts as not set.
