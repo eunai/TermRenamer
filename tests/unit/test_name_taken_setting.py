@@ -5,27 +5,27 @@ from __future__ import annotations
 import pytest
 
 from termrenamer.app_bootstrap import load_settings
-from termrenamer.core.policies import CollisionPolicy
+from termrenamer.core.policies import NameTakenPolicy
 from termrenamer.util.errors import ValidationError
 
 
 def test_name_taken_adds_a_number_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TERMRENAMER_TMDB_API_KEY", "k")
 
-    assert load_settings().name_taken is CollisionPolicy.SUFFIX
+    assert load_settings().name_taken is NameTakenPolicy.SUFFIX
 
 
 @pytest.mark.parametrize(
     ("raw", "policy"),
     [
-        ("suffix", CollisionPolicy.SUFFIX),
-        ("skip", CollisionPolicy.SKIP),
-        (" Skip ", CollisionPolicy.SKIP),
-        ("", CollisionPolicy.SUFFIX),
+        ("suffix", NameTakenPolicy.SUFFIX),
+        ("skip", NameTakenPolicy.SKIP),
+        (" Skip ", NameTakenPolicy.SKIP),
+        ("", NameTakenPolicy.SUFFIX),
     ],
 )
 def test_name_taken_takes_suffix_or_skip(
-    raw: str, policy: CollisionPolicy, monkeypatch: pytest.MonkeyPatch
+    raw: str, policy: NameTakenPolicy, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("TERMRENAMER_TMDB_API_KEY", "k")
     monkeypatch.setenv("TERMRENAMER_NAME_TAKEN", raw)

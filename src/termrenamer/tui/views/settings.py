@@ -22,7 +22,7 @@ from textual.widgets import Input, Static, Switch
 
 from termrenamer.app_bootstrap import ThemeName
 from termrenamer.core.models import ScanMode
-from termrenamer.core.policies import CollisionPolicy
+from termrenamer.core.policies import NameTakenPolicy
 from termrenamer.session_settings import SessionSettings
 from termrenamer.tui.keys import VIEW_HINTS
 from termrenamer.tui.widgets.action_button import ActionButton
@@ -324,7 +324,7 @@ class SettingsView(Screen[None]):
     @on(Choice.Switched, "#name-taken")
     def _name_taken_switched(self, event: Choice.Switched) -> None:
         value = event.choice.value
-        assert isinstance(value, CollisionPolicy)
+        assert isinstance(value, NameTakenPolicy)
         self._switch(event.choice, "Name taken", lambda: self._owner.set_name_taken(value))
 
     @on(Choice.Switched, "#theme")

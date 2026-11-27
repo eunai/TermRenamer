@@ -175,9 +175,9 @@ Keys:
   what happens: `suffix`, the default, adds a number such as ` (1)`; `skip`
   leaves the file, and its Sidecars, where they are. A Sidecar whose own name
   is taken is skipped alone under `skip` while its video moves. The footer says
-  what will happen to the selected title's first video when its name is taken.
+  what will happen to the selected Title's first video when its name is taken.
   The Apply confirm counts the skipped videos and lists each Sidecar skipped
-  while its video moves; the Applied stage lists every skipped file with its
+  while its video moves; the Applied Stage lists every skipped file with its
   reason. If a file or folder appears at a destination after the preview, apply
   skips that entry. Nothing is ever overwritten.
 - **Folder layouts.** With folder rename on, files move into show or film

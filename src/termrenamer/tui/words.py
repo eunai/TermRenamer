@@ -48,8 +48,13 @@ def name_taken_note(entry: PlanEntry) -> str | None:
     With a numbered name (Name taken set to ``suffix``) it is renamed to that name;
     without one (``skip``) Apply skips it.
     """
-    if entry.status is not EntryStatus.NAME_TAKEN:
-        return None
-    if entry.destination is None:
+    if entry.skipped_for_name_taken:
         return "Name taken: Apply skips it, and it stays where it is."
+    if entry.status is not EntryStatus.NAME_TAKEN or entry.destination is None:
+        return None
     return f"Name taken: it gets a number, as {entry.destination.name}."
+
+
+def sidecar_skipped(source: PurePath, reason: str) -> str:
+    """The line for a Sidecar skipped while its video moves, in the confirm and after Apply."""
+    return f"Sidecar skipped: {source.name} · {reason}"

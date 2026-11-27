@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from termrenamer.core.policies import CollisionPolicy
+from termrenamer.core.policies import NameTakenPolicy
 
 
-def test_collision_policy_values() -> None:
-    assert CollisionPolicy.SUFFIX.value == "suffix"
-    assert CollisionPolicy.SKIP.value == "skip"
+def test_name_taken_policy_values() -> None:
+    assert NameTakenPolicy.SUFFIX.value == "suffix"
+    assert NameTakenPolicy.SKIP.value == "skip"

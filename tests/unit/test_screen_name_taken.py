@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from termrenamer.core.policies import CollisionPolicy
+from termrenamer.core.policies import NameTakenPolicy
 from termrenamer.tui.dialogs import ApplyConfirm
 from termrenamer.tui.stage import Stage
 
@@ -42,7 +42,7 @@ def backups_with_taken_names(parent: Path) -> Path:
 
 async def test_under_suffix_the_footer_says_the_file_gets_a_number(tmp_path: Path) -> None:
     folder = backups_with_taken_names(tmp_path)
-    app = make_app(loaded=settings(name_taken=CollisionPolicy.SUFFIX))
+    app = make_app(loaded=settings(name_taken=NameTakenPolicy.SUFFIX))
     async with app.run_test(size=SIZE) as pilot:
         await queue(pilot, folder)
         await build(pilot)
@@ -55,7 +55,7 @@ async def test_under_suffix_the_footer_says_the_file_gets_a_number(tmp_path: Pat
 
 async def test_under_skip_the_footer_says_apply_skips_the_file(tmp_path: Path) -> None:
     folder = backups_with_taken_names(tmp_path)
-    app = make_app(loaded=settings(name_taken=CollisionPolicy.SKIP))
+    app = make_app(loaded=settings(name_taken=NameTakenPolicy.SKIP))
     async with app.run_test(size=SIZE) as pilot:
         await queue(pilot, folder)
         await build(pilot)
@@ -70,7 +70,7 @@ async def test_under_skip_the_confirm_and_the_applied_stage_list_the_skipped_fil
     tmp_path: Path,
 ) -> None:
     folder = backups_with_taken_names(tmp_path)
-    app = make_app(loaded=settings(name_taken=CollisionPolicy.SKIP))
+    app = make_app(loaded=settings(name_taken=NameTakenPolicy.SKIP))
     async with app.run_test(size=SIZE) as pilot:
         await queue(pilot, folder)
         await build(pilot)
@@ -114,7 +114,7 @@ async def test_under_skip_the_confirm_and_the_applied_stage_list_the_skipped_fil
 
 async def test_under_suffix_every_file_is_renamed_with_its_number(tmp_path: Path) -> None:
     folder = backups_with_taken_names(tmp_path)
-    app = make_app(loaded=settings(name_taken=CollisionPolicy.SUFFIX))
+    app = make_app(loaded=settings(name_taken=NameTakenPolicy.SUFFIX))
     async with app.run_test(size=SIZE) as pilot:
         await queue(pilot, folder)
         await build(pilot)

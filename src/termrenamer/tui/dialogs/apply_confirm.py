@@ -15,7 +15,9 @@ from textual.markup import escape
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
+from termrenamer.core.models import PlanEntry
 from termrenamer.tui.widgets.action_button import ActionButton
+from termrenamer.tui.words import sidecar_skipped
 
 
 class ApplyConfirm(ModalScreen[bool]):
@@ -66,10 +68,10 @@ class ApplyConfirm(ModalScreen[bool]):
         no_match: int,
         not_recognised: int,
         name_taken: int = 0,
-        sidecars: Sequence[tuple[str, str]] = (),
+        sidecars: Sequence[PlanEntry] = (),
     ) -> None:
         """``name_taken`` counts the videos skipped for a taken name; ``sidecars`` names
-        each Sidecar skipped while its video moves, with the reason."""
+        each Sidecar skipped while its video moves; its status is the reason."""
         super().__init__()
         self._videos = videos
         self._under = under
@@ -81,8 +83,8 @@ class ApplyConfirm(ModalScreen[bool]):
     def compose(self) -> ComposeResult:
         noun = "video" if self._videos == 1 else "videos"
         sidecars = "".join(
-            f"[$tr-dim]Sidecar skipped: {escape(name)} · {escape(reason)}[/]\n"
-            for name, reason in self._sidecars
+            f"[$tr-dim]{escape(sidecar_skipped(e.source, e.status.value))}[/]\n"
+            for e in self._sidecars
         )
         with Vertical(id="confirm-dialog"):
             yield Static(

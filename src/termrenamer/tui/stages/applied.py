@@ -13,6 +13,7 @@ from termrenamer.core.models import ApplyResult, Plan
 from termrenamer.core.title_rows import AppliedCounts, skipped_results
 from termrenamer.tui.stages.base import StageView
 from termrenamer.tui.widgets.action_button import ActionButton
+from termrenamer.tui.words import sidecar_skipped
 
 
 class AppliedStage(StageView):
@@ -73,7 +74,7 @@ class AppliedStage(StageView):
         self.query_one("#applied-counts", Static).update(line)
         videos, sidecars = skipped_results(plan, results)
         skipped = [f"{r.source.name} · {r.reason}" for r in videos]
-        skipped += [f"Sidecar skipped: {r.source.name} · {r.reason}" for r in sidecars]
+        skipped += [sidecar_skipped(r.source, r.reason) for r in sidecars]
         self.query_one("#applied-skipped", Static).update(escape("\n".join(skipped)))
         self.query_one("#applied-title", Static).update(
             "The Plan is applied." + ("" if counts.failed else " Nothing failed.")

@@ -12,7 +12,7 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
-from termrenamer.core.policies import CollisionPolicy
+from termrenamer.core.policies import NameTakenPolicy
 from termrenamer.persistence.cache import SqliteMetadataCache
 from termrenamer.util.errors import ValidationError
 from termrenamer.util.http import HttpClient, HttpClientConfig
@@ -47,7 +47,7 @@ class Settings:
     enable_folder_rename: bool
     enable_season_folders: bool
     theme: ThemeName = ThemeName.DARK
-    name_taken: CollisionPolicy = CollisionPolicy.SUFFIX
+    name_taken: NameTakenPolicy = NameTakenPolicy.SUFFIX
 
     @property
     def has_tmdb_credentials(self) -> bool:
@@ -108,12 +108,12 @@ def _read_theme(env: Mapping[str, str]) -> ThemeName:
         raise ValidationError(msg) from exc
 
 
-def _read_name_taken(env: Mapping[str, str]) -> CollisionPolicy:
+def _read_name_taken(env: Mapping[str, str]) -> NameTakenPolicy:
     raw = env.get("TERMRENAMER_NAME_TAKEN")
     if raw is None or raw.strip() == "":
-        return CollisionPolicy.SUFFIX
+        return NameTakenPolicy.SUFFIX
     try:
-        return CollisionPolicy(raw.strip().lower())
+        return NameTakenPolicy(raw.strip().lower())
     except ValueError as exc:
         msg = "Invalid value for TERMRENAMER_NAME_TAKEN (use suffix or skip)"
         raise ValidationError(msg) from exc

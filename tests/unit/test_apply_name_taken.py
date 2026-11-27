@@ -17,13 +17,13 @@ from termrenamer.core.models import (
     ScanMode,
 )
 from termrenamer.core.planning import plan_queue
-from termrenamer.core.policies import CollisionPolicy
+from termrenamer.core.policies import NameTakenPolicy
 from termrenamer.util.errors import ValidationError
 
 PILOT = "Show Name - S01E01 - Pilot"
 
 
-def _plan(sources: list[Path], policy: CollisionPolicy) -> Plan:
+def _plan(sources: list[Path], policy: NameTakenPolicy) -> Plan:
     provider = StaticTvMetadataProvider(
         _mapping={
             ("show name", 1, 1): EpisodeMetadata(show_title="Show Name", episode_title="Pilot"),
@@ -60,7 +60,7 @@ def test_under_suffix_a_taken_name_is_applied_with_its_number(tmp_path: Path) ->
     video = _taken_folder(tmp_path)
     folder = video.parent
 
-    results = apply_plan(_plan([video], CollisionPolicy.SUFFIX), confirmed=True)
+    results = apply_plan(_plan([video], NameTakenPolicy.SUFFIX), confirmed=True)
 
     assert _by_name(results) == {
         "Show.Name.S01E01.mkv": (ApplyStatus.RENAMED, "ok"),
@@ -79,7 +79,7 @@ def test_under_skip_a_taken_name_and_its_sidecar_are_skipped_as_name_taken(
     video = _taken_folder(tmp_path)
     folder = video.parent
 
-    results = apply_plan(_plan([video], CollisionPolicy.SKIP), confirmed=True)
+    results = apply_plan(_plan([video], NameTakenPolicy.SKIP), confirmed=True)
 
     assert _by_name(results) == {
         "Show.Name.S01E01.mkv": (ApplyStatus.SKIP, "name taken"),
@@ -100,7 +100,7 @@ def test_under_skip_a_sidecar_whose_own_name_is_taken_stays_while_its_video_move
     (tmp_path / f"{PILOT}.srt").write_bytes(b"old subs")
 
     results = apply_plan(
-        _plan([tmp_path / "Show.Name.S01E01.mkv"], CollisionPolicy.SKIP), confirmed=True
+        _plan([tmp_path / "Show.Name.S01E01.mkv"], NameTakenPolicy.SKIP), confirmed=True
     )
 
     assert _by_name(results) == {
@@ -114,9 +114,9 @@ def test_under_skip_a_sidecar_whose_own_name_is_taken_stays_while_its_video_move
     }
 
 
-@pytest.mark.parametrize("policy", list(CollisionPolicy))
+@pytest.mark.parametrize("policy", list(NameTakenPolicy))
 def test_nothing_is_renamed_before_the_confirmation(
-    tmp_path: Path, policy: CollisionPolicy
+    tmp_path: Path, policy: NameTakenPolicy
 ) -> None:
     video = _taken_folder(tmp_path)
     folder = video.parent
@@ -129,9 +129,9 @@ def test_nothing_is_renamed_before_the_confirmation(
     assert _contents(folder) == before
 
 
-@pytest.mark.parametrize("policy", list(CollisionPolicy))
+@pytest.mark.parametrize("policy", list(NameTakenPolicy))
 def test_a_name_taken_after_the_preview_is_never_overwritten(
-    tmp_path: Path, policy: CollisionPolicy
+    tmp_path: Path, policy: NameTakenPolicy
 ) -> None:
     (tmp_path / "Show.Name.S01E01.mkv").write_bytes(b"new")
     plan = _plan([tmp_path / "Show.Name.S01E01.mkv"], policy)
@@ -154,7 +154,7 @@ def test_the_plan_is_applied_as_previewed_whatever_the_name_on_disk_does_later(
     """A Plan built under ``skip`` keeps its skip after the taken name is freed."""
     video = _taken_folder(tmp_path)
     folder = video.parent
-    plan = _plan([video], CollisionPolicy.SKIP)
+    plan = _plan([video], NameTakenPolicy.SKIP)
     (folder / f"{PILOT}.mkv").unlink()
 
     results = apply_plan(plan, confirmed=True)

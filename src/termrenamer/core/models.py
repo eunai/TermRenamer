@@ -8,7 +8,7 @@ from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
 
-from termrenamer.core.policies import CollisionPolicy
+from termrenamer.core.policies import NameTakenPolicy
 
 
 class ScanMode(StrEnum):
@@ -146,7 +146,7 @@ class PlanOptions:
     destination_root: Path | None
     folder_rename: bool
     season_folders: bool
-    name_taken: CollisionPolicy = CollisionPolicy.SUFFIX
+    name_taken: NameTakenPolicy = NameTakenPolicy.SUFFIX
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,6 +195,11 @@ class PlanEntry:
     @property
     def is_sidecar(self) -> bool:
         return self.video is not None
+
+    @property
+    def skipped_for_name_taken(self) -> bool:
+        """Whether its name is taken and it is not applied (Name taken set to ``skip``)."""
+        return self.status is EntryStatus.NAME_TAKEN and self.destination is None
 
 
 @dataclass(frozen=True, slots=True)

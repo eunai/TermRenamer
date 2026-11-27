@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from termrenamer.core.policies import CollisionPolicy
+from termrenamer.core.policies import NameTakenPolicy
 
 
 def _same_entry(source: Path, path: Path) -> bool:
@@ -69,7 +69,7 @@ def claim_name(
     *,
     source: Path,
     occupied: set[Path],
-    policy: CollisionPolicy,
+    policy: NameTakenPolicy,
 ) -> Path | None:
     """Claim ``desired`` for ``source``, or by ``policy`` a numbered name or none.
 
@@ -77,7 +77,7 @@ def claim_name(
     (it is in ``occupied``). Under ``SUFFIX`` a taken name gives way to the first free
     numbered name; under ``SKIP`` nothing is claimed and ``None`` is returned.
     """
-    if policy is CollisionPolicy.SKIP and (
+    if policy is NameTakenPolicy.SKIP and (
         desired in occupied or name_is_taken(desired, source=source)
     ):
         return None

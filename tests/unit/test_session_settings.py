@@ -62,46 +62,30 @@ def test_season_folder_loaded_on_while_folder_rename_is_off_starts_off() -> None
 
 
 def test_name_taken_starts_as_loaded_and_goes_into_the_plan_options() -> None:
-    from termrenamer.app_bootstrap import Settings
-    from termrenamer.core.policies import CollisionPolicy
+    from termrenamer.core.policies import NameTakenPolicy
 
-    assert SessionSettings(None).plan_options().name_taken is CollisionPolicy.SUFFIX
-    loaded = Settings(
-        tmdb_api_key="k",
-        tvdb_api_key=None,
-        tvdb_subscriber_pin=None,
-        omdb_api_key=None,
-        http_timeout_seconds=1.0,
-        http_max_attempts=1,
-        http_backoff_base_seconds=0.0,
-        http_jitter=False,
-        cache_db_path=None,
-        log_file_path=None,
-        film_dest_folder=None,
-        tv_dest_folder=None,
-        enable_folder_rename=False,
-        enable_season_folders=False,
-        name_taken=CollisionPolicy.SKIP,
-    )
-    owner = SessionSettings(loaded)
-    assert owner.name_taken is CollisionPolicy.SKIP
-    assert owner.plan_options().name_taken is CollisionPolicy.SKIP
+    from .screen_driver import settings
+
+    assert SessionSettings(None).plan_options().name_taken is NameTakenPolicy.SUFFIX
+    owner = SessionSettings(settings(name_taken=NameTakenPolicy.SKIP))
+    assert owner.name_taken is NameTakenPolicy.SKIP
+    assert owner.plan_options().name_taken is NameTakenPolicy.SKIP
 
 
 def test_a_name_taken_change_is_reported_and_refused_while_locked() -> None:
-    from termrenamer.core.policies import CollisionPolicy
+    from termrenamer.core.policies import NameTakenPolicy
 
     owner = SessionSettings(None)
     heard: list[str] = []
     owner.add_listener(heard.append)
 
-    assert owner.set_name_taken(CollisionPolicy.SUFFIX) is False
-    assert owner.set_name_taken(CollisionPolicy.SKIP) is True
+    assert owner.set_name_taken(NameTakenPolicy.SUFFIX) is False
+    assert owner.set_name_taken(NameTakenPolicy.SKIP) is True
     assert heard == ["Name taken"]
-    assert owner.plan_options().name_taken is CollisionPolicy.SKIP
+    assert owner.plan_options().name_taken is NameTakenPolicy.SKIP
 
     owner.lock()
     with pytest.raises(SettingsLockedError):
-        owner.set_name_taken(CollisionPolicy.SUFFIX)
-    assert owner.name_taken is CollisionPolicy.SKIP
+        owner.set_name_taken(NameTakenPolicy.SUFFIX)
+    assert owner.name_taken is NameTakenPolicy.SKIP
     assert heard == ["Name taken"]

@@ -12,7 +12,7 @@ from pathlib import Path
 
 from termrenamer.app_bootstrap import Settings, ThemeName
 from termrenamer.core.models import PROVIDER_IDS, PlanOptions, ScanMode
-from termrenamer.core.policies import CollisionPolicy
+from termrenamer.core.policies import NameTakenPolicy
 from termrenamer.util.errors import ValidationError
 
 PlanSettingListener = Callable[[str], None]
@@ -66,7 +66,7 @@ class SessionSettings:
         self._season_folders = self._folder_rename and (
             loaded.enable_season_folders if loaded is not None else False
         )
-        self._name_taken = loaded.name_taken if loaded is not None else CollisionPolicy.SUFFIX
+        self._name_taken = loaded.name_taken if loaded is not None else NameTakenPolicy.SUFFIX
         self._locked = False
         self._listeners: list[PlanSettingListener] = []
 
@@ -89,7 +89,7 @@ class SessionSettings:
         return self._season_folders
 
     @property
-    def name_taken(self) -> CollisionPolicy:
+    def name_taken(self) -> NameTakenPolicy:
         return self._name_taken
 
     @property
@@ -211,7 +211,7 @@ class SessionSettings:
             raise ValidationError(msg)
         return self._set("Season folder", "_season_folders", value)
 
-    def set_name_taken(self, policy: CollisionPolicy) -> bool:
+    def set_name_taken(self, policy: NameTakenPolicy) -> bool:
         """Set Name taken (add a number, or skip the file); return whether it changed."""
         return self._set("Name taken", "_name_taken", policy)
 

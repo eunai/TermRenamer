@@ -21,7 +21,7 @@ from textual_fspicker.parts import DirectoryNavigation
 
 from termrenamer.app_bootstrap import Settings, ThemeName
 from termrenamer.core.models import Candidate
-from termrenamer.core.policies import CollisionPolicy
+from termrenamer.core.policies import NameTakenPolicy
 from termrenamer.tui.app import TermRenamerApp
 from termrenamer.wiring import PlanningWiring
 
@@ -110,7 +110,7 @@ def settings(
     tv_root: Path | None = None,
     film_root: Path | None = None,
     theme: ThemeName = ThemeName.DARK,
-    name_taken: CollisionPolicy = CollisionPolicy.SUFFIX,
+    name_taken: NameTakenPolicy = NameTakenPolicy.SUFFIX,
 ) -> Settings:
     return Settings(
         tmdb_api_key=None,

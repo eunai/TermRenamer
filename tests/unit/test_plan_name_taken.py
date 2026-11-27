@@ -13,7 +13,7 @@ import pytest
 
 from termrenamer.core.models import Candidate, EntryStatus, Plan, PlanEntry, PlanOptions, ScanMode
 from termrenamer.core.planning import plan_queue
-from termrenamer.core.policies import CollisionPolicy
+from termrenamer.core.policies import NameTakenPolicy
 
 PILOT = "Show Name - S01E01 - Pilot"
 
@@ -39,9 +39,7 @@ def _show_name() -> TvStandIn:
     )
 
 
-def _options(
-    policy: CollisionPolicy | None, *, library: Path | None = None, **kwargs: object
-) -> PlanOptions:
+def _options(policy: NameTakenPolicy | None, *, library: Path | None = None) -> PlanOptions:
     values: dict[str, object] = {
         "mode": ScanMode.TV,
         "provider_id": "tmdb",
@@ -51,7 +49,6 @@ def _options(
     }
     if policy is not None:
         values["name_taken"] = policy
-    values.update(kwargs)
     return PlanOptions(**values)  # type: ignore[arg-type]
 
 
@@ -87,9 +84,9 @@ def test_suffix_is_the_default_and_gives_the_numbered_names_of_today(tmp_path: P
     queue = _two_discs(tmp_path)
 
     default = plan_queue(queue, _options(None, library=library), _show_name()).plan
-    suffix = plan_queue(queue, _options(CollisionPolicy.SUFFIX, library=library), _show_name()).plan
+    suffix = plan_queue(queue, _options(NameTakenPolicy.SUFFIX, library=library), _show_name()).plan
 
-    assert default.options.name_taken is CollisionPolicy.SUFFIX
+    assert default.options.name_taken is NameTakenPolicy.SUFFIX
     assert (
         _summary(default)
         == _summary(suffix)
@@ -110,9 +107,9 @@ def test_under_skip_a_name_taken_on_disk_leaves_the_video_and_its_sidecar_unappl
     (library / "Show Name" / f"{PILOT}.mkv").write_bytes(b"already there")
     queue = _two_discs(tmp_path)
 
-    plan = plan_queue(queue, _options(CollisionPolicy.SKIP, library=library), _show_name()).plan
+    plan = plan_queue(queue, _options(NameTakenPolicy.SKIP, library=library), _show_name()).plan
 
-    assert plan.options.name_taken is CollisionPolicy.SKIP
+    assert plan.options.name_taken is NameTakenPolicy.SKIP
     assert _summary(plan) == [
         ("Disc A", "Show.Name.S01E01.mkv", None, EntryStatus.NAME_TAKEN),
         ("Disc A", "Show.Name.S01E01.srt", None, EntryStatus.NAME_TAKEN),
@@ -125,7 +122,7 @@ def test_under_skip_the_first_entry_in_source_path_order_claims_the_name(tmp_pat
     library = tmp_path / "Library"
     queue = _two_discs(tmp_path)
 
-    plan = plan_queue(queue, _options(CollisionPolicy.SKIP, library=library), _show_name()).plan
+    plan = plan_queue(queue, _options(NameTakenPolicy.SKIP, library=library), _show_name()).plan
 
     assert _summary(plan) == [
         ("Disc A", "Show.Name.S01E01.mkv", f"{PILOT}.mkv", EntryStatus.READY),
@@ -141,7 +138,7 @@ def test_under_skip_a_sidecar_whose_own_name_is_taken_is_skipped_alone(tmp_path:
     (tmp_path / "Show.Name.S01E01.nfo").write_text("n", encoding="utf-8")
     (tmp_path / f"{PILOT}.srt").write_text("old", encoding="utf-8")
 
-    plan = plan_queue([tmp_path], _options(CollisionPolicy.SKIP), _show_name()).plan
+    plan = plan_queue([tmp_path], _options(NameTakenPolicy.SKIP), _show_name()).plan
 
     root = tmp_path.resolve()
     entries = _by_name(plan)
@@ -156,7 +153,7 @@ def test_under_skip_a_sidecar_whose_own_name_is_taken_is_skipped_alone(tmp_path:
 def test_a_file_already_at_its_name_is_not_taken_by_itself_under_skip(tmp_path: Path) -> None:
     (tmp_path / f"{PILOT}.mkv").write_bytes(b"a")
 
-    plan = plan_queue([tmp_path], _options(CollisionPolicy.SKIP), _show_name()).plan
+    plan = plan_queue([tmp_path], _options(NameTakenPolicy.SKIP), _show_name()).plan
 
     [entry] = plan.entries
     assert (entry.destination, entry.status) == (entry.source, EntryStatus.READY)
@@ -168,7 +165,7 @@ def test_under_skip_a_broken_link_at_the_wanted_name_counts_as_taken(tmp_path: P
     (tmp_path / f"{PILOT}.mkv").symlink_to(tmp_path / "gone.mkv")
 
     plan = plan_queue(
-        [tmp_path / "Show.Name.S01E01.mkv"], _options(CollisionPolicy.SKIP), _show_name()
+        [tmp_path / "Show.Name.S01E01.mkv"], _options(NameTakenPolicy.SKIP), _show_name()
     ).plan
 
     [entry] = plan.entries
