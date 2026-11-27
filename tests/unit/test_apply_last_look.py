@@ -465,3 +465,66 @@ def test_a_link_the_plan_found_whose_own_target_is_pointed_elsewhere_is_never_en
     video = show / "Disc 1" / "Show.Name.S01E01.mkv"
     assert _by_source(outcome.results)[video] == _no_longer(tmp_path / "Library" / "Show Name")
     assert os.listdir(disk_a) == [] and os.listdir(disk_b) == []
+
+
+def _one_video_into(tmp_path: Path, root: Path) -> tuple[Path, Plan]:
+    """A video planned into the Destination root ``root``."""
+    video = _write(tmp_path / "Backups" / "Show.Name.S01E01.mkv")
+    return video, plan_queue([video], _options(destination_root=root), _provider()).plan
+
+
+def test_a_destination_root_made_a_link_after_the_preview_is_never_entered(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "Library"
+    root.mkdir()
+    elsewhere = tmp_path / "External"
+    elsewhere.mkdir()
+    video, plan = _one_video_into(tmp_path, root)
+    root.rename(tmp_path / "Old Library")
+    point_folder_at(root, elsewhere)
+
+    outcome = apply_plan(plan, confirmed=True)
+
+    assert _by_source(outcome.results)[video] == _now_a_link(root)
+    assert video.read_bytes() == b"x"
+    assert os.listdir(elsewhere) == []
+    assert outcome.moves == () and outcome.folders_created == ()
+
+
+def test_a_destination_root_that_was_a_link_when_the_plan_was_built_is_gone_through(
+    tmp_path: Path,
+) -> None:
+    elsewhere = tmp_path / "External"
+    elsewhere.mkdir()
+    root = tmp_path / "Library"
+    point_folder_at(root, elsewhere)
+    video, plan = _one_video_into(tmp_path, root)
+    [dest] = [e.destination for e in plan.entries]
+    assert dest is not None
+
+    outcome = apply_plan(plan, confirmed=True)
+
+    assert _by_source(outcome.results)[video] == (ApplyStatus.RENAMED, "ok")
+    assert (elsewhere / dest.relative_to(root)).read_bytes() == b"x"
+
+
+def test_a_destination_root_link_pointed_elsewhere_after_the_preview_is_never_entered(
+    tmp_path: Path,
+) -> None:
+    disk_a = tmp_path / "Disk A"
+    disk_b = tmp_path / "Disk B"
+    disk_a.mkdir()
+    disk_b.mkdir()
+    root = tmp_path / "Library"
+    point_folder_at(root, disk_a)
+    video, plan = _one_video_into(tmp_path, root)
+    _unpoint(root)
+    point_folder_at(root, disk_b)
+
+    outcome = apply_plan(plan, confirmed=True)
+
+    assert _by_source(outcome.results)[video] == _no_longer(root)
+    assert video.read_bytes() == b"x"
+    assert os.listdir(disk_a) == [] and os.listdir(disk_b) == []
+

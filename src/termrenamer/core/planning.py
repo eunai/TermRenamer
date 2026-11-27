@@ -603,10 +603,16 @@ def _claimed_status(final: Path | None, wanted: Path) -> EntryStatus:
 
 
 def folders_on_the_way(options: PlanOptions, root: Path, dest: Path) -> list[Path]:
-    """Each folder a move to ``dest`` goes through that Apply may make or must check:
-    from below the Destination root (or, with none, ``root``, the owning Source's
-    folder) to ``dest``'s folder, by the recorded text."""
-    return folders_between(options.destination_root or root, dest.parent)
+    """Each folder a move to ``dest`` goes through that Apply may make or must check, by
+    the recorded text: the Destination root and each folder below it to ``dest``'s
+    folder, or, with no Destination root, each folder from below ``root`` (the owning
+    Source's folder, which Apply checks on the side of the source) to ``dest``'s
+    folder."""
+    top = options.destination_root
+    if top is None:
+        return folders_between(root, dest.parent)
+    below = folders_between(top, dest.parent)
+    return [top, *below] if dest.parent.is_relative_to(top) else below
 
 
 def source_roots(entries: Iterable[PlanEntry]) -> dict[str, Path]:
