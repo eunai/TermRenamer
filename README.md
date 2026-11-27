@@ -172,7 +172,8 @@ the current session only, and the app never writes the user settings file.
    new batch with an empty queue.
 
 `l` shows the Logs and `?` lists the keys. A button on the screen shows its key,
-and clicking it does what the key does.
+and clicking it does what the key does. Clicking a row of the Queue's Sources, of
+the Plan's Titles or of the Preview's Titles selects it, as `↑` `↓` do.
 
 Keys:
 
@@ -185,7 +186,7 @@ Keys:
 | `↑` `↓` | Queue                                 | Select a Source                                                     |
 | `↑` `↓` | Plan, Preview                         | Select a Title                                                      |
 | `←` `→` | Preview                               | Select a file of the Title                                          |
-| `t`     | Preview                               | Open the Match picker (`↑` `↓`, `1` to `3`, `Enter`, `/` to type, `Esc`) |
+| `t`     | Preview                               | Open the Match picker (`←` `→` or `↑` `↓`, `1` to `3`, `Enter`, `/` to type, `Esc`) |
 | `x`     | Preview                               | Leave the selected file out, or put it back                         |
 | `Enter` | Preview                               | Apply, then `y` or `Enter` to confirm, `n` or `Esc` to go back      |
 | `Esc`   | Plan                                  | Cancel the build                                                    |
@@ -210,6 +211,10 @@ Apply and Undo confirms, the Match picker, the file and folder dialogs).
 
 - **Four Stages on one screen.** Queue, Plan, Preview and Applied, with a row
   that marks the current one and a footer that lists the keys that work now.
+  While an Apply or an Undo runs, it lists none that refuse meanwhile. When it
+  is too narrow for every hint, it drops Poster, Logs, Provider, Mode, Settings
+  and Quit first, in that order, then the selection keys, then the Stage's own
+  keys from the last; `? Help` stays.
 - **Plan, Preview, then Apply.** No rename runs until you confirm. The Apply
   confirm counts the videos renamed and skipped, names each Sidecar skipped
   while its video moves, and says that nothing has been renamed yet.
@@ -220,7 +225,9 @@ Apply and Undo confirms, the Match picker, the file and folder dialogs).
   searched, with its subfolders, for `.mkv`, `.mp4`, `.avi`, `.webm` and `.m4v`
   videos. A folder and a file inside it can both be queued: the file is planned
   once. A queued file or folder that has gone is reported in the Logs and the
-  rest of the queue is planned.
+  rest of the queue is planned. The search never enters a symbolic link or a
+  Windows junction to a folder, so no video behind one is planned; a video that
+  is a symbolic link is planned and renamed as the link.
 - **A Plan you can watch and cancel.** While the Plan is built, each Title is
   listed as waiting, looking up, found or no match, and a strip shows how many
   files are looked up, the matched and unmatched counts and the lookups per
@@ -231,25 +238,31 @@ Apply and Undo confirms, the Match picker, the file and folder dialogs).
   summary counts the videos by status. Names and paths are shown as written,
   square brackets and backslashes included.
 - **Pick a different Match.** `t` opens the Match picker: the current Match, the
-  Provider's next Candidate and "Type a title". Typing searches the Provider
-  again; a four-digit year at the end of the text is the year. A pick for a
-  film renames its files from the Candidate's title and year. A pick for a show
-  looks its episode titles up again, and `Esc` abandons it. A not recognised
-  film can be matched this way; a not recognised TV file cannot yet
+  Provider's next Candidate and "Type a title". While Posters show, it is a wide
+  dialog of three tiles side by side, each Candidate's Poster with its name,
+  year and key under it, and the typing field in the third tile; otherwise it is
+  a plain list. `←` `→` or `↑` `↓` move, `1` to `3` or `Enter` choose, `/` goes
+  to typing and `Esc` closes it with nothing changed. Typing searches the
+  Provider again; a four-digit year at the end of the text is the year. A pick
+  for a film renames its files from the Candidate's title and year. A pick for a
+  show looks its episode titles up again, and `Esc` abandons it. A not
+  recognised film can be matched this way; a not recognised TV file cannot yet
   ([#14](https://github.com/eunai/TermRenamer/issues/14)). A pick holds for this
   Plan only: build the Plan again and it starts afresh.
-- **Leave a file out.** `x` leaves a video, with its Sidecars, out of the Plan.
-  Apply does not touch it, and it is reported as left out, not as skipped. Every
-  new name is worked out again, so a name that only that file had taken is free
-  for the next one.
+- **Leave a file out.** `x` leaves a video, with its Sidecars, out of the Plan;
+  any video can be left out, one with no match or not recognised too, and it
+  stays left out when it is given a Match. Apply does not touch it, and it is
+  reported as left out, not as skipped. Every new name is worked out again, so a
+  name that only that file had taken is free for the next one.
 - **Undo.** After Apply, `u` puts the last Apply back: files, Sidecars and
-  Stragglers, and the folders Apply removed, last move first. It never replaces
-  anything. A file goes back only if it is still at its new place with the size
-  and modification time Apply recorded and its old name is free; the Logs say
-  why any other file stayed. Undo is offered once for each Apply, and only when
-  that Apply moved a file or removed a folder. The record is kept in memory, so
-  it is gone when you start a new batch or quit. After Undo the Queue Stage
-  shows the same Sources.
+  Stragglers, and the folders Apply removed, last move first, and it removes a
+  folder Apply made when Undo leaves it empty. It never replaces anything. A
+  file goes back only if it is still at its new place with the size and
+  modification time Apply recorded and its old name is free; the Logs say why
+  any other file stayed. Undo is offered once for each Apply, and only when that
+  Apply moved a file, removed a folder or made one. The record is kept in
+  memory, so it is gone when you start a new batch or quit. After Undo the Queue
+  Stage shows the same Sources.
 - **Name taken.** When a new name is already used, by something at that path
   or by an earlier file of the same Plan, the file is marked "name taken". The
   Name taken setting (`TERMRENAMER_NAME_TAKEN`, or the Settings screen) decides
@@ -275,12 +288,16 @@ Apply and Undo confirms, the Match picker, the file and folder dialogs).
   ignoring case. A Sidecar moves only if its video does.
 - **Safe moves.** Apply claims each new name with the move itself, so nothing
   that appears at a name while Apply runs is replaced. A symbolic link or
-  junction to a folder is moved as itself, and Apply never enters it. Where a
-  file cannot be moved by a rename or a hard link (another drive, exFAT, many
+  junction to a folder is moved as itself, and Apply never enters it. Apply goes
+  through a folder that was a symbolic link or junction when the Plan was built
+  only while it is that same link, leading to the same folder; a folder that
+  became a link after the Plan was built is not entered, and its files are
+  skipped or fail with that reason. Where a file cannot be moved by a rename
+  or a hard link (another drive, a filesystem with no hard links such as many
   network shares), Apply copies it, checks the copy against the original and
   then removes the original, which takes as long as a copy. On Windows that copy
-  is written as `.termrenamer-<hex>.part` in the new folder and then renamed. A
-  junction cannot be moved to another drive.
+  is written as `.termrenamer-<16 hex>.part` in the new folder and then renamed.
+  A junction cannot be moved to another drive.
 - **Two themes.** Dark and light teal, chosen with `TERMRENAMER_THEME` or on
   the Settings screen.
 - **Posters.** With the `posters` extra installed and a terminal that draws
@@ -290,10 +307,13 @@ Apply and Undo confirms, the Match picker, the file and folder dialogs).
   with it hidden. The panel needs a screen of at least 100 columns by 35 rows;
   on a smaller one it is hidden. A Title with no Poster shows its name and
   "no poster". Posters are downloaded from TMDB's or TheTVDB's image host when
-  a Title is selected at the Preview, the first one as the Preview opens, and when
-  the Match picker shows a Candidate, never while the Plan is built, and kept for 30 days in a `termrenamer/posters`
-  folder in your per-user cache folder (`%LOCALAPPDATA%` on Windows, `~/.cache`
-  or `XDG_CACHE_HOME` elsewhere). OMDb gives no Posters.
+  a Title is selected at the Preview, the first one as the Preview opens, and
+  when the Match picker shows a Candidate, never while the Plan is built, and
+  kept for 30 days in a `termrenamer/posters` folder in your per-user cache
+  folder (`%LOCALAPPDATA%` on Windows, `~/.cache` or `XDG_CACHE_HOME`
+  elsewhere). OMDb gives no Posters. If that folder is a link, or lies outside
+  the cache folder, no Poster file is read, written or deleted: every Poster
+  shows "no poster" and the Logs say why once.
 - **Logs.** `l` opens the last 5000 log lines of the session, which include the
   messages the screen gave and what happened to each file Apply and Undo
   handled.
@@ -313,7 +333,8 @@ Apply and Undo confirms, the Match picker, the file and folder dialogs).
 - A not recognised TV file cannot be matched by hand; typing its season and
   episode is planned ([#14](https://github.com/eunai/TermRenamer/issues/14)).
 - Apply and Undo cannot defend against another program that changes the same
-  file or name between their last check and the move.
+  file or name between their last check and the very next call, and Apply
+  cannot defend against one that deletes or writes over a name Apply has claimed.
 
 ## Troubleshooting
 
@@ -349,8 +370,8 @@ Start the app from the repository root, so it reads the clone's `.env`.
 Without it, `uv run pytest` runs the tests only, so you can run one test file
 on its own. CI runs the same checks on each pull request and each push to
 `main`, on Linux and Windows, once without and once with the `posters` extra.
-To make the screenshot above again, run `uv run python scripts/render_preview.py`;
-it needs no network, API key or settings file.
+To make the screenshot above again, run `uv run python scripts/render_preview.py`
+from the repository root; it needs no network, API key or settings file.
 
 The project is developed with AI coding assistants. The rules they follow live
 in [`AGENTS.md`](AGENTS.md) and [`docs/agents/`](docs/agents/).
