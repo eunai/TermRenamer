@@ -16,9 +16,11 @@ from textual.widgets.option_list import Option
 
 
 class StatusWord(StrEnum):
-    """A row's status word: a Plan entry's status, or ``found`` while the Plan is built."""
+    """A row's status word: a Plan entry's status, or a Title's lookup while the Plan is built."""
 
     READY = "ready"
+    WAITING = "waiting"
+    LOOKING_UP = "looking up"
     FOUND = "found"
     NAME_TAKEN = "name taken"
     NO_MATCH = "no match"
@@ -32,6 +34,8 @@ class StatusWord(StrEnum):
 
 _COLOURS = {
     StatusWord.READY: "success",
+    StatusWord.WAITING: "tr-dim",
+    StatusWord.LOOKING_UP: "warning",
     StatusWord.FOUND: "success",
     StatusWord.NAME_TAKEN: "warning",
     StatusWord.NO_MATCH: "error",
@@ -129,8 +133,9 @@ class TitleList(OptionList, can_focus=False):
         grid.add_column(ratio=1, no_wrap=True, overflow="ellipsis")
         grid.add_column(width=14, no_wrap=True)
         grid.add_column(width=4, justify="right", no_wrap=True)
+        name_colour = "tr-dim" if row.status is StatusWord.WAITING else "foreground"
         grid.add_row(
-            Text(f"  {row.name}", style=colours.get("foreground", "")),
+            Text(f"  {row.name}", style=colours.get(name_colour, "")),
             Text(row.status, style=status_colour),
             Text(row.count, style=colours.get("tr-dim", "")),
         )

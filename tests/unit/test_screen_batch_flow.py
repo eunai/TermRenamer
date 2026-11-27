@@ -62,8 +62,13 @@ async def test_the_title_list_fills_while_the_plan_is_built(tmp_path: Path) -> N
         await pilot.pause()
         assert app.stage is Stage.PREVIEW
     assert stage_during is Stage.PLAN
-    assert rows == [("Harbour Lights", "found")]
-    assert "Building the Plan on TMDB…" in during
+    assert rows == [
+        ("Harbour Lights", "found"),
+        ("Night Ferry", "looking up"),
+        ("holiday.mkv", "not recognised"),
+    ]
+    assert "Building the Plan…" in during
+    assert "on TMDB…" in during
     assert "✓ Queue" in during and "● Plan" in during
     assert "b Build Plan" not in keys_during
     assert not any(key.startswith(("a ", "f ", "c ")) for key in keys_during)

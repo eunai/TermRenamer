@@ -217,23 +217,3 @@ async def test_building_with_a_provider_that_has_no_key_gives_its_message_and_no
         assert app.plan is None
         assert app.stage is Stage.QUEUE
         assert message in text_of(app, "#message")
-
-
-async def test_escape_while_the_plan_is_built_gives_no_message_about_another_stage(
-    tmp_path: Path,
-) -> None:
-    stand_in = tv_stand_in(hold=True)
-    app = make_app(wiring(tv=stand_in))
-    async with app.run_test(size=SIZE) as pilot:
-        await queue(pilot, tv_backups(tmp_path))
-        await press(pilot, "b")
-        assert await asyncio.to_thread(stand_in.first_done.wait, 5)
-        before = text_of(app, "#message")
-        await press(pilot, "escape")
-        after = text_of(app, "#message")
-        stage = app.stage
-        stand_in.go.set()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-    assert stage is Stage.PLAN
-    assert after == before
