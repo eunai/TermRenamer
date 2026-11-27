@@ -3,10 +3,11 @@
 The view draws what the build's listener reports (:mod:`termrenamer.core.progress`):
 the Title list with each Title waiting, looking up, found or not found; "N of M files
 looked up"; and a strip with the lookup gauge, the matched and unmatched bars and
-lookups per second. The selected Title's details sit in the left column, under the
-poster panel while Posters are shown. No Poster is downloaded while the Plan is built:
-the panel draws a Poster the store already holds, and otherwise the Title's name and
-status word.
+lookups per second. Until the scan reports the total, the view says it is reading the
+queued Sources and draws no count or gauge. The selected Title's details sit in the
+left column, under the poster panel while Posters are shown. No Poster is downloaded
+while the Plan is built: the panel draws a Poster the store already holds, and
+otherwise the Title's name and status word.
 """
 
 from __future__ import annotations
@@ -122,6 +123,9 @@ class PlanStage(TitleListStage):
         self._timer: Timer | None = None
         self._building = False
         """Whether a build runs; once it ends the panel holds no Poster."""
+        self._scanned = False
+        """Whether the build has reported its scan, so the total is known; until then
+        no count or gauge is drawn."""
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="plan-columns"):
@@ -148,6 +152,7 @@ class PlanStage(TitleListStage):
         self._provider_id = provider_id
         self._provider = provider_name(provider_id)
         self._building = True
+        self._scanned = False
         self._rows = []
         self._row_of = {}
         self._current = None
@@ -172,7 +177,7 @@ class PlanStage(TitleListStage):
     def report(self, event: PlanEvent) -> None:
         """Draw what the build reported; an event this view does not show is ignored."""
         if isinstance(event, Scanned):
-            self._scanned(event)
+            self._on_scanned(event)
         elif isinstance(event, TitleLookupStarted):
             self._set_status(_hint_key(event.name, event.year), StatusWord.LOOKING_UP)
         elif isinstance(event, TitleLookedUp):
@@ -183,7 +188,8 @@ class PlanStage(TitleListStage):
             self.stop()
             self._draw_progress()
 
-    def _scanned(self, event: Scanned) -> None:
+    def _on_scanned(self, event: Scanned) -> None:
+        self._scanned = True
         self._total = event.files
         self._rows = [
             _Row(
@@ -265,6 +271,8 @@ class PlanStage(TitleListStage):
     def _draw_progress(self) -> None:
         self.query_one("#plan-progress", Static).update(
             f"{self._looked_up} of {plural(self._total, 'file')} looked up"
+            if self._scanned
+            else "Reading the queued Sources…"
         )
         self.query_one("#plan-provider", Static).update(
             Content.from_markup("on $provider…", provider=self._provider)
@@ -314,6 +322,10 @@ class PlanStage(TitleListStage):
 
     def _draw_strip(self) -> None:
         strip = self.query_one("#plan-strip", Static)
+        # The gauges appear once the total is known.
+        strip.display = self._scanned
+        if not self._scanned:
+            return
         wide = strip.size.width == 0 or strip.size.width >= _WIDE_STRIP
         gauge, bar, small_bar, chart, gap = _WIDE_CELLS if wide else _NARROW_CELLS
         total = self._total
@@ -356,6 +368,8 @@ class PlanStage(TitleListStage):
         self.post_message(self.CancelRequested())
 
     def count_text(self) -> str:
+        if not self._scanned:
+            return ""
         return f"{self._looked_up} of {plural(self._total, 'file')}"
 
 
