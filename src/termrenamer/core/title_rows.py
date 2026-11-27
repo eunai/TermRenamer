@@ -95,13 +95,20 @@ class PlanCounts:
 @dataclass(frozen=True, slots=True)
 class AppliedCounts:
     """How many videos Apply renamed, left unchanged (already named), skipped and failed,
-    and how many Stragglers it merged."""
+    and how many Stragglers it merged, did not merge, and failed to merge."""
 
     renamed: int
     unchanged: int
     skipped: int
     failed: int
     stragglers_merged: int
+    stragglers_not_merged: int
+    stragglers_failed: int
+
+    @property
+    def anything_failed(self) -> bool:
+        """Whether a video or a Straggler failed."""
+        return bool(self.failed or self.stragglers_failed)
 
     @classmethod
     def of(cls, plan: Plan, outcome: ApplyOutcome) -> AppliedCounts:
@@ -113,6 +120,8 @@ class AppliedCounts:
             skipped=statuses.count(ApplyStatus.SKIP),
             failed=statuses.count(ApplyStatus.FAIL),
             stragglers_merged=outcome.stragglers_merged,
+            stragglers_not_merged=len(outcome.stragglers) - outcome.stragglers_merged,
+            stragglers_failed=sum(1 for r in outcome.stragglers if r.status is ApplyStatus.FAIL),
         )
 
 

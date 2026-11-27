@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from termrenamer.core.paths import path_key
 from termrenamer.core.policies import NameTakenPolicy
 
 
@@ -33,34 +34,29 @@ def allocate_destination(
     desired: Path,
     *,
     source: Path,
-    occupied: set[Path],
+    occupied: set[str],
 ) -> Path:
     """Pick a destination path, using `` (1)``, `` (2)``, … before the extension if needed.
 
-    Never uses ``os.replace`` for silent overwrite. If ``desired`` exists but is the same
-    file as ``source`` (e.g. case-only rename), returns ``desired``.
+    ``occupied`` holds the :func:`~termrenamer.core.paths.path_key` of each name already
+    claimed, so two names that differ only in letter case are one path; the name picked
+    is added to it. Never uses ``os.replace`` for silent overwrite. If ``desired`` exists
+    but is the same file as ``source`` (e.g. case-only rename), returns ``desired``.
     """
-    if desired in occupied:
+    if path_key(desired) in occupied or name_is_taken(desired, source=source):
         return _first_free_suffix(desired, source, occupied)
-
-    if name_is_taken(desired, source=source):
-        return _first_free_suffix(desired, source, occupied)
-
-    occupied.add(desired)
+    occupied.add(path_key(desired))
     return desired
 
 
-def _first_free_suffix(initial: Path, source: Path, occupied: set[Path]) -> Path:
+def _first_free_suffix(initial: Path, source: Path, occupied: set[str]) -> Path:
     n = 1
     while True:
         candidate = _with_numeric_suffix(initial, n)
-        if candidate in occupied:
+        if path_key(candidate) in occupied or name_is_taken(candidate, source=source):
             n += 1
             continue
-        if name_is_taken(candidate, source=source):
-            n += 1
-            continue
-        occupied.add(candidate)
+        occupied.add(path_key(candidate))
         return candidate
 
 
@@ -68,17 +64,17 @@ def claim_name(
     desired: Path,
     *,
     source: Path,
-    occupied: set[Path],
+    occupied: set[str],
     policy: NameTakenPolicy,
 ) -> Path | None:
     """Claim ``desired`` for ``source``, or by ``policy`` a numbered name or none.
 
     A name is taken when :func:`name_is_taken` says so or an earlier entry has claimed it
-    (it is in ``occupied``). Under ``SUFFIX`` a taken name gives way to the first free
-    numbered name; under ``SKIP`` nothing is claimed and ``None`` is returned.
+    (its path key is in ``occupied``). Under ``SUFFIX`` a taken name gives way to the
+    first free numbered name; under ``SKIP`` nothing is claimed and ``None`` is returned.
     """
     if policy is NameTakenPolicy.SKIP and (
-        desired in occupied or name_is_taken(desired, source=source)
+        path_key(desired) in occupied or name_is_taken(desired, source=source)
     ):
         return None
     return allocate_destination(desired, source=source, occupied=occupied)

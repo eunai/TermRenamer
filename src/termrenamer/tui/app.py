@@ -408,7 +408,7 @@ class TermRenamerApp(App[None]):
         applied.show_results(plan, outcome)
         self._show_stage(Stage.APPLIED)
         counts = applied.counts
-        failed = counts is not None and counts.failed
+        failed = counts is not None and counts.anything_failed
         self.say(
             "Applied." if failed else "Applied. Nothing failed.",
             MessageKind.WARNING if failed else MessageKind.INFO,

@@ -6,6 +6,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from termrenamer.core.models import Candidate, Plan, PlanOptions, ScanMode
+from termrenamer.core.paths import path_key
 from termrenamer.core.planning import plan_queue
 from termrenamer.core.policies import NameTakenPolicy
 
@@ -41,7 +42,7 @@ def _stragglers(plan: Plan) -> list[tuple[Path, Path]]:
 
 def _two_discs(tmp_path: Path) -> Path:
     """One season on two discs, each with its own ``folder.jpg``; disc 1 also holds a
-    ``Subs`` folder and a stray text file."""
+    ``Subs`` folder and a text file of notes."""
     show = tmp_path / "Backups" / "Show Name"
     _write(show / "Disc 1" / "Show.Name.S01E01.mkv")
     _write(show / "Disc 1" / "folder.jpg")
@@ -75,20 +76,14 @@ def test_the_plan_holds_the_children_of_each_folder_inside_a_folder_source(
 
     plan = plan_queue([show], _options(folder_rename=False), _provider()).plan
 
-    assert [(f.path, f.children) for f in plan.source_folders] == [
+    disc_1, disc_2 = show / "Disc 1", show / "Disc 2"
+    assert [(f.path, f.files, f.folders) for f in plan.source_folders] == [
         (
-            show / "Disc 1",
-            (
-                show / "Disc 1" / "folder.jpg",
-                show / "Disc 1" / "notes.txt",
-                show / "Disc 1" / "Show.Name.S01E01.mkv",
-                show / "Disc 1" / "Subs",
-            ),
+            disc_1,
+            (disc_1 / "folder.jpg", disc_1 / "notes.txt", disc_1 / "Show.Name.S01E01.mkv"),
+            (disc_1 / "Subs",),
         ),
-        (
-            show / "Disc 2",
-            (show / "Disc 2" / "folder.jpg", show / "Disc 2" / "Show.Name.S01E02.mkv"),
-        ),
+        (disc_2, (disc_2 / "folder.jpg", disc_2 / "Show.Name.S01E02.mkv"), ()),
     ]
 
 
@@ -110,7 +105,7 @@ def test_the_files_beside_a_queued_file_source_are_never_stragglers(tmp_path: Pa
 
     [entry] = plan.entries
     assert entry.destination is not None
-    assert entry.destination.parent != entry.source.parent
+    assert path_key(entry.destination.parent) != path_key(entry.source.parent)
     assert plan.stragglers == ()
     assert plan.source_folders == ()
 
@@ -240,4 +235,72 @@ def test_a_straggler_never_takes_the_name_an_entry_claimed(tmp_path: Path) -> No
             folder / "Disc 1" / "Show Name - S01E01 - Pilot.srt",
             season / "Show Name - S01E01 - Pilot (1).srt",
         ),
+    ]
+
+
+def test_a_file_in_a_folder_inside_its_target_folder_is_a_straggler(tmp_path: Path) -> None:
+    folder = tmp_path / "Backups"
+    _write(folder / "Show Name" / "Disc 1" / "Show.Name.S01E01.mkv")
+    _write(folder / "Show Name" / "Disc 1" / "folder.jpg")
+    _write(folder / "Show Name" / "Disc 1" / "Subs" / "English.srt")
+    folder = folder.resolve()
+    options = PlanOptions(
+        mode=ScanMode.TV,
+        provider_id="tmdb",
+        destination_root=None,
+        folder_rename=True,
+        season_folders=False,
+    )
+
+    plan = plan_queue([folder], options, _provider()).plan
+
+    [entry] = plan.entries
+    assert entry.destination == folder / "Show Name" / "Show Name - S01E01 - Pilot.mkv"
+    assert _stragglers(plan) == [
+        (folder / "Show Name" / "Disc 1" / "folder.jpg", folder / "Show Name" / "folder.jpg"),
+    ]
+
+
+def test_the_folder_of_a_video_that_already_has_its_name_is_no_target_folder(
+    tmp_path: Path,
+) -> None:
+    folder = tmp_path / "Backups"
+    season = folder / "Show Name" / "Season 01"
+    _write(season / "Show Name - S01E01 - Pilot.mkv")
+    _write(season / "Another.Show.S02E05.mkv")
+    _write(season / "Subs" / "English.srt")
+    folder = folder.resolve()
+    season = season.resolve()
+    provider = TvStandIn(
+        shows={
+            "show name": (Candidate(id="1", name="Show Name", year=2010),),
+            "another show": (Candidate(id="2", name="Another Show", year=2011),),
+        },
+        episodes={("1", 1, 1): "Pilot", ("2", 2, 5): "Mid"},
+    )
+
+    plan = plan_queue([folder], _options(), provider).plan
+
+    assert [e.has_its_name for e in plan.entries] == [False, True]
+    assert _stragglers(plan) == [
+        (season / "Subs", folder / "Another Show" / "Season 02" / "Subs"),
+    ]
+
+
+def test_two_stragglers_whose_names_differ_only_in_letter_case_never_share_a_path(
+    tmp_path: Path,
+) -> None:
+    show = tmp_path / "Backups" / "Show Name"
+    _write(show / "Disc 1" / "Show.Name.S01E01.mkv")
+    _write(show / "Disc 1" / "Folder.jpg")
+    _write(show / "Disc 2" / "Show.Name.S01E02.mkv")
+    _write(show / "Disc 2" / "folder.jpg")
+    show = show.resolve()
+
+    plan = plan_queue([show], _options(), _provider()).plan
+
+    season = show / "Show Name" / "Season 01"
+    assert _stragglers(plan) == [
+        (show / "Disc 1" / "Folder.jpg", season / "Folder.jpg"),
+        (show / "Disc 2" / "folder.jpg", season / "folder (1).jpg"),
     ]

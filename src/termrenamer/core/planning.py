@@ -403,7 +403,7 @@ def plan_queue(
     title_of = _titles(found_groups)
 
     # Names, claimed in source-path order by the entries that will be applied.
-    occupied: set[Path] = set()
+    occupied: set[str] = set()
     for video in videos:
         title = title_of[video.path]
         desired = (
@@ -475,9 +475,16 @@ def _source_folders(folders: Iterable[Path]) -> tuple[SourceFolder, ...]:
     for key in sorted(unique):
         folder = unique[key]
         try:
-            children = tuple(sorted(folder.iterdir(), key=path_key))
+            children = sorted(folder.iterdir(), key=path_key)
         except OSError as exc:
             _LOG.warning("Cannot list %s for Stragglers: %s", folder, exc)
-            children = ()
-        recorded.append(SourceFolder(path=folder, children=children))
+            children = []
+        is_folder = {child: child.is_dir(follow_symlinks=False) for child in children}
+        recorded.append(
+            SourceFolder(
+                path=folder,
+                files=tuple(c for c in children if not is_folder[c]),
+                folders=tuple(c for c in children if is_folder[c]),
+            )
+        )
     return tuple(recorded)

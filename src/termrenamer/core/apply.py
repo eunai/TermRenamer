@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import shutil
-from dataclasses import dataclass, field
+import stat
+from contextlib import suppress
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from termrenamer.core.collisions import name_is_taken
@@ -48,18 +51,115 @@ class _Record:
             self.folders_created.append(path)
 
     def move(self, source: Path, dest: Path) -> None:
-        """Move ``source`` to ``dest`` and record it with what is at its new place."""
-        _rename_or_move(source, dest)
-        self.moves.append(Move(source=source, destination=dest, fingerprint=_at_new_place(dest)))
+        """Move ``source`` to ``dest`` without replacing anything there, and record the
+        move with the file's size and modification time at its new place.
+
+        Once the move is made it is recorded: if the new place cannot be read, the
+        values read at the old place just before the move stand in.
+        """
+        before = _file_fingerprint(source)
+        _move_no_replace(source, dest)
+        try:
+            after = _file_fingerprint(dest)
+        except OSError as exc:
+            _LOG.warning("Cannot read %s after moving it there: %s", dest, exc)
+            after = None if before is None else replace(before, path=dest)
+        self.moves.append(Move(source=source, destination=dest, fingerprint=after))
 
 
-def _at_new_place(path: Path) -> PlanFingerprint | None:
-    """A moved file's size and modification time, links not followed; ``None`` for a
-    folder."""
+def _file_fingerprint(path: Path) -> PlanFingerprint | None:
+    """A file's size and modification time, links not followed; ``None`` for a folder."""
     st = os.lstat(path)
-    if path.is_dir(follow_symlinks=False):
+    if stat.S_ISDIR(st.st_mode):
         return None
     return PlanFingerprint(path=path, size=st.st_size, mtime_ns=st.st_mtime_ns)
+
+
+_NO_HARD_LINK = frozenset({errno.EXDEV, errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP})
+"""Why a hard link can fail other than a taken name: another filesystem, or one without
+hard links (exFAT, many network shares)."""
+
+
+def _move_no_replace(source: Path, dest: Path) -> None:
+    """Move ``source`` to ``dest``; the move itself refuses to replace anything there.
+
+    Raises :class:`FileExistsError` when something is at ``dest``, links not followed.
+
+    - A case-only rename (``dest`` is ``source``'s own directory entry) is a plain rename.
+    - On Windows, :func:`os.rename` never replaces a file or folder.
+    - A file elsewhere is hard-linked at ``dest``, which fails when the name is taken,
+      then unlinked from ``source``; a crash between the two leaves both names, never
+      neither.
+    - A folder elsewhere: ``dest`` is made first, which fails when the name is taken,
+      and the folder is renamed onto that empty folder of its own.
+
+    When the link or the rename cannot be made for another reason (another filesystem,
+    a filesystem with no hard links), the move falls back to :func:`_rename_or_move`
+    right after a :func:`name_is_taken` check. That path keeps a short window in which
+    something that appears at ``dest`` could be replaced.
+    """
+    if dest.exists(follow_symlinks=False) and not name_is_taken(dest, source=source):
+        os.rename(source, dest)
+        return
+    if os.name == "nt":
+        try:
+            os.rename(source, dest)
+            return
+        except FileExistsError:
+            raise
+        except OSError as exc:
+            _LOG.info("Rename %s -> %s failed (%s); moving instead", source, dest, exc)
+    elif source.is_dir(follow_symlinks=False):
+        os.mkdir(dest)
+        try:
+            os.rename(source, dest)
+            return
+        except OSError as exc:
+            with suppress(OSError):
+                os.rmdir(dest)
+            if exc.errno != errno.EXDEV:
+                raise
+    else:
+        try:
+            os.link(source, dest, follow_symlinks=False)
+        except FileExistsError:
+            raise
+        except (OSError, NotImplementedError) as exc:
+            if isinstance(exc, OSError) and exc.errno not in _NO_HARD_LINK:
+                raise
+            _LOG.info("Cannot hard-link %s -> %s (%s); moving instead", source, dest, exc)
+        else:
+            try:
+                os.unlink(source)
+            except OSError:
+                with suppress(OSError):
+                    os.unlink(dest)
+                raise
+            return
+    if name_is_taken(dest, source=source):
+        raise FileExistsError(errno.EEXIST, "destination exists", str(dest))
+    _rename_or_move(source, dest)
+
+
+def _move_checked(source: Path, dest: Path, record: _Record) -> tuple[ApplyStatus, str]:
+    """Check ``dest`` is free, make its folder and move ``source`` there: Apply's one move,
+    for entries and Stragglers alike."""
+    if name_is_taken(dest, source=source):
+        return ApplyStatus.SKIP, _TAKEN
+    try:
+        record.make_folders(dest.parent)
+    except OSError as exc:
+        return ApplyStatus.FAIL, f"mkdir failed: {exc}"
+    try:
+        record.move(source, dest)
+    except FileExistsError:
+        return ApplyStatus.SKIP, _TAKEN
+    except OSError as exc:
+        return ApplyStatus.FAIL, f"rename/move failed: {exc}"
+    return ApplyStatus.RENAMED, "ok"
+
+
+_TAKEN = "destination exists at apply time"
 
 
 def _remove_empty_source_dirs(applied_source_parents: set[Path]) -> list[Path]:
@@ -126,17 +226,7 @@ def _apply_entry(entry: PlanEntry, record: _Record) -> ApplyResult:
         return result(ApplyStatus.SKIP, "stale: source changed since plan")
     if entry.has_its_name:
         return result(ApplyStatus.UNCHANGED, "already has its name")
-    if name_is_taken(dest, source=source):
-        return result(ApplyStatus.SKIP, "destination exists at apply time")
-    try:
-        record.make_folders(dest.parent)
-    except OSError as exc:
-        return result(ApplyStatus.FAIL, f"mkdir failed: {exc}")
-    try:
-        record.move(source, dest)
-    except OSError as exc:
-        return result(ApplyStatus.FAIL, f"rename/move failed: {exc}")
-    return result(ApplyStatus.RENAMED, "ok")
+    return result(*_move_checked(source, dest, record))
 
 
 def _apply_straggler(straggler: Straggler, moved_out: set[str], record: _Record) -> ApplyResult:
@@ -150,17 +240,7 @@ def _apply_straggler(straggler: Straggler, moved_out: set[str], record: _Record)
         return result(ApplyStatus.SKIP, "nothing moved out of its folder")
     if not source.exists(follow_symlinks=False):
         return result(ApplyStatus.SKIP, "stale: source missing")
-    if name_is_taken(dest, source=source):
-        return result(ApplyStatus.SKIP, "destination exists at apply time")
-    try:
-        record.make_folders(dest.parent)
-    except OSError as exc:
-        return result(ApplyStatus.FAIL, f"mkdir failed: {exc}")
-    try:
-        record.move(source, dest)
-    except OSError as exc:
-        return result(ApplyStatus.FAIL, f"rename/move failed: {exc}")
-    return result(ApplyStatus.RENAMED, "ok")
+    return result(*_move_checked(source, dest, record))
 
 
 def apply_plan(plan: Plan, *, confirmed: bool) -> ApplyOutcome:

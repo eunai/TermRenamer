@@ -18,9 +18,9 @@ def _plan(sources: list[Path], options: PlanOptions | None = None) -> Plan:
     return plan_queue(sources, options or _options(), _provider()).plan
 
 
-def _tree(root: Path) -> list[str]:
-    """Every file and folder under ``root``, as paths relative to it with ``/``."""
-    return sorted(p.relative_to(root).as_posix() for p in root.rglob("*"))
+def _tree(root: Path) -> set[Path]:
+    """Every file and folder under ``root``."""
+    return set(root.rglob("*"))
 
 
 def test_apply_merges_the_listed_stragglers_and_removes_the_emptied_folders(
@@ -31,17 +31,18 @@ def test_apply_merges_the_listed_stragglers_and_removes_the_emptied_folders(
 
     outcome = apply_plan(plan, confirmed=True)
 
-    assert _tree(show) == [
-        "Show Name",
-        "Show Name/Season 01",
-        "Show Name/Season 01/Show Name - S01E01 - Pilot.mkv",
-        "Show Name/Season 01/Show Name - S01E02 - Second.mkv",
-        "Show Name/Season 01/Subs",
-        "Show Name/Season 01/Subs/English.srt",
-        "Show Name/Season 01/folder (1).jpg",
-        "Show Name/Season 01/folder.jpg",
-        "Show Name/Season 01/notes.txt",
-    ]
+    season = show / "Show Name" / "Season 01"
+    assert _tree(show) == {
+        show / "Show Name",
+        season,
+        season / "Show Name - S01E01 - Pilot.mkv",
+        season / "Show Name - S01E02 - Second.mkv",
+        season / "Subs",
+        season / "Subs" / "English.srt",
+        season / "folder (1).jpg",
+        season / "folder.jpg",
+        season / "notes.txt",
+    }
     assert [(r.source, r.destination, r.status, r.reason) for r in outcome.stragglers] == [
         (s.source, s.destination, ApplyStatus.RENAMED, "ok") for s in plan.stragglers
     ]
@@ -97,14 +98,16 @@ def test_the_files_beside_a_queued_file_source_stay_where_they_are(tmp_path: Pat
 
     apply_plan(_plan([video]), confirmed=True)
 
-    assert _tree(folder.resolve()) == [
-        "Show Name",
-        "Show Name/Season 01",
-        "Show Name/Season 01/Show Name - S01E01 - Pilot.mkv",
-        "Unrelated",
-        "Unrelated/notes.txt",
-        "folder.jpg",
-    ]
+    folder = folder.resolve()
+    season = folder / "Show Name" / "Season 01"
+    assert _tree(folder) == {
+        folder / "Show Name",
+        season,
+        season / "Show Name - S01E01 - Pilot.mkv",
+        folder / "Unrelated",
+        folder / "Unrelated" / "notes.txt",
+        folder / "folder.jpg",
+    }
 
 
 def test_a_video_with_no_match_stays_in_its_folder_and_is_not_merged(tmp_path: Path) -> None:

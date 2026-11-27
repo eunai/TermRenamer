@@ -220,11 +220,12 @@ class PlanEntry:
 @dataclass(frozen=True, slots=True)
 class SourceFolder:
     """A source folder that is a folder Source or lies inside one, and its direct
-    children as found when the Plan was built. A source folder is the parent folder of
-    an entry."""
+    children as found when the Plan was built: ``files`` (a symbolic link counts as a
+    file) and ``folders``. A source folder is the parent folder of an entry."""
 
     path: Path
-    children: tuple[Path, ...]
+    files: tuple[Path, ...]
+    folders: tuple[Path, ...]
 
 
 @dataclass(frozen=True, slots=True)

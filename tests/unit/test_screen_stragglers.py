@@ -7,8 +7,9 @@ from pathlib import Path
 
 from termrenamer.tui.dialogs import ApplyConfirm
 from termrenamer.tui.stage import Stage
+from termrenamer.tui.words import folder_text
 
-from .screen_driver import SIZE, build, make_app, names_in, press, queue, settings
+from .screen_driver import SIZE, build, make_app, press, queue, settings
 from .test_screen_applied import apply, lines_of
 
 
@@ -50,15 +51,16 @@ async def test_the_preview_the_confirm_and_the_applied_stage_count_the_straggler
         "Merge 3 Stragglers (Harbour Lights)",
     ]
     assert counts == ["2 renamed · 0 skipped · 0 failed", "3 Stragglers merged"]
-    assert names_in(folder) == [
-        "Harbour Lights",
-        "Harbour Lights/Season 01",
-        "Harbour Lights/Season 01/Harbour Lights - S01E01 - The Tide Comes In.mkv",
-        "Harbour Lights/Season 01/Harbour Lights - S01E02 - Salt and Rope.mkv",
-        "Harbour Lights/Season 01/folder (1).jpg",
-        "Harbour Lights/Season 01/folder.jpg",
-        "Harbour Lights/Season 01/notes.txt",
-    ]
+    season = folder / "Harbour Lights" / "Season 01"
+    assert set(folder.rglob("*")) == {
+        folder / "Harbour Lights",
+        season,
+        season / "Harbour Lights - S01E01 - The Tide Comes In.mkv",
+        season / "Harbour Lights - S01E02 - Salt and Rope.mkv",
+        season / "folder (1).jpg",
+        season / "folder.jpg",
+        season / "notes.txt",
+    }
 
 
 async def test_with_folder_rename_on_and_nothing_left_behind_the_confirm_says_so(
@@ -80,3 +82,34 @@ async def test_with_folder_rename_on_and_nothing_left_behind_the_confirm_says_so
     assert summary[-1] == "0 left out"
     assert confirm[2] == "No Stragglers in this Plan."
     assert counts == ["1 renamed · 0 skipped · 0 failed"]
+
+
+async def test_a_straggler_not_merged_is_listed_with_its_reason_and_a_failure_counts(
+    tmp_path: Path,
+) -> None:
+    folder = tmp_path / "TV Backups"
+    mixed = folder / "Mixed"
+    mixed.mkdir(parents=True)
+    for name in ("Harbour Lights S01E01.mkv", "Night Ferry S01E01.mkv", "folder.jpg"):
+        (mixed / name).write_bytes(b"x")
+    folder = folder.resolve()
+    mixed = folder / "Mixed"
+    app = make_app(loaded=settings(folder_rename=True, season_folders=True))
+    async with app.run_test(size=SIZE) as pilot:
+        await queue(pilot, folder)
+        await build(pilot)
+        # The Straggler's target folder is Harbour Lights's; that video changes and is
+        # skipped, and a file now stands where its folder would be made.
+        (mixed / "Harbour Lights S01E01.mkv").write_bytes(b"changed since planning")
+        (folder / "Harbour Lights").write_bytes(b"in the way")
+        await apply(pilot)
+        counts = lines_of(app, "#applied-counts")
+        title = lines_of(app, "#applied-title")
+        listed = lines_of(app, "#applied-list")
+        message = lines_of(app, "#message")
+    assert counts == ["1 renamed · 1 skipped · 0 failed", "0 Stragglers merged · 1 not merged"]
+    assert title == ["The Plan is applied."]
+    assert message == ["Applied."]
+    assert listed[-2] == f"folder.jpg {folder_text(mixed)}"
+    assert listed[-1].startswith("Straggler not merged: failed: ")
+    assert (mixed / "folder.jpg").read_bytes() == b"x"

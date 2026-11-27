@@ -18,14 +18,12 @@ from termrenamer.core.models import PlanEntry, PlanOptions, SourceFolder, Stragg
 from termrenamer.core.paths import path_key
 
 
-def _kept_in_place(child: Path, entry_keys: frozenset[str], target_keys: frozenset[str]) -> bool:
-    """Whether ``child`` is never a Straggler.
-
-    That is an entry of the Plan or a folder holding one, and a folder that is,
-    contains or lies inside a target folder (a folder an entry of the Plan moves into).
-    """
-    key = path_key(child)
-    if any(k == key or k.startswith(key + os.sep) for k in entry_keys):
+def _folder_stays(folder: Path, entry_keys: frozenset[str], target_keys: frozenset[str]) -> bool:
+    """Whether a child folder is never a Straggler: it contains an entry of the Plan, or
+    it is, contains or lies inside a target folder (a folder an entry of the Plan moves
+    into)."""
+    key = path_key(folder)
+    if any(k.startswith(key + os.sep) for k in entry_keys):
         return True
     return any(
         t == key or t.startswith(key + os.sep) or key.startswith(t + os.sep) for t in target_keys
@@ -41,22 +39,25 @@ def plan_stragglers(
 
     With Folder rename off there are none. A source folder qualifies when at least one
     of its entries is applied to a different folder. Its Stragglers are its recorded
-    children that :func:`_kept_in_place` does not keep; each goes to the target folder
-    that sorts first of those its folder's entries go to. After every applied entry has
-    claimed its name, the Stragglers are numbered and claim theirs in source-path order,
-    by the numbering rule whatever Name taken is set to, so no two share a path.
+    child files that are not entries, and its recorded child folders that
+    :func:`_folder_stays` does not keep. Each goes to the target folder that sorts
+    first of those its folder's entries go to. After every applied entry has claimed
+    its name, the Stragglers are numbered and claim theirs in source-path order, by the
+    numbering rule whatever Name taken is set to, so no two share a path.
     """
     if not options.folder_rename:
         return ()
     entries = tuple(entries)
     applied = [e for e in entries if e.to_apply]
-    claimed = {e.destination for e in applied if e.destination is not None}
+    claimed = {path_key(e.destination) for e in applied if e.destination is not None}
     entry_keys = frozenset(path_key(e.source) for e in entries)
-    target_keys = frozenset(path_key(dest.parent) for dest in claimed)
+    # An entry that already has its name moves into no folder.
+    moving = [e for e in applied if not e.has_its_name]
+    target_keys = frozenset(path_key(d.parent) for e in moving if (d := e.destination))
 
     target_of: dict[str, Path] = {}
     for dest_folder, folder_key in sorted(
-        {(d.parent, path_key(e.source.parent)) for e in applied if (d := e.destination)},
+        {(d.parent, path_key(e.source.parent)) for e in moving if (d := e.destination)},
         key=lambda pair: path_key(pair[0]),
     ):
         if path_key(dest_folder) != folder_key:
@@ -67,10 +68,9 @@ def plan_stragglers(
         target = target_of.get(path_key(folder.path))
         if target is None:
             continue
+        wanted.extend((f, target) for f in folder.files if path_key(f) not in entry_keys)
         wanted.extend(
-            (child, target)
-            for child in folder.children
-            if not _kept_in_place(child, entry_keys, target_keys)
+            (f, target) for f in folder.folders if not _folder_stays(f, entry_keys, target_keys)
         )
     return tuple(
         Straggler(
