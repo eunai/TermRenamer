@@ -13,7 +13,7 @@ from textual.widgets import Static, Tree
 
 from termrenamer.tui.stages.base import StageView
 from termrenamer.tui.widgets.action_button import ActionButton
-from termrenamer.tui.words import plural
+from termrenamer.tui.words import folder_text, plural
 
 _NEEDS_SOURCES = frozenset({"build_plan", "clear_queue", "select_previous", "select_next"})
 
@@ -116,7 +116,7 @@ class QueueStage(StageView):
         return node.data if node is not None else None
 
     def show_queue(self, sources: Sequence[Path]) -> None:
-        """Draw the queue: a folder as its bold name and ``/`` then its path dimmed, a file as
+        """Draw the queue: a folder as its bold name and separator then its path dimmed, a file as
         its name then its folder dimmed. The selection stays on the same Source when it can."""
         previous = self.selected_source
         self._sources = tuple(sources)
@@ -132,8 +132,7 @@ class QueueStage(StageView):
             except OSError:
                 is_folder = False
             if is_folder:
-                label.append(source.name or str(source), style="bold")
-                label.append("/")
+                label.append(folder_text(Path(source.name or source)), style="bold")
                 label.append(f"  {source}", style=dim)
             else:
                 label.append(source.name)

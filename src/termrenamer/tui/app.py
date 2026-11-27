@@ -49,7 +49,7 @@ from termrenamer.tui.widgets.action_button import ActionButton
 from termrenamer.tui.widgets.footer import AppFooter, MessageKind
 from termrenamer.tui.widgets.header import AppHeader
 from termrenamer.tui.widgets.stages_row import StagesRow
-from termrenamer.tui.words import and_list, mode_label, noun, provider_name
+from termrenamer.tui.words import and_list, folder_text, mode_label, noun, provider_name
 from termrenamer.util.errors import ProviderError, ValidationError
 from termrenamer.wiring import PlanningWiring
 
@@ -375,7 +375,7 @@ class TermRenamerApp(App[None]):
             return
         counts = PlanCounts.of(plan)
         root = plan.options.destination_root
-        under = f"under {root}/" if root is not None else "in their own folders"
+        under = f"under {folder_text(root)}" if root is not None else "in their own folders"
         confirm = ApplyConfirm(
             videos=counts.to_rename,
             under=under,

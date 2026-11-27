@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from termrenamer.tui.stage import Stage
@@ -45,7 +46,7 @@ async def test_the_header_shows_no_key_and_the_destination_root_of_the_mode() ->
         await pilot.pause()
         text = screen_text(app)
     assert "TMDB (no key)" in text
-    assert "Destination root /media/Shows/" in text
+    assert f"Destination root {Path('/media/Shows')}{os.sep}" in text
 
 
 async def test_the_header_says_the_destination_root_is_not_used_while_folder_rename_is_off(
@@ -81,7 +82,7 @@ async def test_a_queued_folder_and_file_are_drawn_with_the_queue_actions(tmp_pat
         text = screen_text(app)
         keys = footer_keys(app)
     assert app.queue.sources == (folder.resolve(), single.resolve())
-    assert "TV Backups/" in text
+    assert f"TV Backups{os.sep}" in text
     assert "Night Ferry S01E02.mkv" in text
     assert "b Build the Plan" in text and "c Clear the queue" in text
     assert "a Add file" in text and "f Add folder" in text

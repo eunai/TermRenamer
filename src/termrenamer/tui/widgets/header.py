@@ -10,6 +10,7 @@ from textual.markup import escape
 from textual.widgets import Static
 
 from termrenamer.core.models import ScanMode
+from termrenamer.tui.words import folder_text
 
 
 class AppHeader(Horizontal):
@@ -67,5 +68,5 @@ class AppHeader(Horizontal):
         elif root is None:
             value = "[$tr-dim]not set[/]"
         else:
-            value = f"[$foreground]{escape(str(root))}/[/]"
+            value = f"[$foreground]{escape(folder_text(root))}[/]"
         self.query_one("#header-root", Static).update(f"[$tr-dim]Destination root[/] {value}")

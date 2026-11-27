@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import PurePath
 
 from termrenamer.core.models import PROVIDER_NAMES, ScanMode
 
@@ -32,3 +33,10 @@ def mode_label(mode: ScanMode) -> str:
 def provider_name(provider_id: str) -> str:
     """The Provider's name as the screen writes it, such as ``TheTVDB`` for ``tvdb``."""
     return PROVIDER_NAMES.get(provider_id, provider_id)
+
+
+def folder_text(folder: PurePath) -> str:
+    """``folder`` ending in one separator of its own system: ``/media/Shows/``, ``D:\\Shows\\``."""
+    text = str(folder)
+    sep = folder.parser.sep
+    return text if text.endswith(sep) else text + sep

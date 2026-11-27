@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 from textual.widgets import Input, Switch
@@ -42,7 +43,7 @@ async def test_s_opens_settings_with_its_five_rows_and_escape_closes_it() -> Non
         "Theme",
     ):
         assert label in text
-    assert "/media/Shows" in text
+    assert str(Path("/media/Shows")) in text
     assert "dark" in text and "light" in text
 
 
@@ -58,7 +59,7 @@ async def test_a_destination_root_typed_in_settings_is_saved_to_the_settings_own
         owner = app.session_settings
         assert owner.destination_root(ScanMode.TV) == Path("/media/TV")
         assert owner.destination_root(ScanMode.FILM) == Path("/media/Films")
-        assert "Destination root /media/TV/" in screen_text(app)
+        assert f"Destination root {Path('/media/TV')}{os.sep}" in screen_text(app)
 
 
 async def test_season_folder_cannot_be_turned_on_while_folder_rename_is_off() -> None:
