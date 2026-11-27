@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import PurePath
 
 from termrenamer.core.models import (
     PROVIDER_NAMES,
@@ -65,3 +66,10 @@ def why_not_renamed(entry: PlanEntry) -> str | None:
     if entry.destination == entry.source:
         return "already has its name"
     return None
+
+
+def folder_text(folder: PurePath) -> str:
+    """``folder`` ending in one separator of its own system: ``/media/Shows/``, ``D:\\Shows\\``."""
+    text = str(folder)
+    sep = folder.parser.sep
+    return text if text.endswith(sep) else text + sep

@@ -6,7 +6,6 @@ over the Title list, right of where the Poster panel goes.
 
 from __future__ import annotations
 
-import os
 from collections import Counter
 
 from textual.app import ComposeResult
@@ -19,7 +18,7 @@ from textual.widgets import Static
 from termrenamer.core.models import EntryStatus, Plan
 from termrenamer.core.title_rows import PlanCounts
 from termrenamer.tui.widgets.action_button import ActionButton
-from termrenamer.tui.words import plural, why_not_renamed
+from termrenamer.tui.words import folder_text, plural, why_not_renamed
 
 
 def confirm_lines(plan: Plan) -> tuple[str, ...]:
@@ -29,7 +28,7 @@ def confirm_lines(plan: Plan) -> tuple[str, ...]:
     counts = PlanCounts.of(plan)
     root = plan.options.destination_root
     if root is not None:
-        where = f"under {root}{os.sep}"
+        where = f"under {folder_text(root)}"
     else:
         where = "in its own folder" if counts.to_rename == 1 else "in their own folders"
     staying = [v for v in plan.videos if why_not_renamed(v) is not None]
