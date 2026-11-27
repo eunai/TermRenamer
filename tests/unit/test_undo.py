@@ -216,8 +216,29 @@ def test_a_file_whose_old_place_is_taken_is_left_and_nothing_there_is_replaced(
     assert (show / "Disc 1" / "Show.Name.S01E01.mkv").exists()
 
 
+def _to_another_drive(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every move back takes the copy path: a hard link, and a rename from one folder to
+    another, fail as they do to another drive. A rename within a folder works, as the
+    one that claims a Windows copy's old name."""
+    real_rename = os.rename
+
+    def no_link(*_args: object, **_kwargs: object) -> None:
+        raise OSError(errno.EXDEV, os.strerror(errno.EXDEV))
+
+    def rename(src: object, dst: object, *args: object, **kwargs: object) -> None:
+        if Path(os.fspath(src)).parent != Path(os.fspath(dst)).parent:  # type: ignore[call-overload]
+            raise OSError(errno.EXDEV, os.strerror(errno.EXDEV))
+        real_rename(src, dst, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(os, "link", no_link)
+    monkeypatch.setattr(os, "rename", rename)
+
+
+@pytest.mark.parametrize("drive", ["same drive", "another drive"])
 @pytest.mark.parametrize("kind", ["empty folder", "broken link"])
-def test_an_old_place_taken_by_a_folder_or_a_broken_link_is_left(tmp_path: Path, kind: str) -> None:
+def test_an_old_place_taken_by_a_folder_or_a_broken_link_is_left(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, drive: str
+) -> None:
     show = _show(tmp_path)
     applied = apply_plan(_plan(show), confirmed=True)
     taken = show / "Disc 2" / "folder.jpg"
@@ -226,13 +247,33 @@ def test_an_old_place_taken_by_a_folder_or_a_broken_link_is_left(tmp_path: Path,
         taken.mkdir()
     else:
         _link_or_skip(taken, tmp_path / "missing target")
+    if drive == "another drive":
+        _to_another_drive(monkeypatch)
 
     undone = undo_apply(applied)
+    monkeypatch.undo()
 
     moved = _season(show) / "folder (1).jpg"
     assert _by_source(undone.results)[moved] == (ApplyStatus.SKIP, "its old place is taken")
     assert moved.exists()
     assert taken.is_dir() if kind == "empty folder" else taken.is_symlink()
+    assert not (tmp_path / "missing target").exists()  # nothing written through the link
+    assert undone.files_left_behind == ()
+    assert not [n for n in os.listdir(taken.parent) if n.startswith(".termrenamer-")]
+
+
+def test_a_separate_hard_link_at_the_old_place_is_taken(tmp_path: Path) -> None:
+    show = _show(tmp_path)
+    applied = apply_plan(_plan(show), confirmed=True)
+    moved = _season(show) / "notes.txt"
+    old = show / "Disc 1" / "notes.txt"
+    old.parent.mkdir(exist_ok=True)
+    os.link(moved, old)
+
+    undone = undo_apply(applied)
+
+    assert _by_source(undone.results)[moved] == (ApplyStatus.SKIP, "its old place is taken")
+    assert os.path.samestat(os.lstat(moved), os.lstat(old))
 
 
 def test_a_file_gone_from_its_new_place_is_left(tmp_path: Path) -> None:
@@ -407,6 +448,7 @@ def test_a_link_goes_back_as_itself_and_is_never_entered(tmp_path: Path) -> None
     elsewhere = tmp_path / "Elsewhere"
     _write(elsewhere / "bonus.txt", b"bonus")
     _link_or_skip(show / "Disc 1" / "Extras", elsewhere)
+    target = os.readlink(show / "Disc 1" / "Extras")  # on Windows with its \\?\ prefix
     before = listing(show)
     applied = apply_plan(_plan(show), confirmed=True)
     assert (_season(show) / "Extras").is_symlink()
@@ -415,7 +457,7 @@ def test_a_link_goes_back_as_itself_and_is_never_entered(tmp_path: Path) -> None
 
     assert listing(show) == before
     assert (show / "Disc 1" / "Extras").is_symlink()
-    assert os.readlink(show / "Disc 1" / "Extras") == str(elsewhere)
+    assert os.readlink(show / "Disc 1" / "Extras") == target
     assert sorted(os.listdir(elsewhere)) == ["bonus.txt"]
     assert all(elsewhere not in r.source.parents for r in undone.results)
 
@@ -445,10 +487,7 @@ def test_a_move_back_to_another_drive_is_a_checked_copy(
     before = listing(show)
     applied = apply_plan(_plan(show), confirmed=True)
 
-    def no_hard_link(*_args: object, **_kwargs: object) -> None:
-        raise OSError(errno.EXDEV, os.strerror(errno.EXDEV))
-
-    monkeypatch.setattr(os, "rename" if WINDOWS else "link", no_hard_link)
+    _to_another_drive(monkeypatch)
     undone = undo_apply(applied)
     monkeypatch.undo()
 
