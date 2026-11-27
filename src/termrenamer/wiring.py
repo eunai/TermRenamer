@@ -6,6 +6,7 @@ HTTP + optional cache live here — not in ``tui/`` (no raw HTTP in the TUI laye
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from termrenamer.api.base import FilmMetadataProvider, TvMetadataProvider
 from termrenamer.api.lookup import FilmLookup, TvLookup
@@ -24,6 +25,9 @@ from termrenamer.persistence.cache import SqliteMetadataCache
 from termrenamer.persistence.posters import PosterStore, cache_folder, poster_folder
 from termrenamer.util.errors import ValidationError
 from termrenamer.util.http import HttpClient
+
+if TYPE_CHECKING:
+    from termrenamer.core.progress import CancelSignal
 
 
 def _tmdb_missing_message() -> str:
@@ -60,11 +64,14 @@ class PlanningWiring:
             for mode in ScanMode
         }
 
-    def resolve(self, *, mode: ScanMode, provider_id: str) -> TvLookup | FilmLookup:
-        """Return one build's lookup for ``mode`` through ``provider_id``, over the cache."""
+    def resolve(
+        self, *, mode: ScanMode, provider_id: str, cancel: CancelSignal | None = None
+    ) -> TvLookup | FilmLookup:
+        """Return one build's lookup for ``mode`` through ``provider_id``, over the cache;
+        a Film lookup sends no search without the year once ``cancel`` is set."""
         if mode is ScanMode.TV:
             return self.resolve_tv(provider_id=provider_id)
-        return self.resolve_film(provider_id=provider_id)
+        return self.resolve_film(provider_id=provider_id, cancel=cancel)
 
     def resolve_tv(self, *, provider_id: str) -> TvLookup:
         """Return one build's TV lookup through ``tmdb`` or ``tvdb``, over the cache."""
@@ -84,17 +91,19 @@ class PlanningWiring:
         msg = f"Unknown TV provider id: {provider_id!r}"
         raise ValidationError(msg)
 
-    def resolve_film(self, *, provider_id: str) -> FilmLookup:
+    def resolve_film(self, *, provider_id: str, cancel: CancelSignal | None = None) -> FilmLookup:
         """Return one build's film lookup through ``tmdb`` or ``omdb``, over the cache."""
         if provider_id == "tmdb":
             if self.film is None:
                 raise ValidationError(_tmdb_missing_message())
-            return FilmLookup(self.film, cache=self.cache, provider_id=provider_id)
+            return FilmLookup(self.film, cache=self.cache, provider_id=provider_id, cancel=cancel)
         if provider_id == "omdb":
             if self.film_omdb is None:
                 msg = f"OMDb requires an API key: {where_to_set('TERMRENAMER_OMDB_API_KEY')}."
                 raise ValidationError(msg)
-            return FilmLookup(self.film_omdb, cache=self.cache, provider_id=provider_id)
+            return FilmLookup(
+                self.film_omdb, cache=self.cache, provider_id=provider_id, cancel=cancel
+            )
         msg = f"Unknown film provider id: {provider_id!r}"
         raise ValidationError(msg)
 

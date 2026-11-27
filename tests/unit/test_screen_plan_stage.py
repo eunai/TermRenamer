@@ -31,6 +31,7 @@ from .screen_driver import (
     screen_text,
     text_of,
     tv_backups,
+    until,
     wiring,
 )
 
@@ -308,3 +309,43 @@ async def test_while_the_first_scan_is_pending_no_zeroed_gauge_is_shown(
     assert "Reading the queued Sources…" in pending
     for zeroed in ("0 of 0 files", "0/0", "lookups/s", "matched", "unmatched"):
         assert zeroed not in pending, zeroed
+
+
+@dataclass
+class HeldFilms:
+    """Film searches that each wait on ``go``, then find nothing."""
+
+    started: threading.Event = field(default_factory=threading.Event)
+    go: threading.Event = field(default_factory=threading.Event)
+    searches: list[tuple[str, int | None]] = field(default_factory=list)
+
+    def search_films(self, *, hint: str, year: int | None) -> tuple[Candidate, ...]:
+        self.searches.append((hint, year))
+        self.started.set()
+        assert self.go.wait(timeout=10)
+        return ()
+
+
+async def test_escape_while_a_film_search_runs_sends_no_search_without_the_year(
+    tmp_path: Path,
+) -> None:
+    """A Film search with a year that finds nothing is tried again without the year;
+    after Escape, that second search is not sent."""
+    folder = tmp_path / "Film Backups"
+    folder.mkdir()
+    (folder / "Heat (1995).mkv").write_bytes(b"x")
+    films = HeldFilms()
+    app = make_app(wiring(film=films))  # type: ignore[arg-type]
+    async with app.run_test(size=SIZE) as pilot:
+        await press(pilot, "m")
+        await queue(pilot, folder.resolve())
+        await press(pilot, "b")
+        await until(pilot, films.started.is_set)
+        await press(pilot, "escape")
+        films.go.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        stage = app.stage
+
+    assert stage is Stage.QUEUE
+    assert films.searches == [("Heat", 1995)]

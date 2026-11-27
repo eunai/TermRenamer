@@ -13,11 +13,15 @@ the network.
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from termrenamer.api.base import BuildScopedTvProvider, FilmMetadataProvider, TvMetadataProvider
 from termrenamer.core.models import Candidate, ScanMode
 from termrenamer.persistence.cache import SqliteMetadataCache, normalise_hint
 from termrenamer.util.errors import CacheError
+
+if TYPE_CHECKING:
+    from termrenamer.core.progress import CancelSignal
 
 _LOG = logging.getLogger(__name__)
 
@@ -134,6 +138,8 @@ class FilmLookup:
     A search with a year that finds nothing is tried once more without the year;
     results found that way are stored under both year keys. ``provider_id``
     (``"tmdb"`` or ``"omdb"``) keys the cache entries and is required with a cache.
+    Once ``cancel`` is set, the search without the year is not sent: the search finds
+    nothing, and nothing is stored for it.
     """
 
     def __init__(
@@ -142,9 +148,11 @@ class FilmLookup:
         *,
         cache: SqliteMetadataCache | None = None,
         provider_id: str | None = None,
+        cancel: CancelSignal | None = None,
     ) -> None:
         self._cache = _CacheAccess(cache, provider_id)
         self._provider = provider
+        self._cancel = cancel
         self._searches: dict[tuple[str, int | None], tuple[Candidate, ...]] = {}
 
     def search_films(self, *, hint: str, year: int | None) -> tuple[Candidate, ...]:
@@ -156,6 +164,8 @@ class FilmLookup:
         if results is None:
             results = self._provider.search_films(hint=hint, year=year)
             if not results and year is not None:
+                if self._cancel is not None and self._cancel.is_set():
+                    return ()
                 _LOG.info("No film found for %r year=%s; trying without the year", hint, year)
                 results = self.search_films(hint=hint, year=None)
             self._cache.put_search(ScanMode.FILM, hint, year, results)

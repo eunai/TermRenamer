@@ -438,7 +438,9 @@ class TermRenamerApp(App[None]):
             self.post_message(BuildProgress(event, cancel))
 
         try:
-            lookup = self._wiring.resolve(mode=options.mode, provider_id=options.provider_id)
+            lookup = self._wiring.resolve(
+                mode=options.mode, provider_id=options.provider_id, cancel=cancel
+            )
             build = plan_queue(sources, options, lookup, listener=post, cancel=cancel)
         except (ValidationError, ProviderError) as exc:
             return _BuildOutcome(plan=None, skipped=(), error=str(exc))
