@@ -1,4 +1,4 @@
-"""Text the screen did not write itself (a path, a file name, a Provider's name, an error)
+"""Text the screen did not write itself (a path, a file name, a Match's name as the Provider returned it, an error)
 reaches the screen as itself: never read as markup, whatever brackets or backslashes it
 holds. A Windows folder ends in a backslash, which must not escape what follows it.
 
@@ -36,8 +36,8 @@ from .test_plan_stragglers import _two_discs, _write
 from .test_screen_pick_match import picker_lines
 
 MARKUP_NAME = "[$accent]x [bold]Harbour Lights[/] $name \\"
-"""A Provider's name that reads as markup, a style variable and a value's name included,
-ending in a backslash."""
+"""A Match's name, as a Provider returns it, that reads as markup, a style variable and
+a value's name included, ending in a backslash."""
 
 FOLDER_NAMES = [
     pytest.param("[$accent]x [b]TV[i] $text", id="markup"),
@@ -87,7 +87,7 @@ async def test_an_applied_line_shows_a_folder_a_name_and_a_reason_in_brackets_as
 
 
 @pytest.mark.parametrize("name", FOLDER_NAMES)
-async def test_the_apply_confirm_shows_a_destination_root_and_a_provider_name_as_they_are(
+async def test_the_apply_confirm_shows_a_destination_root_and_a_match_name_as_they_are(
     tmp_path: Path, name: str
 ) -> None:
     show = _two_discs(tmp_path)
@@ -140,7 +140,7 @@ async def test_a_message_shows_a_folder_in_brackets_as_it_is(tmp_path: Path, nam
     assert refused == f"Already queued: {folder}"
 
 
-async def test_a_message_shows_a_provider_name_in_brackets_as_it_is(tmp_path: Path) -> None:
+async def test_a_message_shows_a_match_name_in_brackets_as_it_is(tmp_path: Path) -> None:
     first = Candidate(id="1", name="Heat", year=1995)
     second = Candidate(id="2", name=MARKUP_NAME, year=1986)
     films = FilmStandIn(films={("heat", 1995): (first, second)})
