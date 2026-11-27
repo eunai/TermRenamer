@@ -30,8 +30,8 @@ A film:
 | --------------------- | ----------------------- |
 | `the_matrix_1999.mkv` | `The Matrix (1999).mkv` |
 
-Turn on **folder rename** and the files also move into a folder tree. For TV,
-turn on **season folders** as well:
+Turn on **Folder rename** and the files also move into a folder tree. For TV,
+turn on **Season folder** as well:
 
 ```text
 The Matrix (1999)/
@@ -126,9 +126,9 @@ The settings:
 | `TERMRENAMER_TVDB_SUBSCRIBER_PIN`       | none     | TheTVDB subscriber PIN, for accounts that need one. Not a key on its own.              |
 | `TERMRENAMER_OMDB_API_KEY`              | none     | OMDb key. Needed to build a Plan with OMDb.                                            |
 | `TERMRENAMER_ENABLE_FOLDER_RENAME`      | `false`  | Move files into show or film folders, not just rename the filename.                    |
-| `TERMRENAMER_ENABLE_SEASON_FOLDERS`     | `false`  | Place TV episodes in `Season NN` folders. Needs folder rename.                         |
-| `TERMRENAMER_FILM_DEST_FOLDER`          | unset    | Destination root for film output. Used only when folder rename is on.                  |
-| `TERMRENAMER_TV_DEST_FOLDER`            | unset    | Destination root for TV output. Used only when folder rename is on.                    |
+| `TERMRENAMER_ENABLE_SEASON_FOLDERS`     | `false`  | Place TV episodes in `Season NN` folders. Needs Folder rename.                         |
+| `TERMRENAMER_FILM_DEST_FOLDER`          | unset    | Destination root for film output. Used only when Folder rename is on.                  |
+| `TERMRENAMER_TV_DEST_FOLDER`            | unset    | Destination root for TV output. Used only when Folder rename is on.                    |
 | `TERMRENAMER_NAME_TAKEN`                | `suffix` | When a new name is taken: `suffix` adds a number, `skip` leaves the file.              |
 | `TERMRENAMER_THEME`                     | `dark`   | Screen colours: `dark` or `light`.                                                     |
 | `TERMRENAMER_SHOW_POSTERS`              | `true`   | Show the selected Title's Poster, when the `posters` extra is installed and it can be. |
@@ -218,7 +218,7 @@ Apply and Undo confirms, the Match picker, the file and folder dialogs).
 - **Plan, Preview, then Apply.** No rename runs until you confirm. The Apply
   confirm counts the videos renamed and skipped, names each Sidecar skipped
   while its video moves, and says that nothing has been renamed yet.
-- **TV and Film modes.** TV uses TMDB or TheTVDB v4. Film uses TMDB or OMDb.
+- **TV and Film Modes.** TV uses TMDB or TheTVDB v4. Film uses TMDB or OMDb.
   OMDb is a Provider you select, not an automatic fallback. At start, and when
   you change Mode, the Provider is the first of that Mode that has a key.
 - **Source queue.** Add files with `a` and folders with `f`. A folder is
@@ -239,8 +239,8 @@ Apply and Undo confirms, the Match picker, the file and folder dialogs).
   square brackets and backslashes included.
 - **Pick a different Match.** `t` opens the Match picker: the current Match, the
   Provider's next Candidate and "Type a title". While Posters show, it is a wide
-  dialog of three tiles side by side, each Candidate's Poster with its name,
-  year and key under it, and the typing field in the third tile; otherwise it is
+  dialog of up to three tiles side by side, each Candidate's Poster with its name,
+  year and key under it, and the typing field in the last tile; otherwise it is
   a plain list. `←` `→` or `↑` `↓` move, `1` to `3` or `Enter` choose, `/` goes
   to typing and `Esc` closes it with nothing changed. Typing searches the
   Provider again; a four-digit year at the end of the text is the year. A pick
@@ -273,11 +273,11 @@ Apply and Undo confirms, the Match picker, the file and folder dialogs).
   Applied Stage lists every skipped file with its reason. If a file or folder
   appears at a destination after the Preview, Apply skips that file or folder. Nothing
   is ever overwritten.
-- **Folder layouts.** With folder rename on, files move into show or film
+- **Folder layouts.** With Folder rename on, files move into show or film
   folders, with optional `Season NN` folders for TV. Destination roots apply
-  only when folder rename is on; when none is set, the tree is built in the
+  only when Folder rename is on; when none is set, the tree is built in the
   queued folder, or in the folder of a queued file.
-- **Stragglers.** With folder rename on, the Plan lists the Stragglers it will
+- **Stragglers.** With Folder rename on, the Plan lists the Stragglers it will
   merge: the files and folders left in a queued folder, or a folder inside one,
   after a video moves out of it. Apply merges them into the target folder, and
   a folder moves as its files. A video with no match, not recognised or
@@ -285,7 +285,7 @@ Apply and Undo confirms, the Match picker, the file and folder dialogs).
   beside a queued file stay where they are.
 - **Sidecars.** `.srt`, `.nfo`, `.sub` and `.idx` files move with the video in
   the same folder whose filename matches theirs apart from the extension,
-  ignoring case. A Sidecar moves only if its video does.
+  ignoring case. A Sidecar is renamed only if its video was renamed or already has its name.
 - **Safe moves.** Apply claims each new name with the move itself, so nothing
   that appears at a name while Apply runs is replaced. A symbolic link or
   junction to a folder is moved as itself, and Apply never enters it. Apply goes
@@ -333,8 +333,8 @@ Apply and Undo confirms, the Match picker, the file and folder dialogs).
 - A not recognised TV file cannot be matched by hand; typing its season and
   episode is planned ([#14](https://github.com/eunai/TermRenamer/issues/14)).
 - Apply and Undo cannot defend against another program that changes the same
-  file or name between their last check and the very next call, and Apply
-  cannot defend against one that deletes or writes over a name Apply has claimed.
+  file or name between their last check and the very next call, or one that
+  deletes or writes over a name they have claimed.
 
 ## Troubleshooting
 
