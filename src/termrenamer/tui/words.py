@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from termrenamer.core.models import PROVIDER_NAMES, ScanMode
+from termrenamer.core.models import PROVIDER_NAMES, EntryStatus, PlanEntry, ScanMode
 
 
 def noun(n: int, word: str) -> str:
@@ -32,3 +32,16 @@ def mode_label(mode: ScanMode) -> str:
 def provider_name(provider_id: str) -> str:
     """The Provider's name as the screen writes it, such as ``TheTVDB`` for ``tvdb``."""
     return PROVIDER_NAMES.get(provider_id, provider_id)
+
+
+def name_taken_note(entry: PlanEntry) -> str | None:
+    """What Apply does with ``entry`` because its name is taken; ``None`` when it is not.
+
+    With a numbered name (Name taken set to ``suffix``) it is renamed to that name;
+    without one (``skip``) Apply skips it.
+    """
+    if entry.status is not EntryStatus.NAME_TAKEN:
+        return None
+    if entry.destination is None:
+        return "Name taken: Apply skips it, and it stays where it is."
+    return f"Name taken: it gets a number, as {entry.destination.name}."

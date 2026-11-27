@@ -6,6 +6,8 @@ over the Title list, right of where the Poster panel goes.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -34,7 +36,8 @@ class ApplyConfirm(ModalScreen[bool]):
     ApplyConfirm #confirm-dialog {
         width: 62;
         max-width: 100%;
-        height: 12;
+        height: auto;
+        max-height: 100%;
         margin-right: 12;
         padding: 0 2;
         border: round $accent;
@@ -43,29 +46,49 @@ class ApplyConfirm(ModalScreen[bool]):
         background: $tr-dialog;
     }
     ApplyConfirm #confirm-lines {
-        height: 6;
-        padding: 1 0 0 0;
+        height: auto;
+        padding: 1 0 1 0;
     }
     ApplyConfirm .buttons {
         height: 1;
+        margin-bottom: 1;
     }
     ApplyConfirm .buttons ActionButton {
         margin: 0 2 0 0;
     }
     """
 
-    def __init__(self, *, videos: int, under: str, no_match: int, not_recognised: int) -> None:
+    def __init__(
+        self,
+        *,
+        videos: int,
+        under: str,
+        no_match: int,
+        not_recognised: int,
+        name_taken: int = 0,
+        sidecars: Sequence[tuple[str, str]] = (),
+    ) -> None:
+        """``name_taken`` counts the videos skipped for a taken name; ``sidecars`` names
+        each Sidecar skipped while its video moves, with the reason."""
         super().__init__()
         self._videos = videos
         self._under = under
         self._skipped = f"Skip {no_match} with no match · {not_recognised} not recognised"
+        if name_taken:
+            self._skipped += f" · {name_taken} name taken"
+        self._sidecars = tuple(sidecars)
 
     def compose(self) -> ComposeResult:
         noun = "video" if self._videos == 1 else "videos"
+        sidecars = "".join(
+            f"[$tr-dim]Sidecar skipped: {escape(name)} · {escape(reason)}[/]\n"
+            for name, reason in self._sidecars
+        )
         with Vertical(id="confirm-dialog"):
             yield Static(
                 f"[$foreground]Rename {self._videos} {noun} {escape(self._under)}.[/]\n"
-                f"[$foreground]{self._skipped}[/]\n\n"
+                f"[$foreground]{self._skipped}[/]\n"
+                f"{sidecars}\n"
                 "[$warning]Nothing has been renamed yet.[/]",
                 id="confirm-lines",
             )

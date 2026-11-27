@@ -4,14 +4,15 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.markup import escape
 from textual.widgets import Static
 
-from termrenamer.core.models import Plan
+from termrenamer.core.models import Plan, PlanEntry, videos_of
 from termrenamer.core.title_rows import PlanCounts, TitleRow, title_rows
 from termrenamer.tui.stages.title_list_stage import TitleListStage, match_name
 from termrenamer.tui.widgets.action_button import ActionButton
 from termrenamer.tui.widgets.title_list import ListRow, StatusWord, TitleList
-from termrenamer.tui.words import plural
+from termrenamer.tui.words import name_taken_note, plural
 
 
 class PreviewStage(TitleListStage):
@@ -57,6 +58,23 @@ class PreviewStage(TitleListStage):
         if selected is None:
             return None
         return self._rows[int(selected.key)]
+
+    @property
+    def selected_file(self) -> PlanEntry | None:
+        """The selected Title's first video, by season and episode in TV Mode."""
+        row = self.selected_row
+        if row is None:
+            return None
+        files = sorted(videos_of(row.entries), key=lambda e: (e.season or 0, e.episode or 0))
+        return files[0] if files else None
+
+    def footer_lines(self) -> tuple[str, ...]:
+        """What Apply does with the selected file when its name is taken."""
+        selected = self.selected_file
+        note = name_taken_note(selected) if selected is not None else None
+        if note is None:
+            return ()
+        return (f"[$warning]{escape(note)}[/]",)
 
     def show_plan(self, plan: Plan) -> None:
         """Show ``plan``'s Titles, and each not recognised video as a row of its own."""

@@ -28,6 +28,7 @@ from termrenamer.app_bootstrap import Settings, ThemeName
 from termrenamer.core.apply import apply_plan
 from termrenamer.core.models import (
     ApplyResult,
+    EntryStatus,
     Plan,
     PlanOptions,
     ScanMode,
@@ -35,7 +36,7 @@ from termrenamer.core.models import (
 from termrenamer.core.planning import plan_queue
 from termrenamer.core.progress import PlanEvent
 from termrenamer.core.queue import SourceQueue
-from termrenamer.core.title_rows import PlanCounts
+from termrenamer.core.title_rows import PlanCounts, sidecars_skipped_alone
 from termrenamer.session_settings import SessionSettings, locked_message
 from termrenamer.tui import keys
 from termrenamer.tui.dialogs import ApplyConfirm
@@ -348,6 +349,12 @@ class TermRenamerApp(App[None]):
             under=under,
             no_match=counts.no_match,
             not_recognised=counts.not_recognised,
+            name_taken=sum(
+                1
+                for v in plan.videos
+                if v.status is EntryStatus.NAME_TAKEN and v.destination is None
+            ),
+            sidecars=[(e.source.name, e.status.value) for e in sidecars_skipped_alone(plan)],
         )
         self.push_screen(confirm, self._apply_answered)
 

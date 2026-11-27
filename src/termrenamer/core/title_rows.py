@@ -129,3 +129,33 @@ def title_rows(plan: Plan) -> tuple[TitleRow, ...]:
             )
         )
     return tuple(rows)
+
+
+def sidecars_skipped_alone(plan: Plan) -> tuple[PlanEntry, ...]:
+    """The Sidecars Apply will skip while their videos move: a Sidecar whose own name is
+    taken under Name taken ``skip``."""
+    named = {entry.source for entry in plan.videos if entry.destination is not None}
+    return tuple(
+        entry for entry in plan.entries if entry.video in named and entry.destination is None
+    )
+
+
+def skipped_results(
+    plan: Plan, results: Sequence[ApplyResult]
+) -> tuple[tuple[ApplyResult, ...], tuple[ApplyResult, ...]]:
+    """What Apply skipped: the videos, and the Sidecars skipped while their videos moved.
+
+    A Sidecar whose video was skipped or failed is in neither: it stayed with its video.
+    """
+    videos = {entry.source for entry in plan.videos}
+    moved = {
+        r.source
+        for r in results
+        if r.source in videos and r.status in (ApplyStatus.RENAMED, ApplyStatus.UNCHANGED)
+    }
+    video_of = {entry.source: entry.video for entry in plan.entries if entry.is_sidecar}
+    skipped = [r for r in results if r.status is ApplyStatus.SKIP]
+    return (
+        tuple(r for r in skipped if r.source in videos),
+        tuple(r for r in skipped if video_of.get(r.source) in moved),
+    )
