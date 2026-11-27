@@ -6,9 +6,13 @@ Run from the repo root::
 
 It writes ``docs/assets/preview.svg``. The app runs headless at a fixed terminal size,
 with static providers in place of TMDB, so the script needs no network, no API key and
-no settings file. The source files are empty stand-ins for the owner's backups, made in
-a temporary folder; the Preview shows Titles, not paths, so no path from this machine
-reaches the image, and the screen shows no clock, so two runs give the same file.
+no settings file. The source files are empty stand-ins for a person's backups, made in
+a temporary folder under folders of fixed names. The footer shows the selected file's
+paths cut from the left to fit its width, and each file's path below the temporary
+folder (the fixed folders and the file's name) is at least that long, so the temporary
+folder's own path, which differs from run to run and names this machine, never reaches
+the image. The screen shows no clock, so two runs give the same
+file.
 """
 
 from __future__ import annotations
@@ -22,13 +26,20 @@ from termrenamer.api.tmdb import StaticFilmMetadataProvider, StaticTvMetadataPro
 from termrenamer.app_bootstrap import Settings
 from termrenamer.core.models import EpisodeMetadata
 from termrenamer.tui.app import TermRenamerApp
+from termrenamer.tui.stages.preview import footer_path_width
 from termrenamer.wiring import PlanningWiring
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUT = REPO_ROOT / "docs" / "assets" / "preview.svg"
 
 TERMINAL_SIZE = (120, 36)
+BACKUP_FOLDERS = (
+    "Backups of my shows and films",
+    "Copied from my old hard drives before the move in 2019",
+)
+"""The folders above the Source, so the footer's paths start inside them."""
 SOURCE_FOLDER = "TV Backups"
+
 SHOW = "Breaking Bad"
 EPISODES = {
     1: "Pilot",
@@ -70,12 +81,15 @@ def _settings() -> Settings:
 
 
 def _make_backups(parent: Path) -> Path:
-    folder = parent / SOURCE_FOLDER
-    folder.mkdir()
+    folder = parent.joinpath(*BACKUP_FOLDERS, SOURCE_FOLDER)
+    folder.mkdir(parents=True)
     for number in EPISODES:
         stem = f"breaking_bad_s01e{number:02d}"
         (folder / f"{stem}.mkv").write_bytes(b"")
         (folder / f"{stem}.srt").write_bytes(b"")
+    shortest = min(len(str(path.relative_to(parent))) for path in folder.iterdir())
+    if shortest < footer_path_width(TERMINAL_SIZE[0]):
+        raise RuntimeError("The fixed folders are too short to keep the temporary path out")
     return folder
 
 

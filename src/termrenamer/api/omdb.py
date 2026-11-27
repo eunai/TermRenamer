@@ -12,6 +12,7 @@ from termrenamer.api.tmdb import StaticFilmMetadataProvider
 from termrenamer.core.models import Candidate, MovieMetadata
 from termrenamer.util.errors import ProviderError
 from termrenamer.util.http import HttpClient
+from termrenamer.util.logging import keep_out_of_logs
 
 _LOG = logging.getLogger(__name__)
 _OMDB_BASE = "https://www.omdbapi.com/"
@@ -56,6 +57,7 @@ class OmdbProvider:
     ) -> None:
         self._http = http
         self._api_key = api_key.strip()
+        keep_out_of_logs(self._api_key)
         self._base = base_url.rstrip("/")
 
     def search_films(self, *, hint: str, year: int | None) -> tuple[Candidate, ...]:
