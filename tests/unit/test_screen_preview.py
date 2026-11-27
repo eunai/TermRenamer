@@ -252,9 +252,49 @@ async def test_the_apply_confirm_names_the_destination_root(tmp_path: Path) -> N
         lines = lines_of(app, "#confirm-lines")
         await press(pilot, "n")
     assert lines[:2] == [
-        f"Rename 3 videos under {root}{os.sep}.",
+        f"Rename 3 videos into show folders under {root}{os.sep}.",
         "Skip 1 video: 1 not recognised",
     ]
+
+
+async def test_the_apply_confirm_says_videos_move_into_show_and_season_folders(
+    tmp_path: Path,
+) -> None:
+    folder = tv_backups(tmp_path).resolve()
+    app = make_app(loaded=settings(folder_rename=True, season_folders=True))
+    async with app.run_test(size=WIDE) as pilot:
+        await queue(pilot, folder)
+        await build(pilot)
+        to = lines_of(app, "#stage-lines")[1]
+        await press(pilot, "enter")
+        lines = lines_of(app, "#confirm-lines")
+        await press(pilot, "n")
+    # The Preview moves the video into the show's season folder, in the queued folder.
+    moved = (
+        folder / "Harbour Lights" / "Season 01" / "Harbour Lights - S01E01 - The Tide Comes In.mkv"
+    )
+    assert to.startswith(f"to {moved} ·")
+    assert (
+        lines[0]
+        == "Rename 3 videos into show and season folders in the folders they were queued from."
+    )
+
+
+async def test_the_apply_confirm_says_films_move_into_film_folders(tmp_path: Path) -> None:
+    folder = tmp_path / "Films"
+    folder.mkdir()
+    folder = folder.resolve()
+    (folder / "Metropolis 1927.mkv").write_bytes(b"x")
+    root = tmp_path / "Library"
+    app = make_app(loaded=settings(folder_rename=True, film_root=root))
+    async with app.run_test(size=WIDE) as pilot:
+        await press(pilot, "m")
+        await queue(pilot, folder)
+        await build(pilot)
+        await press(pilot, "enter")
+        lines = lines_of(app, "#confirm-lines")
+        await press(pilot, "n")
+    assert lines[0] == f"Rename 1 video into a film folder under {root}{os.sep}."
 
 
 async def test_the_apply_confirm_says_when_nothing_is_skipped(tmp_path: Path) -> None:

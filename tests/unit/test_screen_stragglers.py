@@ -48,7 +48,7 @@ async def test_the_preview_the_confirm_and_the_applied_stage_count_the_straggler
         counts = lines_of(app, "#applied-counts")
     assert summary[-1] == "0 left out · 3 Stragglers merge"
     assert confirm[:3] == [
-        "Rename 2 videos in their own folders.",
+        "Rename 2 videos into show and season folders in the folders they were queued from.",
         "Skip none.",
         "Merge 3 Stragglers (Harbour Lights)",
     ]
