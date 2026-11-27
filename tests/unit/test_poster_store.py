@@ -430,14 +430,17 @@ def poster_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
     return [r.getMessage() for r in caplog.records if "poster folder" in r.getMessage()]
 
 
-@pytest.mark.parametrize("linked", ["posters", "termrenamer"])
+@pytest.mark.parametrize(
+    ("linked", "outside"), [("posters", True), ("termrenamer", True), ("termrenamer", False)]
+)
 def test_a_poster_folder_reached_through_a_link_is_never_read_or_written(
-    tmp_path: Path, linked: str, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, linked: str, outside: bool, caplog: pytest.LogCaptureFixture
 ) -> None:
     # Either the posters folder or the termrenamer folder holding it is a link to a
-    # folder outside the cache folder, where a store's files already are.
+    # folder, outside the cache folder or inside it, where a store's files already are.
     clock = Clock()
-    cache, elsewhere = tmp_path / "cache", tmp_path / "elsewhere"
+    cache = tmp_path / "cache"
+    elsewhere = tmp_path / "elsewhere" if outside else cache / "elsewhere"
     link = cache / "termrenamer" / "posters" if linked == "posters" else cache / "termrenamer"
     link.parent.mkdir(parents=True)
     target = elsewhere if linked == "posters" else elsewhere / "posters"

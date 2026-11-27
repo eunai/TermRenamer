@@ -10,8 +10,8 @@ extra), a body is decoded whole before it is stored, so a stored file always dra
 
 The store keeps no Poster in memory, so several threads may fetch at once. A folder or
 file the store cannot reach counts as no file, never as a crash. Before it reads,
-writes or deletes a file, the store checks that its folder is a real folder (no link
-and no junction) whose real place is inside the per-user cache folder; otherwise it
+writes or deletes a file, the store checks that its folder is a real folder, reached
+through no link and no junction from the per-user cache folder and really inside it; otherwise it
 does nothing, logs one line for the run, and every Poster is "no poster".
 """
 
@@ -135,11 +135,17 @@ def poster_folder() -> Path:
 
 
 def _folder_refusal(folder: Path, inside: Path) -> str | None:
-    """Why the store may not use ``folder``, or ``None``: it must be no link and no
-    junction, a folder when it exists, and its real place inside ``inside``'s."""
+    """Why the store may not use ``folder``, or ``None``: neither it nor any folder
+    between ``inside`` and it may be a link or a junction, it must be a folder when it
+    exists, and its real place must be inside ``inside``'s."""
+    if not folder.is_relative_to(inside):
+        return f"is not inside {inside}"
     try:
-        if folder.is_symlink() or folder.is_junction():
-            return "is a link"
+        place = folder
+        while place != inside:
+            if place.is_symlink() or place.is_junction():
+                return f"is reached through a link ({place})"
+            place = place.parent
         if folder.exists() and not folder.is_dir():
             return "is not a folder"
         real, real_inside = folder.resolve(), inside.resolve()
@@ -280,8 +286,8 @@ class PosterStore:
     def _write(self, path: Path, body: bytes) -> None:
         """Write ``body`` to ``path`` through a temporary file beside it."""
         self._folder.mkdir(parents=True, exist_ok=True)
-        if self._refused():  # made through a link since the last check
-            raise OSError("the poster folder is refused")
+        if self._refused():  # reached through a link made since the last check
+            raise PosterFolderRefused("the poster folder is refused")
         handle, temporary = tempfile.mkstemp(dir=self._folder, prefix=path.stem + ".", suffix=_PART)
         try:
             with os.fdopen(handle, "wb") as out:
