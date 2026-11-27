@@ -35,7 +35,7 @@ The folder under which folder rename builds the show or film tree, set separatel
 _Avoid_: destination folder, output root
 
 **Straggler**:
-A file or folder left behind in a source folder after a plan's moves, which apply can merge into the destination folder.
+A file or folder left behind in a source folder after a plan's moves, which apply can merge into the target folder.
 _Avoid_: stray file
 
 **User settings file**:
