@@ -78,12 +78,16 @@ def is_same_folder(folder: Path, target: Path) -> bool:
         return True
     if claim_key(folder) != claim_key(target):
         return False
-    try:
-        folder_stat = os.lstat(folder)
-    except OSError:
+    if not os.path.lexists(folder):
         return True
+    return _same_entry(folder, target)
+
+
+def _same_entry(path: Path, other: Path) -> bool:
+    """Whether ``path`` and ``other`` both exist and are one directory entry, links not
+    followed."""
     try:
-        return os.path.samestat(folder_stat, os.lstat(target))
+        return os.path.samestat(os.lstat(path), os.lstat(other))
     except OSError:
         return False
 
@@ -94,11 +98,17 @@ def _with_numeric_suffix(path: Path, n: int) -> Path:
 
 def _in_its_folder(desired: Path, source: Path) -> Path:
     """``desired``, spelled in ``source``'s folder as the Plan recorded it when its folder
-    is that folder under another spelling (:func:`is_same_folder`), such as a
-    Destination root typed ``library`` for a folder the disk lists as ``Library``: so a
-    file that has its name keeps it, and a case-only rename stays one."""
-    if str(desired.parent) != str(source.parent) and is_same_folder(source.parent, desired.parent):
-        return source.parent / desired.name
+    is that folder under another spelling (letter case or Unicode form) and the disk
+    shows both as one directory entry, such as a Destination root typed ``library`` for
+    a folder the disk lists as ``Library``: so a file that has its name keeps it, and a
+    case-only rename stays one. A folder that is gone is never spelled in."""
+    folder, wanted_folder = source.parent, desired.parent
+    if (
+        str(wanted_folder) != str(folder)
+        and claim_key(wanted_folder) == claim_key(folder)
+        and _same_entry(folder, wanted_folder)
+    ):
+        return folder / desired.name
     return desired
 
 

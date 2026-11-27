@@ -336,3 +336,20 @@ def test_a_source_folder_gone_after_the_build_turns_its_stragglers_off_in_a_deri
     left_out = derive_plan(plan, LeaveOut(plan.videos[0]))
 
     assert left_out.stragglers == ()
+
+
+def test_a_derive_never_spells_a_new_name_in_a_source_folder_gone_since_the_build(
+    tmp_path: Path,
+) -> None:
+    _needs_case_sensitive(tmp_path)
+    source = tmp_path.resolve() / "Backups"
+    old = source / "show name"
+    _write(old / "Show.Name.S01E01.mkv")
+    _write(old / "Show.Name.S01E02.mkv")
+    plan = plan_queue([source], _options(folder_rename=True), _provider()).plan
+    built = [str(e.destination) for e in plan.entries]
+    old.rename(source / "Moved")
+
+    left_out = derive_plan(plan, LeaveOut(plan.videos[0]))
+
+    assert [str(e.destination) for e in left_out.entries][1:] == built[1:]

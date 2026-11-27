@@ -338,7 +338,9 @@ def test_a_merged_film_title_names_every_file_from_the_one_match_as_a_fresh_buil
     )
     [merged] = derived.titles
     assert (merged.name, merged.year, merged.match) == ("Heat Redux", 1996, HEAT_REFRESHED)
-    assert [e.destination for e in derived.entries] == [e.destination for e in fresh.entries]
+    assert [str(e.destination) for e in derived.entries] == [
+        str(e.destination) for e in fresh.entries
+    ]
 
 
 HARBOUR_REFRESHED = Candidate(id="11", name="Harbour Lights Redux", year=2019)

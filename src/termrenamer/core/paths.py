@@ -71,8 +71,8 @@ def as_listed(path: Path) -> Path:
     Unicode form the disk keeps. A part not found that way, or in a folder that cannot be
     listed, is kept as written with every part after it. So the same file reached under
     two spellings has one path as text, and two files whose names differ only in letter
-    case on a disk that tells them apart keep theirs. A build calls it; a derive never
-    does.
+    case on a disk that tells them apart keep theirs. The queue and a build call it;
+    a derive never does.
     """
     spelled = Path(path.anchor)
     parts = path.parts[1:] if path.anchor else path.parts
