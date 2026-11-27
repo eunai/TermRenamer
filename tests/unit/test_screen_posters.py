@@ -26,6 +26,7 @@ from termrenamer.tui.widgets.footer import AppFooter
 from termrenamer.tui.widgets.poster_panel import PosterPanel
 from termrenamer.tui.widgets.title_details import TitleDetails
 
+from .links import point_folder_at
 from .screen_driver import (
     POSTERS_AVAILABLE,
     POSTERS_UNREADABLE,
@@ -362,8 +363,9 @@ def poster_logs(app: TermRenamerApp) -> list[str]:
 async def test_a_failed_download_is_remembered_even_when_its_view_went_away(
     tmp_path: Path,
 ) -> None:
-    # The download's outcome belongs to the download: its view's worker is cancelled
-    # (as when the view is removed), and the 404 still counts once.
+    # The download's outcome belongs to the download: the screen shrinks below the
+    # size for Posters while the answer is on its way, so the panel goes, and the 404
+    # still counts once; the panel back does not ask again.
     gate = threading.Event()
     host = ImageHost(status=404, gate=gate)
     app = poster_app(tmp_path, host)
@@ -372,13 +374,13 @@ async def test_a_failed_download_is_remembered_even_when_its_view_went_away(
         await press(pilot, "b")
         await until(pilot, lambda: bool(host.requests))
         assert app.stage is Stage.PREVIEW and len(host.requests) == 1
-        view = panel(app).view
-        assert app.workers.cancel_group(view, "poster")
+        await pilot.resize_terminal(90, 28)
+        await pilot.pause(0.2)
+        assert not panel(app).display
         gate.set()
         await until(pilot, lambda: bool(poster_logs(app)))
-        await press(pilot, "down")
-        await press(pilot, "up")
-        await pilot.pause(0.2)
+        await pilot.resize_terminal(*SIZE)
+        await pilot.pause(0.3)
         words = panel_text(app)
         logs = poster_logs(app)
     assert len(host.requests) == 1
@@ -427,6 +429,29 @@ async def test_hiding_posters_during_a_download_starts_no_new_attempt(tmp_path: 
         tried_again = len(host.requests)
     assert while_hidden == 1
     assert tried_again == 3  # shown again: a new download, two attempts
+
+
+async def test_a_poster_folder_that_is_a_link_shows_no_poster_and_logs_one_line(
+    tmp_path: Path,
+) -> None:
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    point_folder_at(tmp_path / "posters", elsewhere)
+    host = ImageHost()
+    app = poster_app(tmp_path, host)
+    async with app.run_test(size=SIZE) as pilot:
+        await built(pilot, tmp_path)
+        await pilot.pause(0.2)
+        words = panel_text(app)
+        logs = [
+            line
+            for _n, line in app.log_book.lines_after(0)
+            if "No Poster" in line or "Posters are not stored" in line
+        ]
+    assert "no poster" in words
+    assert host.requests == []
+    assert list(elsewhere.iterdir()) == []
+    assert len(logs) == 1 and "poster folder" in logs[0]
 
 
 # ------------------------------------------------------------ hiding them
