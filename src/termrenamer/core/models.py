@@ -68,6 +68,24 @@ class FilmParseResult:
 
 
 @dataclass(frozen=True, slots=True)
+class Candidate:
+    """One result of a Provider search, in the Provider's order.
+
+    The first result of a search becomes a Title's Match; the others are its
+    Candidates. ``id`` is the Provider's own id (a TV show id is what an episode
+    lookup takes). ``year`` is the release year for a film (always known) or the
+    first-aired year for a show (``None`` when the Provider gives none).
+    ``poster_ref`` is the Provider's Poster reference, such as TMDB's poster path
+    or TheTVDB's image URL, or ``None``.
+    """
+
+    id: str
+    name: str
+    year: int | None
+    poster_ref: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class EpisodeMetadata:
     """Resolved metadata for a TV episode."""
 

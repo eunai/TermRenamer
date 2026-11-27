@@ -5,12 +5,19 @@ from __future__ import annotations
 from pathlib import Path
 
 from termrenamer.api.tmdb import StaticFilmMetadataProvider, StaticTvMetadataProvider
-from termrenamer.core.models import EpisodeMetadata, MovieMetadata, PlanEntryStatus, ScanMode
+from termrenamer.core.models import (
+    Candidate,
+    EpisodeMetadata,
+    MovieMetadata,
+    PlanEntryStatus,
+    ScanMode,
+)
 from termrenamer.core.planning import (
     build_rename_plan,
     filter_plan_to_queued_path,
     merge_rename_plans,
 )
+from termrenamer.util.errors import ProviderError
 
 
 def test_plan_groups_sidecar_with_primary(tmp_path: Path) -> None:
@@ -165,3 +172,25 @@ def test_merge_rename_plans_suffixes_when_destinations_collide(tmp_path: Path) -
     assert len(dest_names) == 2
     assert any(n.endswith(".mkv") for n in dest_names)
     assert len(set(dest_names)) == 2
+
+
+def test_a_failed_lookup_leaves_the_video_unmatched_as_before(tmp_path: Path) -> None:
+    class Failing:
+        def search_shows(self, *, hint: str) -> tuple[Candidate, ...]:
+            raise ProviderError("TMDB request failed with HTTP 503")
+
+        def episode_title(self, *, show_id: str, season: int, episode: int) -> str | None:
+            raise AssertionError("not reached")
+
+        def search_films(self, *, hint: str, year: int | None) -> tuple[Candidate, ...]:
+            raise ProviderError("OMDb: Request limit reached!")
+
+    (tmp_path / "Show.S01E01.mkv").write_bytes(b"v")
+    tv = build_rename_plan(root=tmp_path, mode=ScanMode.TV, provider=Failing())
+    assert [e.status for e in tv.entries] == [PlanEntryStatus.UNMATCHED]
+
+    film_root = tmp_path / "films"
+    film_root.mkdir()
+    (film_root / "Film.2001.mkv").write_bytes(b"f")
+    film = build_rename_plan(root=film_root, mode=ScanMode.FILM, provider=Failing())
+    assert [e.status for e in film.entries] == [PlanEntryStatus.UNMATCHED]

@@ -166,7 +166,8 @@ Key bindings:
   the same folder whose filename matches theirs apart from the extension,
   ignoring case.
 - **Metadata cache.** Setting `TERMRENAMER_CACHE_DB_PATH` switches on a SQLite
-  cache for TMDB and TheTVDB lookups. It is safe to delete.
+  cache for TMDB, TheTVDB and OMDb lookups. Each provider's entries are kept
+  apart, and a search that found nothing is not stored. It is safe to delete.
 - **Resilient requests.** Bounded retries, backoff, and `Retry-After`
   handling.
 
@@ -174,8 +175,6 @@ Key bindings:
 
 - `TERMRENAMER_LOG_FILE` has no effect yet
   ([#4](https://github.com/eunai/TermRenamer/issues/4)).
-- OMDb lookups are not cached
-  ([#5](https://github.com/eunai/TermRenamer/issues/5)).
 - There is no setting to skip an entry instead of adding a suffix on a
   collision ([#6](https://github.com/eunai/TermRenamer/issues/6)).
 

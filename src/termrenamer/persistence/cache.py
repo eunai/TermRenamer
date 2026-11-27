@@ -1,30 +1,64 @@
-"""SQLite-backed metadata lookup cache (optional acceleration)."""
+"""SQLite-backed lookup cache (optional acceleration; safe to delete)."""
 
 from __future__ import annotations
 
+import json
 import sqlite3
+import threading
 from pathlib import Path
 
-from termrenamer.core.models import EpisodeMetadata, MovieMetadata
+from termrenamer.core.models import Candidate, ScanMode
 from termrenamer.persistence import schema
 from termrenamer.persistence.sqlite import init_schema, open_cache_connection
 from termrenamer.util.errors import CacheError
 
 
-def _norm_show(s: str) -> str:
-    return s.casefold().strip()
+def normalise_hint(hint: str) -> str:
+    """The form a title hint is keyed by: case folded, outer spaces removed."""
+    return hint.casefold().strip()
 
 
-def _film_year_key(year_hint: int | None) -> int:
-    return year_hint if year_hint is not None else schema.YEAR_HINT_NONE_KEY
+def _year_key(year: int | None) -> int:
+    return year if year is not None else schema.YEAR_HINT_NONE_KEY
+
+
+def _encode(results: tuple[Candidate, ...]) -> str:
+    return json.dumps(
+        [{"id": c.id, "name": c.name, "year": c.year, "poster_ref": c.poster_ref} for c in results]
+    )
+
+
+def _decode(text: str) -> tuple[Candidate, ...]:
+    try:
+        rows = json.loads(text)
+        if not isinstance(rows, list):
+            raise TypeError("stored results are not a list")
+        return tuple(
+            Candidate(
+                id=str(row["id"]),
+                name=str(row["name"]),
+                year=None if row["year"] is None else int(row["year"]),
+                poster_ref=None if row["poster_ref"] is None else str(row["poster_ref"]),
+            )
+            for row in rows
+        )
+    except (ValueError, TypeError, KeyError) as exc:
+        msg = "Unreadable search entry in SQLite cache"
+        raise CacheError(msg) from exc
 
 
 class SqliteMetadataCache:
-    """Persist TV and film metadata lookups; safe to delete the file (performance only)."""
+    """Store search results and episode titles, every entry keyed by Provider.
+
+    Search results are keyed by Provider, Mode, normalised hint and year hint;
+    episode titles by Provider, show id, season and episode. One connection serves
+    every thread, one operation at a time.
+    """
 
     def __init__(self, path: Path) -> None:
         self._path = path
         self._conn: sqlite3.Connection | None = None
+        self._lock = threading.Lock()
 
     @property
     def path(self) -> Path:
@@ -33,124 +67,129 @@ class SqliteMetadataCache:
     def _connection(self) -> sqlite3.Connection:
         if self._conn is None:
             conn = open_cache_connection(self._path)
-            init_schema(conn)
+            try:
+                init_schema(conn)
+            except CacheError:
+                conn.close()
+                raise
             self._conn = conn
         return self._conn
 
     def close(self) -> None:
-        if self._conn is not None:
-            self._conn.close()
-            self._conn = None
+        with self._lock:
+            if self._conn is not None:
+                self._conn.close()
+                self._conn = None
 
     def __del__(self) -> None:
         """Best-effort close; prefer explicit :meth:`close` in app/teardown code."""
 
         self.close()
 
-    def get_tv_episode(
+    def get_search(
         self,
         *,
-        show_hint: str,
+        provider: str,
+        mode: ScanMode,
+        hint: str,
+        year: int | None,
+    ) -> tuple[Candidate, ...] | None:
+        """Return the stored results of a search, or ``None`` when none is stored."""
+        key = (provider, mode.value, normalise_hint(hint), _year_key(year))
+        with self._lock:
+            try:
+                row = (
+                    self._connection()
+                    .execute(
+                        """
+                        SELECT results FROM search_lookup
+                        WHERE provider = ? AND mode = ? AND hint_norm = ? AND year_hint_key = ?
+                        """,
+                        key,
+                    )
+                    .fetchone()
+                )
+            except sqlite3.Error as exc:
+                msg = "SQLite read failed for search cache"
+                raise CacheError(msg) from exc
+        return None if row is None else _decode(row["results"])
+
+    def put_search(
+        self,
+        *,
+        provider: str,
+        mode: ScanMode,
+        hint: str,
+        year: int | None,
+        results: tuple[Candidate, ...],
+    ) -> None:
+        """Store a search's results (the caller stores nothing for "nothing found")."""
+        key = (provider, mode.value, normalise_hint(hint), _year_key(year))
+        self._write(
+            """
+            INSERT INTO search_lookup (provider, mode, hint_norm, year_hint_key, results)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(provider, mode, hint_norm, year_hint_key) DO UPDATE SET
+                results = excluded.results
+            """,
+            (*key, _encode(results)),
+            what="search",
+        )
+
+    def get_episode(
+        self,
+        *,
+        provider: str,
+        show_id: str,
         season: int,
         episode: int,
-    ) -> EpisodeMetadata | None:
-        """Return cached TV metadata or ``None`` on miss."""
-        key = _norm_show(show_hint)
-        try:
-            row = (
-                self._connection()
-                .execute(
-                    """
-                SELECT show_title, episode_title FROM tv_lookup
-                WHERE show_hint_norm = ? AND season = ? AND episode = ?
-                """,
-                    (key, season, episode),
+    ) -> str | None:
+        """Return the stored episode title, or ``None`` when none is stored."""
+        with self._lock:
+            try:
+                row = (
+                    self._connection()
+                    .execute(
+                        """
+                        SELECT episode_title FROM episode_lookup
+                        WHERE provider = ? AND show_id = ? AND season = ? AND episode = ?
+                        """,
+                        (provider, show_id, season, episode),
+                    )
+                    .fetchone()
                 )
-                .fetchone()
-            )
-        except sqlite3.Error as exc:
-            msg = "SQLite read failed for TV cache"
-            raise CacheError(msg) from exc
-        if row is None:
-            return None
-        return EpisodeMetadata(show_title=row["show_title"], episode_title=row["episode_title"])
+            except sqlite3.Error as exc:
+                msg = "SQLite read failed for episode cache"
+                raise CacheError(msg) from exc
+        return None if row is None else str(row["episode_title"])
 
-    def put_tv_episode(
+    def put_episode(
         self,
         *,
-        show_hint: str,
+        provider: str,
+        show_id: str,
         season: int,
         episode: int,
-        metadata: EpisodeMetadata,
+        title: str,
     ) -> None:
-        key = _norm_show(show_hint)
-        try:
-            self._connection().execute(
-                """
-                INSERT INTO tv_lookup (show_hint_norm, season, episode, show_title, episode_title)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(show_hint_norm, season, episode) DO UPDATE SET
-                    show_title = excluded.show_title,
-                    episode_title = excluded.episode_title
-                """,
-                (key, season, episode, metadata.show_title, metadata.episode_title),
-            )
-            self._connection().commit()
-        except sqlite3.Error as exc:
-            msg = "SQLite write failed for TV cache"
-            raise CacheError(msg) from exc
+        """Store an episode title."""
+        self._write(
+            """
+            INSERT INTO episode_lookup (provider, show_id, season, episode, episode_title)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(provider, show_id, season, episode) DO UPDATE SET
+                episode_title = excluded.episode_title
+            """,
+            (provider, show_id, season, episode, title),
+            what="episode",
+        )
 
-    def get_film(
-        self,
-        *,
-        title_hint: str,
-        year_hint: int | None,
-    ) -> MovieMetadata | None:
-        """Return cached film metadata or ``None`` on miss."""
-        key = _norm_show(title_hint)
-        yk = _film_year_key(year_hint)
-        try:
-            row = (
-                self._connection()
-                .execute(
-                    """
-                SELECT resolved_title, resolved_year FROM film_lookup
-                WHERE title_hint_norm = ? AND year_hint_key = ?
-                """,
-                    (key, yk),
-                )
-                .fetchone()
-            )
-        except sqlite3.Error as exc:
-            msg = "SQLite read failed for film cache"
-            raise CacheError(msg) from exc
-        if row is None:
-            return None
-        return MovieMetadata(title=row["resolved_title"], year=int(row["resolved_year"]))
-
-    def put_film(
-        self,
-        *,
-        title_hint: str,
-        year_hint: int | None,
-        metadata: MovieMetadata,
-    ) -> None:
-        key = _norm_show(title_hint)
-        yk = _film_year_key(year_hint)
-        try:
-            self._connection().execute(
-                """
-                INSERT INTO film_lookup (
-                    title_hint_norm, year_hint_key, resolved_title, resolved_year
-                )
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(title_hint_norm, year_hint_key) DO UPDATE SET
-                    resolved_title = excluded.resolved_title,
-                    resolved_year = excluded.resolved_year
-                """,
-                (key, yk, metadata.title, metadata.year),
-            )
-            self._connection().commit()
-        except sqlite3.Error as exc:
-            msg = "SQLite write failed for film cache"
-            raise CacheError(msg) from exc
+    def _write(self, sql: str, params: tuple[object, ...], *, what: str) -> None:
+        with self._lock:
+            try:
+                conn = self._connection()
+                conn.execute(sql, params)
+                conn.commit()
+            except sqlite3.Error as exc:
+                msg = f"SQLite write failed for {what} cache"
+                raise CacheError(msg) from exc

@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from termrenamer.api.base import FilmMetadataProvider, TvMetadataProvider
+from termrenamer.api.lookup import FilmLookup, TvLookup
 from termrenamer.core.collisions import allocate_destination
 from termrenamer.core.match import fetch_episode_metadata, fetch_film_metadata
 from termrenamer.core.models import (
@@ -58,14 +59,22 @@ def build_rename_plan(
     enable_folder_rename: bool = True,
     enable_season_folders: bool = True,
 ) -> RenamePlan:
-    """Scan ``root``, parse filenames, resolve metadata, and build a rename plan."""
+    """Scan ``root``, parse filenames, resolve metadata, and build a rename plan.
+
+    ``provider`` is a Provider or one build's lookup
+    (:class:`~termrenamer.api.lookup.TvLookup` or
+    :class:`~termrenamer.api.lookup.FilmLookup`). Pass the same lookup to every
+    root of one build, so each title hint is searched once in that build; a bare
+    Provider gets a lookup of its own for this root, with no cache. A video whose
+    lookup finds nothing, or fails, gets the status ``UNMATCHED``.
+    """
     if mode is ScanMode.TV:
         if not isinstance(provider, TvMetadataProvider):
             msg = "TV mode requires a TvMetadataProvider"
             raise TypeError(msg)
         return _build_tv_plan(
             root=root,
-            provider=provider,
+            provider=provider if isinstance(provider, TvLookup) else TvLookup(provider),
             dest_root=tv_dest_root,
             enable_folder_rename=enable_folder_rename,
             enable_season_folders=enable_season_folders,
@@ -76,7 +85,7 @@ def build_rename_plan(
             raise TypeError(msg)
         return _build_film_plan(
             root=root,
-            provider=provider,
+            provider=provider if isinstance(provider, FilmLookup) else FilmLookup(provider),
             dest_root=film_dest_root,
             enable_folder_rename=enable_folder_rename,
         )
@@ -87,7 +96,7 @@ def build_rename_plan(
 def _build_tv_plan(
     *,
     root: Path,
-    provider: TvMetadataProvider,
+    provider: TvLookup,
     dest_root: Path | None = None,
     enable_folder_rename: bool = True,
     enable_season_folders: bool = True,
@@ -109,7 +118,10 @@ def _build_tv_plan(
         try:
             metadata = fetch_episode_metadata(provider, parsed)
         except ProviderError as exc:
-            _LOG.info("No TV metadata for %s: %s", video.path, exc)
+            _LOG.info("TV lookup failed for %s: %s", video.path, exc)
+            metadata = None
+        if metadata is None:
+            _LOG.info("No TV metadata for %s", video.path)
             group_id = str(video.path.resolve())
             entries.append(
                 RenamePlanEntry(
@@ -195,7 +207,7 @@ def _build_tv_plan(
 def _build_film_plan(
     *,
     root: Path,
-    provider: FilmMetadataProvider,
+    provider: FilmLookup,
     dest_root: Path | None = None,
     enable_folder_rename: bool = True,
 ) -> RenamePlan:
@@ -215,7 +227,10 @@ def _build_film_plan(
         try:
             metadata = fetch_film_metadata(provider, parsed)
         except ProviderError as exc:
-            _LOG.info("No film metadata for %s: %s", video.path, exc)
+            _LOG.info("Film lookup failed for %s: %s", video.path, exc)
+            metadata = None
+        if metadata is None:
+            _LOG.info("No film metadata for %s", video.path)
             group_id = str(video.path.resolve())
             entries.append(
                 RenamePlanEntry(
