@@ -128,3 +128,27 @@ async def test_a_queued_source_the_disk_cannot_check_is_still_listed_and_selecta
     assert "TV Backups" in text and "More Backups" in text
     assert f"path {folder}" in text
     assert "file · queued · nothing looked up yet" in text
+
+
+async def test_a_destination_root_with_a_nul_character_from_the_settings_file_builds_nothing(
+    tmp_path: Path,
+) -> None:
+    """A settings file can hold a NUL character in a root, which no path can hold;
+    building the Plan says so, shows the NUL as ␀, and keeps the queue."""
+    root = Path(f"{tmp_path}{os.sep}bad\x00root")
+    folder = tv_backups(tmp_path).resolve()
+    app = make_app(loaded=settings(folder_rename=True, tv_root=root))
+    async with app.run_test(size=(240, 36)) as pilot:
+        await queue(pilot, folder)
+        await press(pilot, "b")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        message = text_of(app, "#message")
+        stage, sources, running = app.stage, app.queue.sources, app.is_running
+
+    assert running and stage is Stage.QUEUE
+    assert sources == (folder,)
+    assert message == (
+        f"The TV Destination root {tmp_path}{os.sep}bad␀root cannot be used: "
+        "a path cannot hold a NUL character. No Plan was built."
+    )

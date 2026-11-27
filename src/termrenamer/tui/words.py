@@ -19,14 +19,20 @@ NO_NUL = "a path cannot hold a NUL character"
 """Why a path holding :data:`NUL` (pasted, as a terminal allows) cannot be used."""
 
 
-def error_reason(exc: BaseException) -> str:
-    """Why ``exc`` happened, for the screen: an ``OSError``'s own words without its
-    number and path, :data:`NO_NUL` for a path that holds a NUL character, else the
+def path_shown(path: str | PurePath) -> str:
+    """``path`` as the screen writes it: a :data:`NUL`, which a terminal draws as
+    nothing, as ``␀``."""
+    return str(path).replace(NUL, "␀")
+
+
+def error_reason(exc: BaseException, path: str | PurePath | None = None) -> str:
+    """Why ``exc`` happened, for the screen: :data:`NO_NUL` when ``path`` holds a NUL
+    character, an ``OSError``'s own words without its number and path, else the
     error's text."""
+    if path is not None and NUL in str(path):
+        return NO_NUL
     if isinstance(exc, OSError) and exc.strerror:
         return exc.strerror
-    if isinstance(exc, ValueError) and "null" in str(exc):
-        return NO_NUL
     return str(exc)
 
 

@@ -76,6 +76,7 @@ from termrenamer.tui.words import (
     match_name,
     mode_label,
     noun,
+    path_shown,
     plural,
     provider_name,
 )
@@ -431,9 +432,10 @@ class TermRenamerApp(App[None]):
             options = owner.plan_options()
         except (OSError, RuntimeError, ValueError) as exc:  # the root cannot be resolved
             root = owner.destination_root(owner.mode)
-            reason = error_reason(exc)
+            reason = error_reason(exc, root)
             self.say(
-                f"The {mode_label(owner.mode)} Destination root {root} cannot be used: "
+                f"The {mode_label(owner.mode)} Destination root {path_shown(root or '')} "
+                "cannot be used: "
                 f"{reason}. No Plan was built.",
                 MessageKind.ERROR,
             )

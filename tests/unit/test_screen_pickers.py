@@ -411,8 +411,10 @@ async def test_a_root_pasted_with_a_nul_character_is_refused_and_build_keeps_the
         await pilot.pause()
         running, plan = app.is_running, app.plan
 
-    assert message.startswith(f"The TV Destination root {tmp_path}{os.sep}bad")
-    assert "cannot be used (a path cannot hold a NUL character)" in message
+    assert message.startswith(
+        f"The TV Destination root {tmp_path}{os.sep}bad␀root cannot be used "
+        "(a path cannot hold a NUL character); it is still "
+    )
     assert kept == root
     assert running and plan is not None
 
@@ -420,6 +422,8 @@ async def test_a_root_pasted_with_a_nul_character_is_refused_and_build_keeps_the
 async def test_enter_on_a_typed_name_with_a_nul_character_says_why_and_keeps_the_app(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """A NUL character, pasted as a terminal allows, is in no path: Enter says so and the
+    dialog and the queue stay."""
     queued = tmp_path / "Queued"
     queued.mkdir()
     start = (tmp_path / "Start").resolve()
@@ -445,4 +449,39 @@ async def test_enter_on_a_typed_name_with_a_nul_character_says_why_and_keeps_the
     assert isinstance(dialog, FileOpen)
     assert "This path cannot be used: a path cannot hold a NUL character" in text
     assert running
+    assert sources == (queued.resolve(),)
+
+
+@pytest.mark.parametrize("pasted", ["a\x00b/c", "~\x00/x"])
+async def test_a_typed_path_with_a_nul_character_gets_no_suggestion_and_keeps_the_app(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pasted: str
+) -> None:
+    """The suggester looks in the folder the typed text names; one holding a NUL
+    character names none, so there is no suggestion, and the dialog and queue stay."""
+    queued = tmp_path / "Queued"
+    queued.mkdir()
+    start = (tmp_path / "Start").resolve()
+    start.mkdir()
+    monkeypatch.chdir(start)
+    typed = pasted.replace("/", os.sep)
+    app = make_app()
+    async with app.run_test(size=WIDE) as pilot:
+        await queue(pilot, queued.resolve())
+        await press(pilot, "a")
+        await wait_for_listing(pilot)
+        field = app.screen.query_one(Input)
+        await pilot.press("tab")
+        assert app.focused is field
+        field.post_message(events.Paste(typed))
+        await pilot.pause()
+        await app.screen.workers.wait_for_complete()
+        await pilot.press("right")
+        await pilot.pause()
+        value, dialog = field.value, app.screen
+        await press(pilot, "escape")
+        sources, running = app.queue.sources, app.is_running
+
+    assert running
+    assert isinstance(dialog, FileOpen)
+    assert value == typed
     assert sources == (queued.resolve(),)

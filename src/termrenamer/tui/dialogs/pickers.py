@@ -179,12 +179,13 @@ def _safe(widgets: Iterable[Widget], location: Path) -> Iterator[Widget]:
 
 class _Suggestions(SuggestPath):
     """The package's path suggestions, with none for a path the disk cannot answer for
-    (a folder that refuses to be looked in, a name too long)."""
+    (a folder that refuses to be looked in, a name too long) or that no path can be
+    (one holding a NUL character, or text the file system cannot encode)."""
 
     async def get_suggestion(self, value: str) -> str | None:
         try:
             return await super().get_suggestion(value)
-        except OSError:
+        except (OSError, ValueError):
             return None
 
 
@@ -210,12 +211,14 @@ class FilePicker(FileOpen):
     @on(Button.Pressed, "#select")
     def _confirm_or_say_why(self, event: Input.Submitted | Button.Pressed) -> None:
         """Run the package's confirm in place of its own handler; when the disk cannot
-        tell what the typed path is (a name too long), say so and keep the dialog."""
+        tell what the typed path is (a name too long) or no path can be it (one holding
+        a NUL character), say so and keep the dialog."""
         event.prevent_default()
         try:
             BaseFileDialog._confirm_file(self, event)  # noqa: SLF001
-        except (OSError, ValueError) as exc:  # ValueError: a NUL character in the path
-            _say(self, _CANNOT_USE.format(reason=error_reason(exc)))
+        except (OSError, ValueError) as exc:
+            typed = self.query_one(Input).value
+            _say(self, _CANNOT_USE.format(reason=error_reason(exc, typed)))
 
 
 class FolderPicker(SelectDirectory):

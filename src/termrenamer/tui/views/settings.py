@@ -30,7 +30,7 @@ from termrenamer.session_settings import SessionSettings
 from termrenamer.tui.keys import VIEW_HINTS
 from termrenamer.tui.widgets.action_button import ActionButton
 from termrenamer.tui.widgets.footer import hints_markup
-from termrenamer.tui.words import NO_NUL, NUL, folder_text, mode_label
+from termrenamer.tui.words import NO_NUL, NUL, folder_text, mode_label, path_shown
 from termrenamer.util.errors import ValidationError
 
 _ROOTS = {"tv-root": ScanMode.TV, "film-root": ScanMode.FILM}
@@ -336,17 +336,13 @@ class SettingsView(Screen[None]):
         mode = _ROOTS[field.id or ""]
         text = field.value.strip()
         label = mode_label(mode)
+        if NUL in text:
+            self._refuse_root(mode, text, NO_NUL)
+            return
         try:
-            if NUL in text:
-                raise ValueError(NO_NUL)
             root = Path(text).expanduser() if text else None
-        except (RuntimeError, OSError, ValueError) as exc:
-            kept = self._owner.destination_root(mode)
-            still = folder_text(kept) if kept is not None else "not set"
-            shown = text.replace(NUL, "")
-            self._say(
-                f"The {label} Destination root {shown} cannot be used ({exc}); it is still {still}."
-            )
+        except (RuntimeError, OSError) as exc:
+            self._refuse_root(mode, text, str(exc))
             return
         try:
             changed = self._owner.set_destination_root(mode, root)
@@ -355,6 +351,15 @@ class SettingsView(Screen[None]):
             return
         if changed:
             self._say(f"{label} Destination root {'set' if root else 'cleared'}.")
+
+    def _refuse_root(self, mode: ScanMode, text: str, reason: str) -> None:
+        """Say the root typed as ``text`` cannot be used and which root is kept."""
+        kept = self._owner.destination_root(mode)
+        still = folder_text(kept) if kept is not None else "not set"
+        self._say(
+            f"The {mode_label(mode)} Destination root {path_shown(text)} cannot be used "
+            f"({reason}); it is still {still}."
+        )
 
     @on(Input.Submitted)
     def _root_submitted(self, event: Input.Submitted) -> None:
