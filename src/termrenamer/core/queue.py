@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from termrenamer.core.paths import path_key
+from termrenamer.core.paths import path_key, source_place
 from termrenamer.util.errors import ValidationError
 
 
@@ -13,7 +13,9 @@ class SourceAlreadyQueuedError(ValidationError):
 
 
 class SourceQueue:
-    """The ordered list of queued Sources (files or folders), each a resolved path.
+    """The ordered list of queued Sources (files or folders), each where it is on disk
+    (:func:`~termrenamer.core.paths.source_place`): a folder resolved, a file at its own
+    name in its resolved folder, so a symbolic link to a video is queued as the link.
 
     A Source whose resolved path is already queued is refused; the comparison ignores
     letter case, as the source-path order does. Overlapping Sources (a folder and a
@@ -32,13 +34,13 @@ class SourceQueue:
         return len(self._sources)
 
     def add(self, path: Path) -> Path:
-        """Queue ``path`` and return its resolved form.
+        """Queue ``path`` and return where it is on disk.
 
         Raises:
             SourceAlreadyQueuedError: The resolved path is already queued.
             OSError: The path cannot be resolved.
         """
-        resolved = path.expanduser().resolve()
+        resolved = source_place(path)
         key = path_key(resolved)
         if any(path_key(queued) == key for queued in self._sources):
             msg = f"Already queued: {resolved}"

@@ -3,6 +3,7 @@ paths the Plan fixes for them (spec #16, section C)."""
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -340,11 +341,13 @@ def test_leaving_out_the_only_video_a_folder_moves_turns_its_stragglers_off_and_
     assert put_back == plan
 
 
-def test_deriving_works_out_the_stragglers_without_reading_a_folder_or_resolving_a_path(
+def test_deriving_works_out_the_stragglers_without_reading_a_folder_or_resolving_a_source(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     show = _two_discs(tmp_path)
     plan = plan_queue([show], _options(), _provider()).plan
+    sources = {str(e.source) for e in plan.entries} | {str(s.source) for s in plan.stragglers}
+    realpath = os.path.realpath
 
     def no_resolve(self: Path, strict: bool = False) -> Path:
         raise AssertionError(f"resolved {self} while deriving")
@@ -352,8 +355,16 @@ def test_deriving_works_out_the_stragglers_without_reading_a_folder_or_resolving
     def no_listing(self: Path) -> object:
         raise AssertionError(f"listed {self} while deriving")
 
+    def realpath_of_no_source(path: str, *args: object, **kwargs: object) -> str:
+        # The name test may follow the links of a wanted name's existing folder; it
+        # never resolves a source.
+        if str(path) in sources:
+            raise AssertionError(f"resolved {path} while deriving")
+        return realpath(path, *args, **kwargs)  # type: ignore[arg-type]
+
     monkeypatch.setattr(Path, "resolve", no_resolve)
     monkeypatch.setattr(Path, "iterdir", no_listing)
+    monkeypatch.setattr(os.path, "realpath", realpath_of_no_source)
     left_out = derive_plan(plan, LeaveOut(_video_in(plan, "Disc 2")))
     put_back = derive_plan(left_out, PutBack(_video_in(left_out, "Disc 2")))
     monkeypatch.undo()
