@@ -53,7 +53,7 @@ uv run mypy src
 
 Run the TUI: `uv run python -m termrenamer`.
 
-**Current TUI:** there is no embedded directory tree — `a` (file) and `f` (folder) queue sources via **textual-fspicker** modals; optional **Film** / **TV** output roots are set under **Settings** (`s`) or via `TERMRENAMER_*_DEST_FOLDER` at bootstrap.
+**Current TUI:** there is no embedded directory tree — `a` (file) and `f` (folder) queue sources via **textual-fspicker** modals; optional **Film** / **TV** Destination roots are set under **Settings** (`s`) or via `TERMRENAMER_*_DEST_FOLDER` at bootstrap.
 
 ## Links
 

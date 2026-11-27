@@ -17,11 +17,8 @@ STATUS_COLOURS: dict[str, str] = {
     "ready": "success",
     "found": "success",
     "name taken": "warning",
-    "looking up": "warning",
     "no match": "error",
     "not recognised": "error",
-    "waiting": "tr-dim",
-    "left out": "tr-dim",
 }
 """The theme colour of each status word."""
 

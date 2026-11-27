@@ -167,3 +167,16 @@ async def test_q_quits_from_a_view() -> None:
     async with app.run_test(size=SIZE) as pilot:
         await press(pilot, "question_mark", "q")
         assert not app.is_running
+
+
+async def test_a_season_folder_loaded_on_while_folder_rename_is_off_is_off() -> None:
+    app = make_app(loaded=settings(folder_rename=False, season_folders=True))
+    async with app.run_test(size=SIZE) as pilot:
+        await press(pilot, "s", "down", "down")
+        await press(pilot, "enter")  # Folder rename on
+        owner = app.session_settings
+        season = app.screen.query_one("#season-folder", Switch)
+        assert owner.folder_rename
+        assert season.value is owner.season_folders is False
+        assert owner.plan_options().season_folders is False
+        assert text_of(app, "#season-folder-value") == "off"

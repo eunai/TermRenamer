@@ -13,6 +13,7 @@ from textual.widgets import Static, Tree
 
 from termrenamer.tui.stages.base import StageView
 from termrenamer.tui.widgets.action_button import ActionButton
+from termrenamer.tui.words import plural
 
 _NEEDS_SOURCES = frozenset({"build_plan", "clear_queue", "select_previous", "select_next"})
 
@@ -29,10 +30,6 @@ class QueueTree(Tree[Path], can_focus=False):
         overflow-x: hidden;
     }
     """
-
-
-def _plural(n: int, word: str) -> str:
-    return f"{n} {word}{'' if n == 1 else 's'}"
 
 
 class QueueStage(StageView):
@@ -154,7 +151,7 @@ class QueueStage(StageView):
         self.show_queue(self._sources)
 
     def count_text(self) -> str:
-        return _plural(len(self._sources), "Source") if self._sources else ""
+        return plural(len(self._sources), "Source") if self._sources else ""
 
     def footer_lines(self) -> tuple[str, ...]:
         source = self.selected_source

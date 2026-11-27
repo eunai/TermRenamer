@@ -203,6 +203,11 @@ class Plan:
     def mode(self) -> ScanMode:
         return self.options.mode
 
+    @property
+    def videos(self) -> tuple[PlanEntry, ...]:
+        """The Plan's video entries, without the Sidecars, in source-path order."""
+        return tuple(entry for entry in self.entries if not entry.is_sidecar)
+
 
 class ApplyStatus(StrEnum):
     """Per-operation outcome."""

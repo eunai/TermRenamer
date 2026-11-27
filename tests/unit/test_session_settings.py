@@ -34,3 +34,28 @@ def test_while_locked_every_setting_is_refused_and_left_as_it_was(tmp_path: Path
     owner.unlock()
     assert owner.set_mode(ScanMode.FILM) is True
     assert heard == ["Mode"]
+
+
+def test_season_folder_loaded_on_while_folder_rename_is_off_starts_off() -> None:
+    from termrenamer.app_bootstrap import Settings
+
+    loaded = Settings(
+        tmdb_api_key=None,
+        tvdb_api_key=None,
+        tvdb_subscriber_pin=None,
+        omdb_api_key=None,
+        http_timeout_seconds=1.0,
+        http_max_attempts=1,
+        http_backoff_base_seconds=0.0,
+        http_jitter=False,
+        cache_db_path=None,
+        log_file_path=None,
+        film_dest_folder=None,
+        tv_dest_folder=None,
+        enable_folder_rename=False,
+        enable_season_folders=True,
+    )
+    owner = SessionSettings(loaded)
+    assert owner.season_folders is False
+    owner.set_folder_rename(True)
+    assert owner.plan_options().season_folders is False

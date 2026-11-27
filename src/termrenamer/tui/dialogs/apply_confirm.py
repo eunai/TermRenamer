@@ -1,7 +1,7 @@
 """The Apply confirm: nothing is renamed until the person answers yes.
 
 It returns ``True`` for ``y`` or ``enter`` and ``False`` for ``n`` or Escape. It sits
-over the Title list, right of where the poster panel goes.
+over the Title list, right of where the Poster panel goes.
 """
 
 from __future__ import annotations

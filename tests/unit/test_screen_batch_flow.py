@@ -62,7 +62,7 @@ async def test_the_title_list_fills_while_the_plan_is_built(tmp_path: Path) -> N
         await pilot.pause()
         assert app.stage is Stage.PREVIEW
     assert stage_during is Stage.PLAN
-    assert rows == [("Harbour Lights (2019)", "found")]
+    assert rows == [("Harbour Lights", "found")]
     assert "Building the Plan on TMDB…" in during
     assert "✓ Queue" in during and "● Plan" in during
     assert "b Build Plan" not in keys_during
@@ -312,3 +312,20 @@ async def test_after_apply_a_settings_change_discards_nothing(tmp_path: Path) ->
         await press(pilot, "s", "down", "down", "enter", "escape")
         assert app.stage is Stage.APPLIED
         assert "Plan discarded" not in text_of(app, "#message")
+
+
+async def test_the_confirm_does_not_count_a_video_that_already_has_its_name(
+    tmp_path: Path,
+) -> None:
+    folder = tmp_path / "Backups"
+    folder.mkdir()
+    (folder / "Harbour Lights - S01E01 - The Tide Comes In.mkv").write_bytes(b"x")
+    (folder / "Harbour Lights S01E02.mkv").write_bytes(b"x")
+    app = make_app()
+    async with app.run_test(size=SIZE) as pilot:
+        await queue(pilot, folder)
+        await build(pilot)
+        await press(pilot, "enter")
+        text = screen_text(app)
+        await press(pilot, "n")
+    assert "Rename 1 video in their own folders." in text

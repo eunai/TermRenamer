@@ -61,7 +61,10 @@ class SessionSettings:
             ScanMode.FILM: loaded.film_dest_folder if loaded is not None else None,
         }
         self._folder_rename = loaded.enable_folder_rename if loaded is not None else False
-        self._season_folders = loaded.enable_season_folders if loaded is not None else False
+        # Season folder cannot be on while Folder rename is off, even as loaded.
+        self._season_folders = self._folder_rename and (
+            loaded.enable_season_folders if loaded is not None else False
+        )
         self._locked = False
         self._listeners: list[PlanSettingListener] = []
 
@@ -181,11 +184,24 @@ class SessionSettings:
         return True
 
     def set_folder_rename(self, value: bool) -> bool:
-        """Turn Folder rename on or off; return whether it changed."""
+        """Turn Folder rename on or off; return whether it changed.
+
+        Turning it off turns Season folder off too.
+        """
+        self._refuse_while_locked()
+        if not value:
+            self._season_folders = False
         return self._set("Folder rename", "_folder_rename", value)
 
     def set_season_folders(self, value: bool) -> bool:
-        """Turn Season folder on or off; return whether it changed."""
+        """Turn Season folder on or off; return whether it changed.
+
+        It cannot be turned on while Folder rename is off.
+        """
+        self._refuse_while_locked()
+        if value and not self._folder_rename:
+            msg = "Season folder works only while Folder rename is on."
+            raise ValidationError(msg)
         return self._set("Season folder", "_season_folders", value)
 
     def _set(self, name: str, attribute: str, value: object) -> bool:

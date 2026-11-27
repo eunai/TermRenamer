@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
+from enum import StrEnum
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
@@ -11,8 +13,30 @@ from textual.widgets import Static
 
 from termrenamer.tui.keys import Key
 
-MESSAGE_STYLES = {"info": "$accent", "warning": "$warning", "error": "$error", "dim": "$tr-dim"}
-"""The colour of a message line, by its kind."""
+
+class MessageKind(StrEnum):
+    """The kind of a message: its colour on the message line and its level in the Logs."""
+
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+    DIM = "dim"
+
+    @property
+    def style(self) -> str:
+        return {
+            MessageKind.INFO: "$accent",
+            MessageKind.WARNING: "$warning",
+            MessageKind.ERROR: "$error",
+            MessageKind.DIM: "$tr-dim",
+        }[self]
+
+    @property
+    def level(self) -> int:
+        return {
+            MessageKind.WARNING: logging.WARNING,
+            MessageKind.ERROR: logging.ERROR,
+        }.get(self, logging.INFO)
 
 
 def hints_markup(keys: Sequence[Key], width: int) -> str:
@@ -58,9 +82,9 @@ class AppFooter(Vertical):
         yield Static(id="stage-lines")
         yield Static(id="key-hints")
 
-    def show_message(self, text: str, kind: str = "info") -> None:
+    def show_message(self, text: str, kind: MessageKind = MessageKind.INFO) -> None:
         """Show ``text`` (plain) on the message line, coloured by ``kind``."""
-        style = MESSAGE_STYLES.get(kind, "$accent")
+        style = kind.style
         self.query_one("#message", Static).update(f"[{style}]{escape(text)}[/]" if text else "")
 
     def show_lines(self, lines: Sequence[str]) -> None:

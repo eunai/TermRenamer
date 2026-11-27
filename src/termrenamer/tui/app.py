@@ -27,7 +27,6 @@ from termrenamer.app_bootstrap import Settings, ThemeName
 from termrenamer.core.apply import apply_plan
 from termrenamer.core.models import (
     ApplyResult,
-    EntryStatus,
     Plan,
     PlanOptions,
     ScanMode,
@@ -35,6 +34,7 @@ from termrenamer.core.models import (
 from termrenamer.core.planning import plan_queue
 from termrenamer.core.progress import PlanEvent
 from termrenamer.core.queue import SourceQueue
+from termrenamer.core.title_rows import PlanCounts
 from termrenamer.session_settings import SessionSettings, SettingsLockedError, locked_message
 from termrenamer.tui import keys
 from termrenamer.tui.dialogs import ApplyConfirm
@@ -44,27 +44,18 @@ from termrenamer.tui.stages import AppliedStage, PlanStage, PreviewStage, QueueS
 from termrenamer.tui.themes import THEMES
 from termrenamer.tui.views import HelpView, LogsView, SettingsView
 from termrenamer.tui.widgets.action_button import ActionButton
-from termrenamer.tui.widgets.footer import AppFooter
+from termrenamer.tui.widgets.footer import AppFooter, MessageKind
 from termrenamer.tui.widgets.header import AppHeader
 from termrenamer.tui.widgets.stages_row import StagesRow
+from termrenamer.tui.words import and_list, mode_label, provider_name
 from termrenamer.util.errors import ProviderError, ValidationError
 from termrenamer.wiring import PlanningWiring
-
-PROVIDER_NAMES = {"tmdb": "TMDB", "tvdb": "TheTVDB", "omdb": "OMDb"}
-"""Each Provider's name as the screen writes it."""
 
 _STAGE_IDS = {
     Stage.QUEUE: "queue-stage",
     Stage.PLAN: "plan-stage",
     Stage.PREVIEW: "preview-stage",
     Stage.APPLIED: "applied-stage",
-}
-
-_MESSAGE_LEVELS = {
-    "info": logging.INFO,
-    "dim": logging.INFO,
-    "warning": logging.WARNING,
-    "error": logging.ERROR,
 }
 
 
@@ -87,12 +78,6 @@ class BuildProgress(Message):
 
 class LogLineAdded(Message):
     """A line was added to the log book (posted from any thread)."""
-
-
-def _and_list(where: str) -> str:
-    """``Queue, Preview, Applied`` as ``Queue, Preview and Applied``."""
-    head, _, last = where.rpartition(", ")
-    return f"{head} and {last}" if head else where
 
 
 class TermRenamerApp(App[None]):
@@ -174,7 +159,7 @@ class TermRenamerApp(App[None]):
         owner = self.session_settings
         self.query_one(AppHeader).show(
             mode=owner.mode,
-            provider=PROVIDER_NAMES.get(owner.provider_id, owner.provider_id),
+            provider=provider_name(owner.provider_id),
             has_key=owner.has_key(owner.provider_id),
             root=owner.destination_root(owner.mode),
             folder_rename=owner.folder_rename,
@@ -188,10 +173,10 @@ class TermRenamerApp(App[None]):
     def on_stage_view_changed(self, _message: StageView.Changed) -> None:
         self._refresh_chrome()
 
-    def say(self, text: str, kind: str = "info") -> None:
+    def say(self, text: str, kind: MessageKind = MessageKind.INFO) -> None:
         """Show ``text`` on the message line and keep it in the Logs."""
         self.query_one(AppFooter).show_message(text, kind)
-        self._messages.log(_MESSAGE_LEVELS.get(kind, logging.INFO), text)
+        self._messages.log(kind.level, text)
 
     # -------------------------------------------------------------------- keys
 
@@ -218,28 +203,36 @@ class TermRenamerApp(App[None]):
         return self.screen is self.screen_stack[0]
 
     async def action_press(self, name: str) -> None:
-        """Run the key table's action for the Textual key ``name`` at the current Stage."""
+        """Run the key table's action for the Textual key ``name`` at the current Stage.
+
+        A key of the current Stage whose action is not built yet does nothing. A key
+        of another Stage says where it works, when its action is built.
+        """
         on_main = self._on_main_screen()
         wrong_stage: keys.Key | None = None
         for key, action in keys.entries_for(name):
             if not on_main and not key.anywhere:
                 continue
             if key.guarded and self.session_settings.locked:
-                self.say(locked_message(key.guarded), "warning")
+                self.say(locked_message(key.guarded), MessageKind.WARNING)
                 return
             target = self._target(action)
-            if target is None:
-                continue
             if on_main and self.stage not in key.stages:
-                wrong_stage = wrong_stage or key
+                if target is not None:
+                    wrong_stage = wrong_stage or key
                 continue
+            if target is None:
+                return
             await self.run_action(action, target)
             self._refresh_chrome()
             return
         if wrong_stage is not None:
-            where = _and_list(wrong_stage.where)
-            plural = "s" if " and " in where else ""
-            self.say(f"{wrong_stage.hint} works at the {where} Stage{plural}.", "warning")
+            stages = wrong_stage.stage_names
+            plural_s = "s" if len(stages) > 1 else ""
+            self.say(
+                f"{wrong_stage.hint} works at the {and_list(stages)} Stage{plural_s}.",
+                MessageKind.WARNING,
+            )
 
     async def on_action_button_clicked(self, event: ActionButton.Clicked) -> None:
         event.stop()
@@ -261,17 +254,17 @@ class TermRenamerApp(App[None]):
         try:
             resolved = self.queue.add(path)
         except ValidationError as exc:
-            self.say(str(exc), "warning")
+            self.say(str(exc), MessageKind.WARNING)
             return
         except OSError as exc:
-            self.say(f"Could not queue {path}: {exc}", "error")
+            self.say(f"Could not queue {path}: {exc}", MessageKind.ERROR)
             return
         self.query_one(QueueStage).show_queue(self.queue.sources)
         self.say(f"Queued {resolved}.")
 
     def action_clear_queue(self) -> None:
         if not self.queue:
-            self.say("The queue is already empty.", "dim")
+            self.say("The queue is already empty.", MessageKind.DIM)
             return
         self.queue.clear()
         self.query_one(QueueStage).show_queue(())
@@ -282,13 +275,11 @@ class TermRenamerApp(App[None]):
     def action_build_plan(self) -> None:
         """Build the Plan from the queue off the screen's thread; nothing is renamed."""
         if not self.queue:
-            self.say("Add a Source first (a or f).", "warning")
+            self.say("Add a Source first (a or f).", MessageKind.WARNING)
             return
         options = self.session_settings.plan_options()
         self.session_settings.lock()
-        self.query_one(PlanStage).start(
-            PROVIDER_NAMES.get(options.provider_id, options.provider_id)
-        )
+        self.query_one(PlanStage).start(provider_name(options.provider_id), options.mode)
         self._show_stage(Stage.PLAN)
         self.say("Building the Plan…")
         self._build(self.queue.sources, options)
@@ -318,11 +309,11 @@ class TermRenamerApp(App[None]):
             self._messages.warning(line)
         if outcome.error is not None:
             self._show_stage(Stage.QUEUE)
-            self.say(f"{outcome.error} No Plan was built.", "error")
+            self.say(f"{outcome.error} No Plan was built.", MessageKind.ERROR)
             return
         if outcome.plan is None:
             self._show_stage(Stage.QUEUE)
-            self.say("No video was found in the queued Sources.", "warning")
+            self.say("No video was found in the queued Sources.", MessageKind.WARNING)
             return
         self.plan = outcome.plan
         self.query_one(PreviewStage).show_plan(outcome.plan)
@@ -344,26 +335,21 @@ class TermRenamerApp(App[None]):
         plan = self.plan
         if plan is None or self._applying:
             return
-        videos = [e for e in plan.entries if not e.is_sidecar]
-        renamed = sum(
-            1
-            for e in videos
-            if e.destination is not None and e.status in (EntryStatus.READY, EntryStatus.NAME_TAKEN)
-        )
+        counts = PlanCounts.of(plan)
         root = plan.options.destination_root
         under = f"under {root}/" if root is not None else "in their own folders"
         confirm = ApplyConfirm(
-            videos=renamed,
+            videos=counts.to_rename,
             under=under,
-            no_match=sum(1 for e in videos if e.status is EntryStatus.NO_MATCH),
-            not_recognised=sum(1 for e in videos if e.status is EntryStatus.NOT_RECOGNISED),
+            no_match=counts.no_match,
+            not_recognised=counts.not_recognised,
         )
         self.push_screen(confirm, self._apply_answered)
 
     def _apply_answered(self, yes: bool | None) -> None:
         plan = self.plan
         if not yes or plan is None:
-            self.say("Nothing was renamed.", "dim")
+            self.say("Nothing was renamed.", MessageKind.DIM)
             return
         self._applying = True
         self.session_settings.lock()
@@ -390,7 +376,8 @@ class TermRenamerApp(App[None]):
         counts = applied.counts
         failed = counts is not None and counts.failed
         self.say(
-            "Applied." if failed else "Applied. Nothing failed.", "warning" if failed else "info"
+            "Applied." if failed else "Applied. Nothing failed.",
+            MessageKind.WARNING if failed else MessageKind.INFO,
         )
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
@@ -408,7 +395,7 @@ class TermRenamerApp(App[None]):
             what = "Plan" if worker.name == "build" else "Apply"
             if worker.name == "build":
                 self._show_stage(Stage.QUEUE)
-            self.say(f"{what} failed: {worker.error}", "error")
+            self.say(f"{what} failed: {worker.error}", MessageKind.ERROR)
             self._refresh_chrome()
 
     # -------------------------------------------------------------- Applied
@@ -429,25 +416,24 @@ class TermRenamerApp(App[None]):
         try:
             owner.set_mode(mode)
         except SettingsLockedError:
-            self.say(locked_message("Mode"), "warning")
+            self.say(locked_message("Mode"), MessageKind.WARNING)
             return
         if not had_plan:  # otherwise the message says the Plan was discarded
-            label = "TV" if mode is ScanMode.TV else "Film"
-            self.say(f"Mode: {label}. Provider: {self._provider_text()}.")
+            self.say(f"Mode: {mode_label(mode)}. Provider: {self._provider_text()}.")
 
     def action_change_provider(self) -> None:
         had_plan = self.plan is not None
         try:
             self.session_settings.next_provider()
         except SettingsLockedError:
-            self.say(locked_message("Provider"), "warning")
+            self.say(locked_message("Provider"), MessageKind.WARNING)
             return
         if not had_plan:
             self.say(f"Provider: {self._provider_text()}.")
 
     def _provider_text(self) -> str:
         owner = self.session_settings
-        name = PROVIDER_NAMES.get(owner.provider_id, owner.provider_id)
+        name = provider_name(owner.provider_id)
         return name if owner.has_key(owner.provider_id) else f"{name} (no key)"
 
     def _on_plan_setting_changed(self, setting: str) -> None:
@@ -457,7 +443,7 @@ class TermRenamerApp(App[None]):
             self._show_stage(Stage.QUEUE)
             self.say(
                 f"Plan discarded: {setting} changed. The queue is kept; build the Plan again.",
-                "warning",
+                MessageKind.WARNING,
             )
         self._refresh_chrome()
 

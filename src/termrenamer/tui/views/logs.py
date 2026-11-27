@@ -1,4 +1,4 @@
-"""Logs: every log line of the session, as the Logs tab held them; Escape closes it."""
+"""Logs: every log line of the session and every message the screen gave; Escape closes it."""
 
 from __future__ import annotations
 

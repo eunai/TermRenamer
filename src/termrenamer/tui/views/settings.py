@@ -22,6 +22,7 @@ from termrenamer.app_bootstrap import ThemeName
 from termrenamer.core.models import ScanMode
 from termrenamer.session_settings import SessionSettings
 from termrenamer.tui.widgets.action_button import ActionButton
+from termrenamer.tui.words import mode_label
 from termrenamer.util.errors import ValidationError
 
 _ROOTS = {"tv-root": ScanMode.TV, "film-root": ScanMode.FILM}
@@ -200,7 +201,7 @@ class SettingsView(Screen[None]):
                 yield Static(classes="setting-value", id="folder-rename-value")
             with Horizontal(classes="setting-row", id="season-folder-row"):
                 yield Static("  Season folder", classes="setting-label")
-                yield Switch(owner.season_folders and owner.folder_rename, id="season-folder")
+                yield Switch(owner.season_folders, id="season-folder")
                 yield Static(classes="setting-value", id="season-folder-value")
             yield Static("Season folder works only while Folder rename is on.", id="season-note")
             with Horizontal(classes="setting-row"):
@@ -231,7 +232,15 @@ class SettingsView(Screen[None]):
     # ---------------------------------------------------------------- reading
 
     def _show_switches(self) -> None:
+        """Show the owner's values: the switches, their words and Season folder's rule."""
         folder_rename = self._owner.folder_rename
+        for switch_id, on_value in (
+            ("folder-rename", folder_rename),
+            ("season-folder", self._owner.season_folders),
+        ):
+            switch = self.query_one(f"#{switch_id}", Switch)
+            with switch.prevent(Switch.Changed):
+                switch.value = on_value
         season = self.query_one("#season-folder", Switch)
         season.disabled = not folder_rename
         self.query_one("#season-folder-row").set_class(not folder_rename, "-off")
@@ -256,7 +265,7 @@ class SettingsView(Screen[None]):
         mode = _ROOTS[field.id or ""]
         text = field.value.strip()
         root = Path(text).expanduser() if text else None
-        label = "TV" if mode is ScanMode.TV else "Film"
+        label = mode_label(mode)
         try:
             changed = self._owner.set_destination_root(mode, root)
         except ValidationError as exc:
@@ -277,11 +286,6 @@ class SettingsView(Screen[None]):
     def _folder_rename_changed(self, event: Switch.Changed) -> None:
         try:
             self._owner.set_folder_rename(event.value)
-            if not event.value:
-                self._owner.set_season_folders(False)
-                season = self.query_one("#season-folder", Switch)
-                with season.prevent(Switch.Changed):
-                    season.value = False
         except ValidationError as exc:
             self._say(str(exc))
         self._show_switches()

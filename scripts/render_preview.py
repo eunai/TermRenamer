@@ -84,7 +84,8 @@ async def _screenshot(source: Path) -> str:
     async with app.run_test(size=TERMINAL_SIZE) as pilot:
         await pilot.pause()
         await pilot.press("f")  # the folder dialog; the folder is chosen in it
-        await app.workers.wait_for_complete()
+        await pilot.pause()
+        await app.workers.wait_for_complete()  # the dialog lists its folder in a worker
         await pilot.pause()
         app.screen.dismiss(source)
         await pilot.pause()

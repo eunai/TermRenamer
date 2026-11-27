@@ -12,6 +12,8 @@ from dataclasses import dataclass
 
 from termrenamer.core.models import EntryStatus, Plan, PlanEntry, Title
 
+_RENAMED = frozenset({EntryStatus.READY, EntryStatus.NAME_TAKEN})
+
 
 @dataclass(frozen=True, slots=True)
 class TitleRow:
@@ -29,6 +31,35 @@ class TitleRow:
     def videos(self) -> int:
         """How many of the row's files are videos."""
         return sum(1 for entry in self.entries if not entry.is_sidecar)
+
+
+@dataclass(frozen=True, slots=True)
+class PlanCounts:
+    """What a Plan holds, counted in videos (Sidecars are not counted).
+
+    ``to_rename`` counts the videos Apply will rename: ready or name taken, with a
+    destination that is not where the video already is. A video that already has its
+    name is not counted as renamed.
+    """
+
+    titles: int
+    videos: int
+    to_rename: int
+    no_match: int
+    not_recognised: int
+
+    @classmethod
+    def of(cls, plan: Plan) -> PlanCounts:
+        videos = plan.videos
+        return cls(
+            titles=len(plan.titles),
+            videos=len(videos),
+            to_rename=sum(
+                1 for v in videos if v.status in _RENAMED and v.destination not in (None, v.source)
+            ),
+            no_match=sum(1 for v in videos if v.status is EntryStatus.NO_MATCH),
+            not_recognised=sum(1 for v in videos if v.status is EntryStatus.NOT_RECOGNISED),
+        )
 
 
 def title_status(title: Title, entries: Sequence[PlanEntry]) -> EntryStatus:

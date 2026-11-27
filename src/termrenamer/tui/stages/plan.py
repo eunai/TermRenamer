@@ -3,41 +3,21 @@
 from __future__ import annotations
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Vertical
 from textual.markup import escape
 from textual.widgets import Static
 
+from termrenamer.core.models import ScanMode
 from termrenamer.core.progress import PlanEvent, TitleLookedUp
-from termrenamer.tui.stages.base import StageView
+from termrenamer.tui.stages.title_list_stage import TitleListStage, match_name, title_name
 from termrenamer.tui.widgets.title_list import ListRow, TitleList
+from termrenamer.tui.words import plural
 
 
-def _display(name: str, year: int | None) -> str:
-    return f"{name} ({year})" if year is not None else name
-
-
-class PlanStage(StageView):
+class PlanStage(TitleListStage):
     """Each Title as its lookup finishes, found or not, under "Titles"."""
 
     DEFAULT_CSS = """
-    PlanStage #plan-body {
-        height: 1fr;
-        padding: 1 2 0 2;
-    }
-    PlanStage .list-heading {
-        height: 2;
-        border-bottom: solid $tr-line;
-    }
-    PlanStage .list-heading Static {
-        width: 1fr;
-        text-style: bold;
-        padding: 0 2;
-    }
-    PlanStage .list-heading .list-count {
-        width: auto;
-        color: $tr-dim;
-        text-style: none;
-    }
     PlanStage #plan-status {
         height: 3;
         padding: 1 2 0 2;
@@ -45,21 +25,24 @@ class PlanStage(StageView):
     }
     """
 
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self._mode = ScanMode.TV
+
     def compose(self) -> ComposeResult:
-        with Vertical(id="plan-body"):
-            with Horizontal(classes="list-heading"):
-                yield Static("Titles")
-                yield Static("", id="plan-count", classes="list-count")
+        with Vertical(classes="stage-body"):
+            yield from self.compose_heading()
             yield TitleList(id="plan-titles")
             yield Static("", id="plan-status")
 
-    def start(self, provider: str) -> None:
-        """Begin a build on ``provider`` (its name) with an empty list."""
-        self.query_one(TitleList).set_rows([])
+    def start(self, provider: str, mode: ScanMode) -> None:
+        """Begin a build in ``mode`` on ``provider`` (its name), with an empty list."""
+        self._mode = mode
+        self.title_list.set_rows([])
         self.query_one("#plan-status", Static).update(
             f"[$foreground]Building the Plan[/] [$tr-dim]on {escape(provider)}…[/]"
         )
-        self._show_count()
+        self.show_heading_count(0)
 
     def report(self, event: PlanEvent) -> None:
         """Draw what the build reported; an event this view does not show is ignored."""
@@ -69,37 +52,14 @@ class PlanStage(StageView):
     def _title_looked_up(self, event: TitleLookedUp) -> None:
         # Two hints found with the same Match are one Title: one row.
         if event.match is not None:
-            row = ListRow(
-                key=f"match:{event.match.id}",
-                name=_display(event.match.name, event.match.year),
-                status="found",
-                count="",
-            )
+            key = f"match:{event.match.id}"
+            row = ListRow(key, match_name(event.match, self._mode), "found", "")
         else:
-            row = ListRow(
-                key=f"hint:{event.name.casefold()}|{event.year}",
-                name=_display(event.name, event.year),
-                status="no match",
-                count="",
-            )
-        self.query_one(TitleList).put_row(row)
-        self._show_count()
+            key = f"hint:{event.name.casefold()}|{event.year}"
+            row = ListRow(key, title_name(event.name, event.year, self._mode), "no match", "")
+        self.title_list.put_row(row)
+        self.show_heading_count(len(self.title_list.rows))
         self.changed()
-
-    def _show_count(self) -> None:
-        self.query_one("#plan-count", Static).update(str(len(self.query_one(TitleList).rows)))
 
     def count_text(self) -> str:
-        n = len(self.query_one(TitleList).rows)
-        return f"{n} Title{'' if n == 1 else 's'} looked up"
-
-    def redraw(self) -> None:
-        self.query_one(TitleList).redraw()
-
-    def action_select_previous(self) -> None:
-        self.query_one(TitleList).select_previous()
-        self.changed()
-
-    def action_select_next(self) -> None:
-        self.query_one(TitleList).select_next()
-        self.changed()
+        return f"{plural(len(self.title_list.rows), 'Title')} looked up"

@@ -25,7 +25,7 @@ class AppliedCounts:
 
     @classmethod
     def of(cls, plan: Plan, results: Sequence[ApplyResult]) -> AppliedCounts:
-        videos = {entry.source for entry in plan.entries if not entry.is_sidecar}
+        videos = {entry.source for entry in plan.videos}
         statuses = [r.status for r in results if r.source in videos]
         return cls(
             renamed=statuses.count(ApplyStatus.RENAMED),
