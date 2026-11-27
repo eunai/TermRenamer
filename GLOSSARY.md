@@ -35,7 +35,7 @@ The folder under which folder rename builds the show or film tree, set separatel
 _Avoid_: destination folder, output root
 
 **Straggler**:
-A file or folder left behind in a source folder after a plan's moves, which apply can merge into the destination folder.
+A file or folder left behind in a source folder after a plan's moves, which apply can merge into the target folder.
 _Avoid_: stray file
 
 **User settings file**:
@@ -71,10 +71,10 @@ Said of a queued video whose name the app cannot read a title from (and, in TV M
 _Avoid_: unparsed, unknown
 
 **Name taken**:
-Said of a planned rename whose new name already exists at the destination. A setting decides whether the Plan adds a number to the name or leaves the file where it is.
+Said of a planned rename whose new name is already used, at the destination or by an earlier file of the same Plan. A setting decides whether the Plan adds a number to the name or leaves the file where it is.
 
 **Undo**:
-Reversing the last Apply: files, Sidecars and Stragglers go back where they were. Offered until the user starts a new batch or quits.
+Reversing the last Apply: files, Sidecars and Stragglers go back where they were. Offered once for each Apply that changed something Undo can reverse, until the user starts a new batch or quits.
 _Avoid_: revert, rollback
 
 ## Agent workflow
