@@ -28,7 +28,7 @@ Settings come from three sources, highest first: `TERMRENAMER_*` environment var
 ## Logging
 
 - **Bootstrap:** **INFO** to **stderr** via stdlib `logging` (`setup_logging()` in `app_bootstrap`).
-- **TUI running:** On mount, `TermRenamerApp` removes the stderr `StreamHandler` and attaches a handler that writes to the **Logs** tab’s `RichLog`, so `httpx` and other library logs appear in the UI instead of corrupting the terminal. Early errors before the UI mounts still go to stderr.
+- **TUI running:** On mount, `TermRenamerApp` removes the stderr `StreamHandler` and attaches a handler that writes to the **Logs** view (`l`), so `httpx` and other library logs appear in the UI instead of corrupting the terminal. Early errors before the UI mounts still go to stderr.
 - **`TERMRENAMER_LOG_FILE`:** Read into settings but **file logging is not yet wired** in `setup_logging()`. To capture **raw** stderr (e.g. startup failures), redirect stderr (PowerShell: `python -m termrenamer 2> termrenamer.log`; bash: `python -m termrenamer 2> termrenamer.log`). **Do not** paste log lines containing tokens into public bug reports.
 - **Operation id:** the TUI and logs do not show a short correlation id; include the **timestamp** and **repro steps** in bug reports instead.
 
@@ -53,7 +53,7 @@ uv run mypy src
 
 Run the TUI: `uv run python -m termrenamer`.
 
-**Current TUI:** there is no embedded directory tree — **+ folder** / **+ file** (or **Ctrl+F**) queue sources via **textual-fspicker** modals; optional **Film** / **TV** output roots are set under **Settings** (**Ctrl+,**) or via `TERMRENAMER_*_DEST_FOLDER` at bootstrap.
+**Current TUI:** there is no embedded directory tree — `a` (file) and `f` (folder) queue sources via **textual-fspicker** modals; optional **Film** / **TV** output roots are set under **Settings** (`s`) or via `TERMRENAMER_*_DEST_FOLDER` at bootstrap.
 
 ## Links
 

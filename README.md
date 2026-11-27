@@ -99,7 +99,7 @@ TERMRENAMER_TMDB_API_KEY=...
 The app starts when at least one of `TERMRENAMER_TMDB_API_KEY`,
 `TERMRENAMER_TVDB_API_KEY` and `TERMRENAMER_OMDB_API_KEY` is set. A TheTVDB
 subscriber PIN alone is not a key. A provider whose key is missing is marked
-"no key" in the provider bar; building a plan with it names the setting to add
+"no key" in the header; building a plan with it names the setting to add
 and builds no plan.
 
 The main settings:
@@ -114,6 +114,7 @@ The main settings:
 | `TERMRENAMER_FILM_DEST_FOLDER`      | unset   | Root folder for film output. Used only when folder rename is on.    |
 | `TERMRENAMER_TV_DEST_FOLDER`        | unset   | Root folder for TV output. Used only when folder rename is on.      |
 | `TERMRENAMER_CACHE_DB_PATH`         | unset   | Path of a SQLite metadata cache. The cache is off until you set it. |
+| `TERMRENAMER_THEME`                 | `dark`  | Screen colours: `dark` or `light`.                                  |
 
 [`.env.example`](.env.example) lists every setting, including HTTP timeout and
 retry tuning. Changes you make on the **Settings** screen last for the current
@@ -121,41 +122,52 @@ session only.
 
 ## Use
 
-1. Run `termrenamer`.
-2. Queue sources with **+ folder** or **+ file**.
-3. Pick **TV** or **Film** and a provider. A provider without a key is marked
-   "no key".
-4. Build the plan with **plan**.
-5. Review the preview: it shows the source and destination folder trees.
-6. Choose **apply** to rename, or **cancel** to change nothing.
+1. Run `termrenamer`. The screen walks a batch through four stages: Queue,
+   Plan, Preview and Applied.
+2. Queue your backups: `a` adds a file and `f` a folder.
+3. Pick **TV** or **Film** with `m` and a provider with `p`. A provider without
+   a key is marked "no key".
+4. Build the plan with `b`. Each title appears as it is looked up.
+5. Review the preview: one row per title, with its status and its number of
+   videos. `Esc` discards the plan and keeps the queue.
+6. Press `Enter`, then `y` to rename, or `n` to go back with nothing changed.
+7. The Applied stage counts the videos renamed, skipped and failed, and any
+   that already had their names. `n` starts a new batch with an empty queue.
 
-The **Activity** tab lists each match as it happens. The **Logs** tab shows log
-output.
+`l` shows the log output and `?` lists the keys, including some that later
+releases put to work.
 
-Key bindings:
+Keys:
 
-| Key          | Action                                    |
-| ------------ | ----------------------------------------- |
-| `m`          | Toggle TV / Film mode                     |
-| `p`          | Cycle the provider for the current mode   |
-| `b`          | Build plan                                |
-| `a`          | Switch the Activity / Logs tab            |
-| `Ctrl+F`     | Add a source (folder or file)             |
-| `Ctrl+,`     | Open Settings                             |
-| `F1`         | Open Help                                 |
-| `Ctrl+Q`     | Quit                                      |
-| `q` or `Esc` | Close Help, Settings or the Ctrl+F picker |
-| `Esc`        | Close a file or folder dialog             |
+| Key     | Where                     | Action                                |
+| ------- | ------------------------- | ------------------------------------- |
+| `a`     | Queue                     | Add a file                            |
+| `f`     | Queue                     | Add a folder                          |
+| `c`     | Queue                     | Clear the queue                       |
+| `b`     | Queue                     | Build the plan                        |
+| `↑` `↓` | Queue, Plan, Preview      | Select a source or a title            |
+| `Enter` | Preview                   | Apply, then `y` or `Enter` to confirm |
+| `Esc`   | Preview                   | Discard the plan                      |
+| `n`     | Applied                   | New batch                             |
+| `m`     | Queue, Preview            | Change mode (TV or Film)              |
+| `p`     | Queue, Preview            | Change provider                       |
+| `s`     | Queue, Preview, Applied   | Settings                              |
+| `l`     | Anywhere but a text field | Logs                                  |
+| `?`     | Anywhere but a text field | Help                                  |
+| `q`     | Anywhere but a text field | Quit                                  |
+| `Esc`   | A dialog or view          | Close it                              |
 
 ## Features
 
 - **Plan, preview, then apply.** No rename runs until you confirm.
 - **TV and Film modes.** TV uses TMDB or TheTVDB v4. Film uses TMDB or OMDb.
   OMDb is a provider you select, not an automatic fallback.
-- **Source queue.** Add folders and files with **+ folder** / **+ file**, or
-  **Ctrl+F**.
-- **Preview.** Source and destination folder trees, plus an Activity tab with
-  readable match events.
+- **Source queue.** Add files with `a` and folders with `f`.
+- **Preview.** One row per title with its status (ready, name taken, no match)
+  and its number of videos; a video whose name cannot be read is a row of its
+  own.
+- **Two themes.** Dark and light teal, chosen with `TERMRENAMER_THEME` or on
+  the Settings screen.
 - **Collisions.** When a destination name is taken, the plan adds a numbered
   suffix such as ` (1)`. If a file or folder appears at a destination after the
   preview, apply skips that entry.
