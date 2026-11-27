@@ -7,20 +7,36 @@ The Plan Stage and the Preview Stage both show it. It never takes focus: the app
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 
 from rich.table import Table
 from rich.text import Text
 from textual.widgets import OptionList
 from textual.widgets.option_list import Option
 
-STATUS_COLOURS: dict[str, str] = {
-    "ready": "success",
-    "found": "success",
-    "name taken": "warning",
-    "no match": "error",
-    "not recognised": "error",
+
+class StatusWord(StrEnum):
+    """A row's status word: a Plan entry's status, or ``found`` while the Plan is built."""
+
+    READY = "ready"
+    FOUND = "found"
+    NAME_TAKEN = "name taken"
+    NO_MATCH = "no match"
+    NOT_RECOGNISED = "not recognised"
+
+    @property
+    def colour(self) -> str:
+        """The theme variable the word is written in."""
+        return _COLOURS[self]
+
+
+_COLOURS = {
+    StatusWord.READY: "success",
+    StatusWord.FOUND: "success",
+    StatusWord.NAME_TAKEN: "warning",
+    StatusWord.NO_MATCH: "error",
+    StatusWord.NOT_RECOGNISED: "error",
 }
-"""The theme colour of each status word."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,7 +45,7 @@ class ListRow:
 
     key: str
     name: str
-    status: str
+    status: StatusWord
     count: str
 
 
@@ -108,7 +124,7 @@ class TitleList(OptionList, can_focus=False):
 
     def _prompt(self, row: ListRow) -> Option:
         colours = self.app.theme_variables
-        status_colour = colours.get(STATUS_COLOURS.get(row.status, "foreground"), "")
+        status_colour = colours.get(row.status.colour, "")
         grid = Table.grid(expand=True, padding=(0, 1))
         grid.add_column(ratio=1, no_wrap=True, overflow="ellipsis")
         grid.add_column(width=14, no_wrap=True)

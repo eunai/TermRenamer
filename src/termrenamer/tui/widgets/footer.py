@@ -39,15 +39,15 @@ class MessageKind(StrEnum):
         }.get(self, logging.INFO)
 
 
-def hints_markup(keys: Sequence[Key], width: int) -> str:
-    """Each key and its hint, as many as fit in ``width`` cells."""
+def hints_markup(hints: Sequence[tuple[str, str]], width: int | None = None) -> str:
+    """Each key and its label, as ``(key, label)`` pairs; as many as fit in ``width``."""
     out: list[str] = []
     used = 1
-    for key in keys:
-        cells = len(key.display) + 1 + len(key.hint)
-        if used + cells > width - 1:
+    for display, hint in hints:
+        cells = len(display) + 1 + len(hint)
+        if width is not None and used + cells > width - 1:
             break
-        out.append(f"[b $accent]{escape(key.display)}[/] [$foreground]{escape(key.hint)}[/]")
+        out.append(f"[b $accent]{escape(display)}[/] [$foreground]{escape(hint)}[/]")
         used += cells + 2
     return "  ".join(out)
 
@@ -95,4 +95,5 @@ class AppFooter(Vertical):
 
     def show_keys(self, keys: Sequence[Key]) -> None:
         hints = self.query_one("#key-hints", Static)
-        hints.update(hints_markup(keys, self.size.width or self.app.size.width))
+        pairs = [(key.display, key.hint) for key in keys]
+        hints.update(hints_markup(pairs, self.size.width or self.app.size.width))

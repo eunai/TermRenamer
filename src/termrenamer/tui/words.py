@@ -4,14 +4,17 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from termrenamer.core.models import ScanMode
+from termrenamer.core.models import PROVIDER_NAMES, ScanMode
 
-_PROVIDER_NAMES = {"tmdb": "TMDB", "tvdb": "TheTVDB", "omdb": "OMDb"}
+
+def noun(n: int, word: str) -> str:
+    """``word``, with an ``s`` unless ``n`` is 1: ``Stage``, ``Stages``."""
+    return word if n == 1 else f"{word}s"
 
 
 def plural(n: int, word: str) -> str:
     """``n`` and ``word``, with an ``s`` unless ``n`` is 1: ``1 Title``, ``2 Titles``."""
-    return f"{n} {word}{'' if n == 1 else 's'}"
+    return f"{n} {noun(n, word)}"
 
 
 def and_list(names: Sequence[str]) -> str:
@@ -28,4 +31,4 @@ def mode_label(mode: ScanMode) -> str:
 
 def provider_name(provider_id: str) -> str:
     """The Provider's name as the screen writes it, such as ``TheTVDB`` for ``tvdb``."""
-    return _PROVIDER_NAMES.get(provider_id, provider_id)
+    return PROVIDER_NAMES.get(provider_id, provider_id)

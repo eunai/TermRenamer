@@ -10,7 +10,15 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from termrenamer.core.models import EntryStatus, Plan, PlanEntry, Title
+from termrenamer.core.models import (
+    ApplyResult,
+    ApplyStatus,
+    EntryStatus,
+    Plan,
+    PlanEntry,
+    Title,
+    videos_of,
+)
 
 _RENAMED = frozenset({EntryStatus.READY, EntryStatus.NAME_TAKEN})
 
@@ -30,7 +38,7 @@ class TitleRow:
     @property
     def videos(self) -> int:
         """How many of the row's files are videos."""
-        return sum(1 for entry in self.entries if not entry.is_sidecar)
+        return len(videos_of(self.entries))
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +70,27 @@ class PlanCounts:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class AppliedCounts:
+    """How many videos Apply renamed, left unchanged (already named), skipped and failed."""
+
+    renamed: int
+    unchanged: int
+    skipped: int
+    failed: int
+
+    @classmethod
+    def of(cls, plan: Plan, results: Sequence[ApplyResult]) -> AppliedCounts:
+        videos = {entry.source for entry in plan.videos}
+        statuses = [r.status for r in results if r.source in videos]
+        return cls(
+            renamed=statuses.count(ApplyStatus.RENAMED),
+            unchanged=statuses.count(ApplyStatus.UNCHANGED),
+            skipped=statuses.count(ApplyStatus.SKIP),
+            failed=statuses.count(ApplyStatus.FAIL),
+        )
+
+
 def title_status(title: Title, entries: Sequence[PlanEntry]) -> EntryStatus:
     """The status word of ``title``, whose files are ``entries``."""
     statuses = {entry.status for entry in entries}
@@ -85,11 +114,11 @@ def title_rows(plan: Plan) -> tuple[TitleRow, ...]:
                 entries=entries,
             )
         )
-    unread = sorted(
+    not_recognised = sorted(
         (e for e in plan.entries if e.title is None and not e.is_sidecar),
         key=lambda e: e.source.name.casefold(),
     )
-    for video in unread:
+    for video in not_recognised:
         sidecars = tuple(e for e in plan.entries if e.video == video.source)
         rows.append(
             TitleRow(

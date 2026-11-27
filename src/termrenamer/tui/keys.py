@@ -28,7 +28,7 @@ class Key:
 
     ``display`` is the key as the footer and Help write it. ``bindings`` pairs each
     Textual key name with the action it runs. ``hint`` is the footer's label and
-    ``what`` the Help text. ``stages`` are the Stages the key works at; ``anywhere``
+    ``help_text`` the Help text. ``stages`` are the Stages the key works at; ``anywhere``
     keys also work in the views (Settings, Logs, Help). ``guarded`` names what the
     lock refuses while a Plan is being built or applied (such as "Mode"), so the key
     gives the lock's message there. ``place`` says where a key that works at no Stage
@@ -38,7 +38,7 @@ class Key:
     display: str
     bindings: tuple[tuple[str, str], ...]
     hint: str
-    what: str
+    help_text: str
     stages: frozenset[Stage]
     anywhere: bool = False
     guarded: str | None = None
@@ -59,7 +59,7 @@ class Key:
         return ", ".join(self.stage_names)
 
 
-def _one(key: str, action: str) -> tuple[tuple[str, str], ...]:
+def _bound(key: str, action: str) -> tuple[tuple[str, str], ...]:
     return ((key, action),)
 
 
@@ -75,37 +75,39 @@ KEYS: tuple[Key, ...] = (
         "Select a file of the Title",
         frozenset({Stage.PLAN, Stage.PREVIEW}),
     ),
-    Key("b", _one("b", "build_plan"), "Build Plan", "Build the Plan", frozenset({Stage.QUEUE})),
+    Key("b", _bound("b", "build_plan"), "Build Plan", "Build the Plan", frozenset({Stage.QUEUE})),
     Key(
         "enter",
-        _one("enter", "apply"),
+        _bound("enter", "apply"),
         "Apply…",
         "Apply, then y or enter to confirm, n or esc to go back",
         frozenset({Stage.PREVIEW}),
     ),
     Key(
         "t",
-        _one("t", "pick_match"),
+        _bound("t", "pick_match"),
         "Match",
         "Open the Match picker (←→, 1 to 3, enter, / to type, esc)",
         frozenset({Stage.PREVIEW}),
     ),
     Key(
         "x",
-        _one("x", "leave_out"),
+        _bound("x", "leave_out"),
         "Leave out",
         "Leave the file out, or put it back",
         frozenset({Stage.PREVIEW}),
     ),
-    Key("u", _one("u", "undo"), "Undo", "Undo, then y or n", frozenset({Stage.APPLIED})),
-    Key("n", _one("n", "new_batch"), "New batch", "New batch", frozenset({Stage.APPLIED})),
-    Key("a", _one("a", "add_file"), "Add file", "Add a file", frozenset({Stage.QUEUE})),
-    Key("f", _one("f", "add_folder"), "Add folder", "Add a folder", frozenset({Stage.QUEUE})),
-    Key("c", _one("c", "clear_queue"), "Clear queue", "Clear the queue", frozenset({Stage.QUEUE})),
-    Key("i", _one("i", "toggle_posters"), "Poster", "Hide or show Posters", _ALL, anywhere=True),
+    Key("u", _bound("u", "undo"), "Undo", "Undo, then y or n", frozenset({Stage.APPLIED})),
+    Key("n", _bound("n", "new_batch"), "New batch", "New batch", frozenset({Stage.APPLIED})),
+    Key("a", _bound("a", "add_file"), "Add file", "Add a file", frozenset({Stage.QUEUE})),
+    Key("f", _bound("f", "add_folder"), "Add folder", "Add a folder", frozenset({Stage.QUEUE})),
+    Key(
+        "c", _bound("c", "clear_queue"), "Clear queue", "Clear the queue", frozenset({Stage.QUEUE})
+    ),
+    Key("i", _bound("i", "toggle_posters"), "Poster", "Hide or show Posters", _ALL, anywhere=True),
     Key(
         "m",
-        _one("m", "change_mode"),
+        _bound("m", "change_mode"),
         "Mode",
         "Change Mode",
         frozenset({Stage.QUEUE, Stage.PREVIEW}),
@@ -113,7 +115,7 @@ KEYS: tuple[Key, ...] = (
     ),
     Key(
         "p",
-        _one("p", "change_provider"),
+        _bound("p", "change_provider"),
         "Provider",
         "Change Provider",
         frozenset({Stage.QUEUE, Stage.PREVIEW}),
@@ -121,14 +123,14 @@ KEYS: tuple[Key, ...] = (
     ),
     Key(
         "esc",
-        _one("escape", "cancel_build"),
+        _bound("escape", "cancel_build"),
         "Cancel Plan",
         "Cancel the build",
         frozenset({Stage.PLAN}),
     ),
     Key(
         "esc",
-        _one("escape", "discard_plan"),
+        _bound("escape", "discard_plan"),
         "Discard Plan",
         "Discard the Plan",
         frozenset({Stage.PREVIEW}),
@@ -136,15 +138,15 @@ KEYS: tuple[Key, ...] = (
     Key("esc", (), "Close", "Close a dialog or view", frozenset(), place="Dialogs, views"),
     Key(
         "s",
-        _one("s", "open_settings"),
+        _bound("s", "open_settings"),
         "Settings",
         "Settings (↑↓, enter or space, esc)",
         frozenset({Stage.QUEUE, Stage.PREVIEW, Stage.APPLIED}),
         guarded="Settings",
     ),
-    Key("l", _one("l", "open_logs"), "Logs", "Logs", _ALL, anywhere=True),
-    Key("?", _one("question_mark", "open_help"), "Help", "Help", _ALL, anywhere=True),
-    Key("q", _one("q", "quit"), "Quit", "Quit", _ALL, anywhere=True),
+    Key("l", _bound("l", "open_logs"), "Logs", "Logs", _ALL, anywhere=True),
+    Key("?", _bound("question_mark", "open_help"), "Help", "Help", _ALL, anywhere=True),
+    Key("q", _bound("q", "quit"), "Quit", "Quit", _ALL, anywhere=True),
 )
 """Every key of the screen, in footer order."""
 
@@ -161,3 +163,17 @@ def entries_for(name: str) -> Iterator[tuple[Key, str]]:
         for bound, action in key.bindings:
             if bound == name:
                 yield key, action
+
+
+VIEW_HINTS: dict[str, tuple[tuple[str, str], ...]] = {
+    "settings": (
+        ("↑↓", "Move"),
+        ("enter", "Edit or toggle"),
+        ("esc", "Close"),
+        ("?", "Help"),
+        ("q", "Quit"),
+    ),
+    "logs": (("esc", "Close"), ("?", "Help"), ("q", "Quit")),
+    "help": (("esc", "Close"), ("l", "Logs"), ("q", "Quit")),
+}
+"""The hint line of each view (Settings, Logs, Help): each key and its label."""

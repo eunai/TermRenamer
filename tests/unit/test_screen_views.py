@@ -159,7 +159,7 @@ async def test_question_mark_opens_help_listing_every_key_of_the_table() -> None
         await press(pilot, "escape")
         assert app.screen is app.screen_stack[0]
     for key in KEYS:
-        assert f"{key.display} {key.where} {key.what}" in text
+        assert f"{key.display} {key.where} {key.help_text}" in text
 
 
 async def test_q_quits_from_a_view() -> None:

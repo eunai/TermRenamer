@@ -10,7 +10,7 @@ from textual.widgets import Static
 from termrenamer.core.models import ScanMode
 from termrenamer.core.progress import PlanEvent, TitleLookedUp
 from termrenamer.tui.stages.title_list_stage import TitleListStage, match_name, title_name
-from termrenamer.tui.widgets.title_list import ListRow, TitleList
+from termrenamer.tui.widgets.title_list import ListRow, StatusWord, TitleList
 from termrenamer.tui.words import plural
 
 
@@ -53,10 +53,12 @@ class PlanStage(TitleListStage):
         # Two hints found with the same Match are one Title: one row.
         if event.match is not None:
             key = f"match:{event.match.id}"
-            row = ListRow(key, match_name(event.match, self._mode), "found", "")
+            row = ListRow(key, match_name(event.match, self._mode), StatusWord.FOUND, "")
         else:
             key = f"hint:{event.name.casefold()}|{event.year}"
-            row = ListRow(key, title_name(event.name, event.year, self._mode), "no match", "")
+            row = ListRow(
+                key, title_name(event.name, event.year, self._mode), StatusWord.NO_MATCH, ""
+            )
         self.title_list.put_row(row)
         self.show_heading_count(len(self.title_list.rows))
         self.changed()

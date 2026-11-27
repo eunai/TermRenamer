@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -20,6 +20,11 @@ PROVIDER_IDS: Mapping[ScanMode, tuple[str, ...]] = MappingProxyType(
     {ScanMode.TV: ("tmdb", "tvdb"), ScanMode.FILM: ("tmdb", "omdb")}
 )
 """The Providers each Mode accepts, by id, in the order they are offered."""
+
+PROVIDER_NAMES: Mapping[str, str] = MappingProxyType(
+    {"tmdb": "TMDB", "tvdb": "TheTVDB", "omdb": "OMDb"}
+)
+"""Each Provider's name as people read it, by id."""
 
 
 class FileKind(StrEnum):
@@ -206,7 +211,7 @@ class Plan:
     @property
     def videos(self) -> tuple[PlanEntry, ...]:
         """The Plan's video entries, without the Sidecars, in source-path order."""
-        return tuple(entry for entry in self.entries if not entry.is_sidecar)
+        return videos_of(self.entries)
 
 
 class ApplyStatus(StrEnum):
@@ -226,3 +231,8 @@ class ApplyResult:
     destination: Path | None
     status: ApplyStatus
     reason: str
+
+
+def videos_of(entries: Iterable[PlanEntry]) -> tuple[PlanEntry, ...]:
+    """The video entries of ``entries``, without the Sidecars, in their order."""
+    return tuple(entry for entry in entries if not entry.is_sidecar)

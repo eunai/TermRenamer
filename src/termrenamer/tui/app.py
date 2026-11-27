@@ -11,6 +11,7 @@ each view under :mod:`termrenamer.tui.views`. Every key goes through the key tab
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -35,7 +36,7 @@ from termrenamer.core.planning import plan_queue
 from termrenamer.core.progress import PlanEvent
 from termrenamer.core.queue import SourceQueue
 from termrenamer.core.title_rows import PlanCounts
-from termrenamer.session_settings import SessionSettings, SettingsLockedError, locked_message
+from termrenamer.session_settings import SessionSettings, locked_message
 from termrenamer.tui import keys
 from termrenamer.tui.dialogs import ApplyConfirm
 from termrenamer.tui.log_book import LogBook, LogBookHandler
@@ -47,7 +48,7 @@ from termrenamer.tui.widgets.action_button import ActionButton
 from termrenamer.tui.widgets.footer import AppFooter, MessageKind
 from termrenamer.tui.widgets.header import AppHeader
 from termrenamer.tui.widgets.stages_row import StagesRow
-from termrenamer.tui.words import and_list, mode_label, provider_name
+from termrenamer.tui.words import and_list, mode_label, noun, provider_name
 from termrenamer.util.errors import ProviderError, ValidationError
 from termrenamer.wiring import PlanningWiring
 
@@ -57,6 +58,11 @@ _STAGE_IDS = {
     Stage.PREVIEW: "preview-stage",
     Stage.APPLIED: "applied-stage",
 }
+
+
+_BUILD = "build"
+_APPLY = "apply"
+"""The names of the two workers: the build of the Plan and its Apply."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,9 +234,8 @@ class TermRenamerApp(App[None]):
             return
         if wrong_stage is not None:
             stages = wrong_stage.stage_names
-            plural_s = "s" if len(stages) > 1 else ""
             self.say(
-                f"{wrong_stage.hint} works at the {and_list(stages)} Stage{plural_s}.",
+                f"{wrong_stage.hint} works at the {and_list(stages)} {noun(len(stages), 'Stage')}.",
                 MessageKind.WARNING,
             )
 
@@ -284,7 +289,7 @@ class TermRenamerApp(App[None]):
         self.say("Building the Plan…")
         self._build(self.queue.sources, options)
 
-    @work(thread=True, exclusive=True, group="batch", exit_on_error=False, name="build")
+    @work(thread=True, exclusive=True, group="batch", exit_on_error=False, name=_BUILD)
     def _build(self, sources: tuple[Path, ...], options: PlanOptions) -> _BuildOutcome:
         try:
             lookup = self._wiring.resolve(mode=options.mode, provider_id=options.provider_id)
@@ -356,7 +361,7 @@ class TermRenamerApp(App[None]):
         self.say("Applying the Plan…")
         self._apply(plan)
 
-    @work(thread=True, exclusive=True, group="batch", exit_on_error=False, name="apply")
+    @work(thread=True, exclusive=True, group="batch", exit_on_error=False, name=_APPLY)
     def _apply(self, plan: Plan) -> tuple[Plan, tuple[ApplyResult, ...]]:
         return plan, tuple(apply_plan(plan, confirmed=True))
 
@@ -382,18 +387,18 @@ class TermRenamerApp(App[None]):
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         worker = event.worker
-        if worker.name not in ("build", "apply"):
+        if worker.name not in (_BUILD, _APPLY):
             return
         if event.state is WorkerState.SUCCESS:
-            if worker.name == "build" and isinstance(worker.result, _BuildOutcome):
+            if worker.name == _BUILD and isinstance(worker.result, _BuildOutcome):
                 self._build_finished(worker.result)
-            elif worker.name == "apply" and isinstance(worker.result, tuple):
+            elif worker.name == _APPLY and isinstance(worker.result, tuple):
                 self._apply_finished(*worker.result)
         elif event.state in (WorkerState.ERROR, WorkerState.CANCELLED):
             self.session_settings.unlock()
             self._applying = False
-            what = "Plan" if worker.name == "build" else "Apply"
-            if worker.name == "build":
+            what = "Plan" if worker.name == _BUILD else "Apply"
+            if worker.name == _BUILD:
                 self._show_stage(Stage.QUEUE)
             self.say(f"{what} failed: {worker.error}", MessageKind.ERROR)
             self._refresh_chrome()
@@ -412,24 +417,22 @@ class TermRenamerApp(App[None]):
     def action_change_mode(self) -> None:
         owner = self.session_settings
         mode = ScanMode.FILM if owner.mode is ScanMode.TV else ScanMode.TV
-        had_plan = self.plan is not None
-        try:
-            owner.set_mode(mode)
-        except SettingsLockedError:
-            self.say(locked_message("Mode"), MessageKind.WARNING)
-            return
-        if not had_plan:  # otherwise the message says the Plan was discarded
-            self.say(f"Mode: {mode_label(mode)}. Provider: {self._provider_text()}.")
+        self._change(lambda: owner.set_mode(mode))
 
     def action_change_provider(self) -> None:
+        self._change(self.session_settings.next_provider)
+
+    def _change(self, change: Callable[[], object]) -> None:
+        """Change the Mode or the Provider, then say where they now stand.
+
+        The key table refuses ``m`` and ``p`` while the settings owner is locked. When
+        a Plan was discarded, the message says so instead.
+        """
         had_plan = self.plan is not None
-        try:
-            self.session_settings.next_provider()
-        except SettingsLockedError:
-            self.say(locked_message("Provider"), MessageKind.WARNING)
-            return
+        change()
         if not had_plan:
-            self.say(f"Provider: {self._provider_text()}.")
+            owner = self.session_settings
+            self.say(f"Mode: {mode_label(owner.mode)}. Provider: {self._provider_text()}.")
 
     def _provider_text(self) -> str:
         owner = self.session_settings

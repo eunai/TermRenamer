@@ -88,6 +88,7 @@ async def test_the_preview_has_one_row_per_title_and_one_per_not_recognised_vide
     ]
     assert "✓ Queue" in text and "✓ Plan" in text and "● Preview" in text
     assert "2 Titles · 4 videos" in text
+    assert "Titles 3" in text  # the heading counts every row of the list, as the mockup does
     assert "enter Apply…" in text
     assert "Nothing moves until you confirm." in text
 

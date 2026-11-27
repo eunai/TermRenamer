@@ -9,9 +9,8 @@ from textual.markup import escape
 from textual.screen import Screen
 from textual.widgets import Static
 
-from termrenamer.tui.keys import KEYS
-
-VIEW_HINTS = "[b $accent]esc[/] Close  [b $accent]l[/] Logs  [b $accent]q[/] Quit"
+from termrenamer.tui.keys import KEYS, VIEW_HINTS
+from termrenamer.tui.widgets.footer import hints_markup
 
 
 def help_markup() -> str:
@@ -24,7 +23,7 @@ def help_markup() -> str:
     for key in KEYS:
         lines.append(
             f"[b $accent]{escape(key.display):<8}[/][$tr-dim]{escape(key.where):<26}[/]"
-            f"{escape(key.what)}"
+            f"{escape(key.help_text)}"
         )
     return "\n".join(lines)
 
@@ -50,7 +49,7 @@ class HelpView(Screen[None]):
     def compose(self) -> ComposeResult:
         with VerticalScroll():
             yield Static(help_markup(), id="help-body")
-        yield Static(VIEW_HINTS, id="help-hints")
+        yield Static(hints_markup(VIEW_HINTS["help"]), id="help-hints")
 
     def action_close(self) -> None:
         self.dismiss()

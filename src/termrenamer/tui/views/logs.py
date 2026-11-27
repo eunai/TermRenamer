@@ -7,9 +7,9 @@ from textual.binding import Binding
 from textual.screen import Screen
 from textual.widgets import RichLog, Static
 
+from termrenamer.tui.keys import VIEW_HINTS
 from termrenamer.tui.log_book import LogBook
-
-VIEW_HINTS = "[b $accent]esc[/] Close  [b $accent]?[/] Help  [b $accent]q[/] Quit"
+from termrenamer.tui.widgets.footer import hints_markup
 
 
 class LogsView(Screen[None]):
@@ -46,7 +46,7 @@ class LogsView(Screen[None]):
     def compose(self) -> ComposeResult:
         yield Static("Logs", id="logs-title")
         yield RichLog(id="log-lines", markup=False, highlight=False, wrap=True)
-        yield Static(VIEW_HINTS, id="logs-hints")
+        yield Static(hints_markup(VIEW_HINTS["logs"]), id="logs-hints")
 
     def on_mount(self) -> None:
         self.catch_up()

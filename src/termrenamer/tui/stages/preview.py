@@ -10,7 +10,7 @@ from termrenamer.core.models import Plan
 from termrenamer.core.title_rows import PlanCounts, TitleRow, title_rows
 from termrenamer.tui.stages.title_list_stage import TitleListStage, match_name
 from termrenamer.tui.widgets.action_button import ActionButton
-from termrenamer.tui.widgets.title_list import ListRow, TitleList
+from termrenamer.tui.widgets.title_list import ListRow, StatusWord, TitleList
 from termrenamer.tui.words import plural
 
 
@@ -53,7 +53,7 @@ class PreviewStage(TitleListStage):
     @property
     def selected_row(self) -> TitleRow | None:
         """The selected row of the Title list, or ``None``."""
-        selected = self.query_one(TitleList).selected
+        selected = self.title_list.selected
         if selected is None:
             return None
         return self._rows[int(selected.key)]
@@ -66,14 +66,15 @@ class PreviewStage(TitleListStage):
             ListRow(
                 key=str(index),
                 name=row.name if row.title is None else match_name(row.title, plan.mode),
-                status=row.status.value,
+                status=StatusWord(row.status.value),
                 count=str(row.videos),
             )
             for index, row in enumerate(self._rows)
         ]
+        # Rows are keyed by their place, so clear first: a new Plan starts at its first row.
         self.title_list.set_rows([])
         self.title_list.set_rows(rows)
-        self.show_heading_count(PlanCounts.of(plan).titles)
+        self.show_heading_count(len(rows))
         self.changed()
 
     def count_text(self) -> str:

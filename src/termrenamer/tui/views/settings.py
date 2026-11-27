@@ -21,16 +21,13 @@ from textual.widgets import Input, Static, Switch
 from termrenamer.app_bootstrap import ThemeName
 from termrenamer.core.models import ScanMode
 from termrenamer.session_settings import SessionSettings
+from termrenamer.tui.keys import VIEW_HINTS
 from termrenamer.tui.widgets.action_button import ActionButton
+from termrenamer.tui.widgets.footer import hints_markup
 from termrenamer.tui.words import mode_label
 from termrenamer.util.errors import ValidationError
 
 _ROOTS = {"tv-root": ScanMode.TV, "film-root": ScanMode.FILM}
-
-VIEW_HINTS = (
-    "[b $accent]↑↓[/] Move  [b $accent]enter[/] Edit or toggle  [b $accent]esc[/] Close"
-    "  [b $accent]?[/] Help  [b $accent]q[/] Quit"
-)
 
 
 class ThemeChoice(Static, can_focus=True):
@@ -211,7 +208,7 @@ class SettingsView(Screen[None]):
             yield ActionButton(
                 "esc", "Close", press_key="escape", id="settings-close", classes="-plain"
             )
-        yield Static(VIEW_HINTS, id="settings-hints")
+        yield Static(hints_markup(VIEW_HINTS["settings"]), id="settings-hints")
 
     def on_mount(self) -> None:
         self._show_switches()

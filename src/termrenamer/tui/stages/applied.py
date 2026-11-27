@@ -3,36 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Static
 
-from termrenamer.core.models import ApplyResult, ApplyStatus, Plan
+from termrenamer.core.models import ApplyResult, Plan
+from termrenamer.core.title_rows import AppliedCounts
 from termrenamer.tui.stages.base import StageView
 from termrenamer.tui.widgets.action_button import ActionButton
-
-
-@dataclass(frozen=True, slots=True)
-class AppliedCounts:
-    """How many videos Apply renamed, left unchanged (already named), skipped and failed."""
-
-    renamed: int
-    unchanged: int
-    skipped: int
-    failed: int
-
-    @classmethod
-    def of(cls, plan: Plan, results: Sequence[ApplyResult]) -> AppliedCounts:
-        videos = {entry.source for entry in plan.videos}
-        statuses = [r.status for r in results if r.source in videos]
-        return cls(
-            renamed=statuses.count(ApplyStatus.RENAMED),
-            unchanged=statuses.count(ApplyStatus.UNCHANGED),
-            skipped=statuses.count(ApplyStatus.SKIP),
-            failed=statuses.count(ApplyStatus.FAIL),
-        )
 
 
 class AppliedStage(StageView):
