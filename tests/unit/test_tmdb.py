@@ -128,6 +128,31 @@ def test_episode_non_success_answer_other_than_404_is_a_failure(status: int) -> 
         provider.episode_title(show_id="42", season=1, episode=1)
 
 
+@pytest.mark.parametrize("follows", [False, True])
+def test_a_redirect_is_a_failure_and_is_not_followed(follows: bool) -> None:
+    key = "fake-tmdb-key-0000"
+    hosts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        hosts.append(request.url.host)
+        if request.url.host != "api.themoviedb.org":
+            return httpx.Response(200, json=_load("tmdb_search_movie.json"))
+        location = f"https://elsewhere.example/3/search/movie?api_key={key}"
+        return httpx.Response(307, headers={"Location": location})
+
+    raw = httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=follows)
+    http = HttpClient(config=HttpClientConfig(max_attempts=1), client=raw)
+    provider = TmdbProvider(http, api_key=key)
+
+    with pytest.raises(ProviderError) as caught:
+        provider.search_films(hint="Harbour Lights", year=None)
+
+    message = str(caught.value)
+    assert "307" in message and "api.themoviedb.org" in message
+    assert key not in message and "elsewhere" not in message and "search" not in message
+    assert hosts == ["api.themoviedb.org"]
+
+
 def test_unusable_search_response_is_a_failure() -> None:
     provider = _provider(lambda _: httpx.Response(200, json={"page": 1}))
     with pytest.raises(ProviderError):

@@ -237,6 +237,32 @@ def test_episode_whose_numbers_have_digits_other_than_0_to_9_is_dropped() -> Non
     assert build.episode_title(show_id="12345", season=1, episode=2) == "Kept"
 
 
+@pytest.mark.parametrize("follows", [False, True])
+def test_a_redirect_on_login_is_a_failure_and_is_not_followed(follows: bool) -> None:
+    key, pin = "fake-tvdb-key-0000", "fake-pin-1234"
+    hosts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        hosts.append(request.url.host)
+        if request.url.host != "api4.thetvdb.com":
+            return httpx.Response(200, json=_load("tvdb_login.json"))
+        location = f"https://elsewhere.example/v4/login?apikey={key}&pin={pin}"
+        return httpx.Response(307, headers={"Location": location})
+
+    raw = httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=follows)
+    http = HttpClient(config=HttpClientConfig(max_attempts=1), client=raw)
+    provider = TvdbV4Provider(http, api_key=key, subscriber_pin=pin)
+
+    with pytest.raises(ProviderError) as caught:
+        provider.search_shows(hint="Quiet Valley")
+
+    message = str(caught.value)
+    assert "307" in message and "api4.thetvdb.com" in message
+    assert key not in message and pin not in message
+    assert "elsewhere" not in message and "/login" not in message
+    assert hosts == ["api4.thetvdb.com"]
+
+
 def test_401_on_search_triggers_single_relogin() -> None:
     login_j = _load("tvdb_login.json")
     search_j = _load("tvdb_search_series.json")

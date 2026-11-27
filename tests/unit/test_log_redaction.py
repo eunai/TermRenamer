@@ -225,12 +225,13 @@ def test_a_redirect_is_logged_as_the_request_the_app_made(bare_root: logging.Log
         client=httpx.Client(transport=httpx.MockTransport(redirect), follow_redirects=True),
     )
     tvdb = TvdbV4Provider(http, api_key=_TVDB_KEY, subscriber_pin=_TVDB_PIN)
-    with pytest.raises(ProviderError):
+    with pytest.raises(ProviderError) as caught:
         tvdb.search_shows(hint="Harbour Lights")
 
     text = "\n".join(raw.lines)
-    assert "HTTP POST https://api4.thetvdb.com/v4/login 200" in text
+    assert "HTTP POST https://api4.thetvdb.com/v4/login 307" in text
     assert _TVDB_PIN not in text and "elsewhere" not in text
+    assert str(caught.value) == "HTTP 307 redirect from api4.thetvdb.com not followed"
 
 
 class _Unprintable(Exception):

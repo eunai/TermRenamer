@@ -125,6 +125,37 @@ def test_download_with_a_length_in_digits_other_than_0_to_9_reads_the_body(value
     assert download.content == b"abc"
 
 
+@pytest.mark.parametrize("status", [300, 301, 302, 303, 304, 307, 308])
+@pytest.mark.parametrize("follows", [False, True])
+def test_a_redirect_is_a_failure_that_names_the_status_and_host_only(
+    status: int, follows: bool
+) -> None:
+    hosts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        hosts.append(request.url.host)
+        return httpx.Response(status, headers={"Location": "https://elsewhere.example/x"})
+
+    raw = httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=follows)
+    client = HttpClient(config=HttpClientConfig(max_attempts=3), client=raw)
+    with pytest.raises(ProviderError) as caught:
+        client.get("https://example.test/r", params={"api_key": "fake-key-0000"})
+    with pytest.raises(ProviderError) as downloaded:
+        client.download("https://example.test/p.jpg?sig=fake-sig-0000", max_bytes=10)
+
+    for error in (caught.value, downloaded.value):
+        assert str(error) == f"HTTP {status} redirect from example.test not followed"
+    assert hosts == ["example.test", "example.test"]
+
+
+def test_an_own_client_does_not_follow_redirects() -> None:
+    client = HttpClient()
+    try:
+        assert client._client.follow_redirects is False
+    finally:
+        client.close()
+
+
 def test_max_attempts_exhausted_on_repeated_429() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(429)

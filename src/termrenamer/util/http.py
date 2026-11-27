@@ -45,6 +45,10 @@ class HttpClient:
     redirect's. httpx's own request lines are kept out of the logs
     (:mod:`termrenamer.util.logging`). No other line of it quotes a URL, a header or a
     body.
+
+    No request follows a redirect, whatever the ``httpx.Client`` it was given says: a
+    3xx answer raises ``ProviderError`` naming the status and the host asked, so a key
+    in the query string or body never goes to the ``Location``.
     """
 
     def __init__(
@@ -56,7 +60,7 @@ class HttpClient:
         self._config = config or HttpClientConfig()
         timeout = httpx.Timeout(self._config.timeout_seconds)
         self._owns_client = client is None
-        self._client = client or httpx.Client(timeout=timeout, follow_redirects=True)
+        self._client = client or httpx.Client(timeout=timeout, follow_redirects=False)
 
     def close(self) -> None:
         if self._owns_client:
@@ -73,17 +77,20 @@ class HttpClient:
 
         Retries on: timeout, connect errors, HTTP 429 / 502 / 503 / 504.
         Does not retry 401/404/400 (adapters handle auth refresh separately).
+        A redirect is not followed: it raises ``ProviderError``.
         """
-        response = self._with_retries(lambda: self._client.request(method, url, **kwargs))
-        _log_answer(method, url, response)
-        return response
+        return self._answer(
+            method,
+            url,
+            lambda: self._client.request(method, url, follow_redirects=False, **kwargs),
+        )
 
     def download(self, url: str, *, max_bytes: int) -> Download:
         """GET ``url`` with retries, as :meth:`request` does, reading at most ``max_bytes``.
 
-        Redirects are not followed, and the request carries only the client's default
-        headers. A body longer than ``max_bytes`` stops the read and raises
-        ``ProviderError``, as does any status but 200.
+        A redirect is not followed, as for :meth:`request`, and the request carries only
+        the client's default headers. A body longer than ``max_bytes`` stops the read and
+        raises ``ProviderError``, as does any status but 200.
         """
 
         too_large = f"Download larger than {max_bytes} bytes"
@@ -103,14 +110,22 @@ class HttpClient:
                         raise ProviderError(too_large)
                 return response
 
-        response = self._with_retries(send)
-        _log_answer("GET", url, response)
+        response = self._answer("GET", url, send)
         if response.status_code != 200:
             raise ProviderError(f"HTTP {response.status_code}")
         return Download(
             content=bytes(body),
             content_type=response.headers.get("Content-Type", ""),
         )
+
+    def _answer(self, method: str, url: str, send: Callable[[], httpx.Response]) -> httpx.Response:
+        """Send with retries, log the answer, and refuse a redirect."""
+        response = self._with_retries(send)
+        _log_answer(method, url, response)
+        if 300 <= response.status_code < 400:
+            host = httpx.URL(url).host
+            raise ProviderError(f"HTTP {response.status_code} redirect from {host} not followed")
+        return response
 
     def _with_retries(self, send: Callable[[], httpx.Response]) -> httpx.Response:
         last_error: BaseException | None = None
