@@ -3,7 +3,10 @@
 The details column holds the selected Title's name, status word and counts, one cell
 per video, the summary of the whole Plan and the Apply action. ``↑`` ``↓`` select a
 Title, ``←`` ``→`` a file of it; the footer shows that file's current and new paths.
-The column stays left of the Title list, where the Poster panel goes (#29).
+
+While Posters are shown, the poster panel tops the column, outside the details' scroll,
+and the selected Title's Poster is downloaded when it is not stored yet. The summary
+and Apply then move under the Title list, as the mockup draws them.
 """
 
 from __future__ import annotations
@@ -15,11 +18,13 @@ from textual.widgets import Static
 
 from termrenamer.core.models import EntryStatus, Plan, PlanEntry
 from termrenamer.core.title_rows import PlanCounts, TitleRow, title_rows
+from termrenamer.persistence.posters import PosterRequest
 from termrenamer.tui.stages.title_list_stage import TitleListStage
 from termrenamer.tui.widgets.action_button import ActionButton
+from termrenamer.tui.widgets.poster_panel import PosterPanel
 from termrenamer.tui.widgets.title_details import TitleDetails
 from termrenamer.tui.widgets.title_list import ListRow, StatusWord, TitleList
-from termrenamer.tui.words import agree, match_name, plural, why_not_renamed
+from termrenamer.tui.words import agree, match_name, plural, provider_name, why_not_renamed
 
 _LABEL_WIDTH = 6
 """``from`` and ``to`` and the spaces after them, in the footer."""
@@ -58,6 +63,29 @@ class PreviewStage(TitleListStage):
         color: $tr-dim;
         margin-top: 1;
     }
+    PreviewStage #summary-under {
+        display: none;
+        height: auto;
+        padding: 1 0 1 3;
+        border-top: solid $tr-line;
+    }
+    PreviewStage #summary-under .summary-counts {
+        margin-bottom: 1;
+    }
+    PreviewStage #summary-under-apply {
+        height: 1;
+    }
+    PreviewStage #summary-under-note {
+        width: auto;
+        color: $tr-dim;
+        margin-left: 2;
+    }
+    PreviewStage.-posters #preview-summary {
+        display: none;
+    }
+    PreviewStage.-posters #summary-under {
+        display: block;
+    }
     """
 
     def __init__(self, **kwargs: object) -> None:
@@ -69,6 +97,7 @@ class PreviewStage(TitleListStage):
     def compose(self) -> ComposeResult:
         with Horizontal():
             with Vertical(id="details"):
+                yield PosterPanel(id="preview-poster")
                 with VerticalScroll(id="details-scroll"):
                     yield TitleDetails()
                     with Vertical(id="details-actions"):
@@ -79,12 +108,18 @@ class PreviewStage(TitleListStage):
                             "x", "Leave out", press_key="x", id="leave-out", classes="-plain"
                         )
                 with Vertical(id="preview-summary"):
-                    yield Static("", id="summary-counts")
+                    yield Static("", id="summary-counts", classes="summary-counts")
                     yield ActionButton("enter", "Apply…", press_key="enter", classes="-strong")
                     yield Static("Nothing moves until you confirm.", id="preview-note")
             with Vertical(classes="stage-body"):
                 yield from self.compose_heading()
                 yield TitleList(id="preview-titles")
+                # The same summary and Apply, under the list while the poster panel shows.
+                with Vertical(id="summary-under"):
+                    yield Static("", id="summary-counts-under", classes="summary-counts")
+                    with Horizontal(id="summary-under-apply"):
+                        yield ActionButton("enter", "Apply…", press_key="enter", classes="-strong")
+                        yield Static("Nothing moves until you confirm.", id="summary-under-note")
 
     def on_mount(self) -> None:
         # Each button shows once its key's action is built (#27, #28).
@@ -129,7 +164,8 @@ class PreviewStage(TitleListStage):
         self.title_list.set_rows([])
         self.title_list.set_rows(rows)
         self.show_heading_count(len(rows))
-        self.query_one("#summary-counts", Static).update(_summary(PlanCounts.of(plan)))
+        for counts in self.query(".summary-counts").results(Static):
+            counts.update(_summary(PlanCounts.of(plan)))
         self._show_details()
 
     def redraw(self) -> None:
@@ -138,8 +174,27 @@ class PreviewStage(TitleListStage):
 
     def _show_details(self) -> None:
         if self._plan is not None:
-            self.query_one(TitleDetails).show(self.selected_row, self._plan.mode, self._file)
+            self.query_one(TitleDetails).show(
+                self.selected_row, self._plan.mode, self._file, compact=self.posters_shown
+            )
+            self._show_poster()
         self.changed()
+
+    def _show_poster(self) -> None:
+        """The selected Title's Poster, downloaded now when it is not stored yet."""
+        plan, row = self._plan, self.selected_row
+        panel = self.query_one(PosterPanel)
+        if plan is None or row is None:
+            panel.view.clear()
+            return
+        name = row.name if row.title is None else match_name(row.title, plan.mode)
+        ref = row.title.poster_ref if row.title is not None else None
+        provider_id = plan.options.provider_id
+        request = PosterRequest(provider_id, ref) if ref else None
+        panel.show(name, request, provider=provider_name(provider_id), download=True)
+
+    def posters_changed(self) -> None:
+        self._show_details()
 
     # ------------------------------------------------------------------ keys
 

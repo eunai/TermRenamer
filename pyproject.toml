@@ -17,6 +17,11 @@ dependencies = [
     "textual-fspicker==1.0.0",
 ]
 
+[project.optional-dependencies]
+posters = [
+    "textual-image[textual]>=0.14.4,<0.15",
+]
+
 [dependency-groups]
 dev = [
     "mypy>=1.15.0",

@@ -1,7 +1,9 @@
 """The selected Title's details: its name, status word and counts, and one cell per video.
 
 In TV Mode the cells are grouped by season, each group after its ``S01`` label. A cell
-takes its file's status colour, and a mark under it shows the selected file.
+takes its file's status colour, and a mark under it shows the selected file. Under the
+poster panel the details are compact, as the mockup draws them: the cells one row high
+and no tally.
 """
 
 from __future__ import annotations
@@ -47,8 +49,13 @@ class TitleDetails(Vertical):
         yield Static("", id="details-tally")
         yield Static("", id="details-cells")
 
-    def show(self, row: TitleRow | None, mode: ScanMode, selected: int) -> None:
-        """Show ``row`` with its file number ``selected`` marked, or nothing for ``None``."""
+    def show(
+        self, row: TitleRow | None, mode: ScanMode, selected: int, *, compact: bool = False
+    ) -> None:
+        """Show ``row`` with its file number ``selected`` marked, or nothing for ``None``.
+
+        ``compact`` draws the cells one row high and leaves out the tally.
+        """
         heading = self.query_one("#details-heading", Static)
         tally = self.query_one("#details-tally", Static)
         cells = self.query_one("#details-cells", Static)
@@ -68,8 +75,8 @@ class TitleDetails(Vertical):
             if len(statuses) > 1
             else ""
         )
-        tally.display = len(statuses) > 1
-        cells.update(_cells(row, mode, selected))
+        tally.display = len(statuses) > 1 and not compact
+        cells.update(_cells(row, mode, selected, compact=compact))
 
 
 def _counts(row: TitleRow, mode: ScanMode) -> str:
@@ -84,9 +91,10 @@ def _counts(row: TitleRow, mode: ScanMode) -> str:
     return " · ".join(parts)
 
 
-def _cells(row: TitleRow, mode: ScanMode, selected: int) -> str:
+def _cells(row: TitleRow, mode: ScanMode, selected: int, *, compact: bool = False) -> str:
     """Three text rows per line of cells: the cells' top, their bottom with the season
-    label, and the mark under the selected cell. A line that is full wraps."""
+    label, and the mark under the selected cell; ``compact`` leaves out the top. A line
+    that is full wraps."""
     lines: list[list[str]] = []
     current: list[list[str]] = [[], [], []]
     x = 0
@@ -99,7 +107,7 @@ def _cells(row: TitleRow, mode: ScanMode, selected: int) -> str:
 
     def new_line(indent: int) -> None:
         nonlocal current, x
-        lines.extend(current)
+        lines.extend(current[1:] if compact else current)
         current, x = [[], [], []], 0
         put(" " * indent, " " * indent, " " * indent, indent)
 
@@ -122,5 +130,5 @@ def _cells(row: TitleRow, mode: ScanMode, selected: int) -> str:
         style = StatusWord(entry.status).style
         cell = f"[{style}]{_CELL}[/] "
         put(cell, cell, f"[$accent]{_MARK}[/] " if index == selected else blank, len(blank))
-    lines.extend(current)
+    lines.extend(current[1:] if compact else current)
     return "\n".join("".join(parts).rstrip() for parts in lines)

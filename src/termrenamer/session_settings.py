@@ -21,6 +21,9 @@ PlanSettingListener = Callable[[str], None]
 ThemeListener = Callable[[ThemeName], None]
 """Called with the new Theme after the Theme changes."""
 
+PosterListener = Callable[[bool], None]
+"""Called with the new value after Show posters changes."""
+
 
 def locked_message(what: str) -> str:
     """The one wording of the lock's refusal, for ``what`` (such as "Mode")."""
@@ -37,8 +40,9 @@ class SessionSettings:
     Mode, Provider, the two Destination roots, Folder rename, Season folder and Name
     taken are the settings a Plan is built with. A change to any of them is reported to
     the listeners, so that a Plan built with the old value can be discarded. The Theme
-    changes no Plan; its own listeners are told. While locked (a Plan is being built
-    or applied) every change is refused with :class:`SettingsLockedError`.
+    and Show posters change no Plan; their own listeners are told. While locked (a Plan
+    is being built or applied) every change but Show posters is refused with
+    :class:`SettingsLockedError`.
 
     ``keyed`` gives, per Mode, the ids of the Providers whose key is set (``None``
     treats every Provider as keyed). At start, and on every change of Mode, the
@@ -57,6 +61,8 @@ class SessionSettings:
         self._provider_id = self._first_keyed(ScanMode.TV)
         self._theme = loaded.theme if loaded is not None else ThemeName.DARK
         self._theme_listeners: list[ThemeListener] = []
+        self._show_posters = loaded.show_posters if loaded is not None else True
+        self._poster_listeners: list[PosterListener] = []
         self._destination_roots: dict[ScanMode, Path | None] = {
             ScanMode.TV: loaded.tv_dest_folder if loaded is not None else None,
             ScanMode.FILM: loaded.film_dest_folder if loaded is not None else None,
@@ -95,6 +101,11 @@ class SessionSettings:
     @property
     def theme(self) -> ThemeName:
         return self._theme
+
+    @property
+    def show_posters(self) -> bool:
+        """The Show posters setting; Posters also need the extra and a terminal that draws them."""
+        return self._show_posters
 
     def has_key(self, provider_id: str) -> bool:
         """Whether ``provider_id`` has its key set, for the current Mode."""
@@ -152,6 +163,22 @@ class SessionSettings:
     def add_theme_listener(self, listener: ThemeListener) -> None:
         """Call ``listener`` after each change of the Theme."""
         self._theme_listeners.append(listener)
+
+    def add_poster_listener(self, listener: PosterListener) -> None:
+        """Call ``listener`` after each change of Show posters."""
+        self._poster_listeners.append(listener)
+
+    def set_show_posters(self, value: bool) -> bool:
+        """Show or hide Posters; return whether it changed. No Plan is discarded.
+
+        Allowed while locked: ``i`` works at every Stage, while a Plan is built too.
+        """
+        if self._show_posters is value:
+            return False
+        self._show_posters = value
+        for listener in self._poster_listeners:
+            listener(value)
+        return True
 
     def set_mode(self, mode: ScanMode) -> bool:
         """Set the Mode, and the Provider by the start rule; return whether the Mode changed."""
