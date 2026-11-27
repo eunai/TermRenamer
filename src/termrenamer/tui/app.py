@@ -411,7 +411,18 @@ class TermRenamerApp(App[None]):
         if not self.queue:
             self.say("Add a Source first (a or f).", MessageKind.WARNING)
             return
-        options = self.session_settings.plan_options()
+        owner = self.session_settings
+        try:
+            options = owner.plan_options()
+        except (OSError, RuntimeError) as exc:  # the Destination root cannot be resolved
+            root = owner.destination_root(owner.mode)
+            reason = exc.strerror if isinstance(exc, OSError) and exc.strerror else str(exc)
+            self.say(
+                f"The {mode_label(owner.mode)} Destination root {root} cannot be used: "
+                f"{reason}. No Plan was built.",
+                MessageKind.ERROR,
+            )
+            return
         self.session_settings.lock()
         self.query_one(PlanStage).start(options.provider_id, options.mode)
         self._show_stage(Stage.PLAN)
