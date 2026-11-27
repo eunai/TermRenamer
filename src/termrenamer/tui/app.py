@@ -769,7 +769,10 @@ class TermRenamerApp(App[None]):
         if self._undoing or self.stage is not Stage.APPLIED:
             return
         if self.outcome is None or not applied.undo_offered:
-            self.say("Apply moved nothing, so there is nothing to undo.", MessageKind.DIM)
+            self.say(
+                "Apply moved nothing and made no folder, so there is nothing to undo.",
+                MessageKind.DIM,
+            )
             return
         self.push_screen(UndoConfirm(self.outcome), self._undo_answered)
 
@@ -835,6 +838,9 @@ class TermRenamerApp(App[None]):
         self.query_one(QueueStage).show_queue(self.queue.sources)
         self._show_stage(Stage.QUEUE)
         put_back = f"Undo put {plural(undone.put_back, 'file')} back"
+        if not undone.put_back and (removed := len(undone.emptied_folders_removed)):
+            them = "the folder" if removed == 1 else f"the {removed} folders"
+            put_back = f"Undo removed {them} Apply made"
         if undone.not_put_back:
             self.say(
                 f"{put_back} and left {undone.not_put_back}: l shows why.", MessageKind.WARNING

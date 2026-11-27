@@ -15,7 +15,8 @@ from termrenamer.tui.words import agree, plural
 
 def undo_lines(outcome: ApplyOutcome) -> tuple[str, ...]:
     """What the confirm says: the videos and Sidecars put back, the Stragglers that go
-    back with them, and the folders made again; each line only when it counts any.
+    back with them, the folders made again, and the folders Apply made, which Undo
+    removes when it leaves them empty; each line only when it counts any.
 
     A file is told from a Straggler's by its recorded old path, as text: an entry's is
     the source of one of the outcome's results.
@@ -50,6 +51,12 @@ def undo_lines(outcome: ApplyOutcome) -> tuple[str, ...]:
             "The removed folder is made again."
             if folders == 1
             else f"The {folders} removed folders are made again."
+        )
+    if made := len(outcome.folders_created):
+        lines.append(
+            "Remove the folder Apply made, when it is empty."
+            if made == 1
+            else f"Remove the {made} folders Apply made, when they are empty."
         )
     return tuple(lines)
 

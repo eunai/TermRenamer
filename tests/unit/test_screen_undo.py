@@ -4,12 +4,14 @@ back and returns to the Queue Stage with the same Sources, `n` or Escape keeps t
 
 from __future__ import annotations
 
+import errno
+import os
 from pathlib import Path
 
-from termrenamer.core.models import ApplyOutcome
+import pytest
+
 from termrenamer.tui.dialogs import UndoConfirm
 from termrenamer.tui.stage import Stage
-from termrenamer.tui.stages.applied import has_anything_to_undo
 
 from .screen_driver import (
     SIZE,
@@ -60,7 +62,11 @@ async def test_u_opens_the_undo_confirm_and_n_or_escape_keeps_the_apply(tmp_path
     assert "Undo the last Apply?" in shown
     assert "y Put back" in shown
     assert "n Keep" in shown
-    assert lines == ["Put 4 files back where they were.", "The Straggler goes back too."]
+    assert lines == [
+        "Put 4 files back where they were.",
+        "The Straggler goes back too.",
+        "Remove the 4 folders Apply made, when they are empty.",
+    ]
     assert on_disk == applied
     assert message == "The Apply is kept."
 
@@ -145,16 +151,48 @@ async def test_undo_is_not_offered_when_apply_moved_nothing(tmp_path: Path) -> N
     assert "u Undo" not in keys
     assert not button
     assert not isinstance(screen, UndoConfirm)
-    assert message == "Apply moved nothing, so there is nothing to undo."
+    assert message == "Apply moved nothing and made no folder, so there is nothing to undo."
 
 
-def test_folders_apply_made_alone_offer_no_undo(tmp_path: Path) -> None:
-    made = ApplyOutcome(
-        results=(), stragglers=(), moves=(), folders_created=(tmp_path,), folders_removed=()
-    )
-    removed = ApplyOutcome(
-        results=(), stragglers=(), moves=(), folders_created=(), folders_removed=(tmp_path,)
-    )
+async def test_undo_is_offered_for_the_folders_a_failed_apply_made(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = tmp_path / "Backups"
+    folder.mkdir()
+    folder = folder.resolve()
+    (folder / "Night Ferry S01E01.mkv").write_bytes(b"x")
+    root = tmp_path / "TV"
+    app = make_app(loaded=settings(folder_rename=True, season_folders=True, tv_root=root))
+    async with app.run_test(size=SIZE) as pilot:
+        await queue(pilot, folder)
+        await build(pilot)
 
-    assert not has_anything_to_undo(made)
-    assert has_anything_to_undo(removed)
+        def refuse(*_args: object, **_kwargs: object) -> None:
+            raise PermissionError(errno.EACCES, "refused by the test")
+
+        # Apply makes the show's folders under the fresh root, then its only move fails.
+        with monkeypatch.context() as patched:
+            patched.setattr(os, "link", refuse)
+            patched.setattr(os, "rename", refuse)
+            await apply(pilot)
+        made = names_in(root)
+        counts = text_of(app, "#applied-counts").splitlines()[0]
+        keys = footer_keys(app)
+        await press(pilot, "u")
+        screen = app.screen
+        lines = text_of(app, "#confirm-lines").splitlines()
+        await press(pilot, "y")
+        await app.workers.wait_for_complete()
+        await press(pilot)
+        stage = app.stage
+        message = text_of(app, "#message")
+
+    assert made == ["Night Ferry", "Night Ferry/Season 01"]
+    assert counts.endswith("1 failed")
+    assert "u Undo" in keys
+    assert isinstance(screen, UndoConfirm)
+    assert lines == ["Remove the 3 folders Apply made, when they are empty."]
+    assert stage is Stage.QUEUE
+    assert message == "Undo removed the 3 folders Apply made. Nothing was left."
+    assert not root.exists()
+    assert names_in(folder) == ["Night Ferry S01E01.mkv"]
