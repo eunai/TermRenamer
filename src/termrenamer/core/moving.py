@@ -33,6 +33,7 @@ another drive is not held: it is told by its times and its target text.
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import logging
 import os
@@ -99,7 +100,8 @@ _AtOldName = Callable[[], "os.stat_result | None"]
 """The ``lstat`` of the source's old name when it holds the source's own file, else
 ``None``: a look whose last call on the disk is that ``lstat``, so that it can sit
 directly before the call it guards. It raises :class:`OSError` when the old name
-cannot be read, :class:`FileNotFoundError` when it is gone."""
+cannot be read, :class:`FileNotFoundError` when it is gone. For a copied file no longer
+held open it is ``None`` with no call, so nothing is removed by it."""
 
 
 def _one_file(a: os.stat_result, b: os.stat_result) -> bool:
@@ -299,7 +301,9 @@ def move_no_replace(
     writes over it during the same Apply.
 
     Raises:
-        FileExistsError: something is at ``dest``; nothing was changed.
+        FileExistsError: something is at ``dest``; nothing was changed, but on Windows
+            for a copy made under a temporary name beside ``dest`` that could not be
+            removed again, which ``changes.files_left_behind`` then lists.
         NotAsRecorded: the source is not as ``expected`` or ``folder`` says; nothing
             was changed.
         NowALink: a folder of ``real_folders``, or of a folder's walk before anything
@@ -307,13 +311,15 @@ def move_no_replace(
             the Plan found; no file was moved.
         FolderMoveFailed: a child of a folder could not be moved; what moved before it
             stays moved and recorded, and the rest stays in the source folder.
-        OSError: any other failure. Whatever the error, an interrupt included, the file
+        OSError: any other failure, such as a folder whose new place lies inside it
+            (nothing was changed). Whatever the error, an interrupt included, the file
             keeps at least one of its two names, and ``changes`` says which: a move in
             ``changes.moves`` means it is at ``dest`` (so also a case-only rename whose
             new name could not be confirmed afterwards, and a source whose old name
-            another program removed once ``dest`` held it); ``dest`` in
-            ``changes.files_left_behind`` means a copy or link is there beside the
-            source; with neither, the source is at its old name and nothing was made,
+            another program removed once ``dest`` held it); a name in
+            ``changes.files_left_behind`` (``dest``, or on Windows the temporary name a
+            copy was made under) means a copy or link Apply made is there and was kept;
+            with neither, the source is at its old name and nothing was made,
             but for an interrupt in the instant after the call that makes the new name
             returns and before it is recorded.
     """
@@ -330,9 +336,25 @@ def move_no_replace(
     if folder is not None:
         _check_kind(source, st, folder=folder)
     if is_folder(source, st):
+        _refuse_inside(source, dest)
         _move_folder(source, st, dest, changes, guards)
     else:
         _move_file(source, dest, changes, guards, expected)
+
+
+def _refuse_inside(source: Path, dest: Path) -> None:
+    """Raise :class:`OSError` when the new place ``dest`` of the folder ``source`` is the
+    folder itself or lies inside it, by the recorded paths or as the disk reaches them
+    through links, compared by :func:`~termrenamer.core.paths.claim_key` as the Plan
+    compares target folders: a walk into it would never end. Nothing is changed."""
+    pairs = [(dest.parent, source)]
+    with contextlib.suppress(OSError, ValueError):
+        pairs.append((Path(os.path.realpath(dest.parent)), Path(os.path.realpath(source))))
+    for parent, folder in pairs:
+        inside, key = claim_key(parent), claim_key(folder)
+        if inside == key or inside.startswith(key.rstrip(os.sep) + os.sep):
+            msg = "the new place lies inside the folder"
+            raise OSError(errno.EINVAL, msg, str(dest))
 
 
 def folders_between(top: Path, folder: Path) -> list[Path]:

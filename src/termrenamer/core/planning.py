@@ -607,12 +607,20 @@ def folders_on_the_way(options: PlanOptions, root: Path, dest: Path) -> list[Pat
     the recorded text: the Destination root and each folder below it to ``dest``'s
     folder, or, with no Destination root, each folder from below ``root`` (the owning
     Source's folder, which Apply checks on the side of the source) to ``dest``'s
-    folder."""
+    folder.
+
+    The claim may spell the Destination root's part of ``dest`` as a source's folder is
+    recorded, in another letter case or Unicode form, so the root is found among
+    ``dest``'s folders by :func:`~termrenamer.core.paths.claim_key` and taken as
+    ``dest`` spells it."""
     top = options.destination_root
     if top is None:
         return folders_between(root, dest.parent)
-    below = folders_between(top, dest.parent)
-    return [top, *below] if dest.parent.is_relative_to(top) else below
+    key = claim_key(top)
+    spelled = next((f for f in (dest.parent, *dest.parent.parents) if claim_key(f) == key), None)
+    if spelled is None:
+        return folders_between(top, dest.parent)
+    return [spelled, *folders_between(spelled, dest.parent)]
 
 
 def source_roots(entries: Iterable[PlanEntry]) -> dict[str, Path]:
@@ -721,7 +729,10 @@ def derive_plan(plan: Plan, change: PlanChange) -> Plan:
     and a video put back gets the status a fresh Plan gives it. No Provider is asked:
     a :class:`PickMatch` carries every answer it needs. The change names its entry or
     Title of ``plan`` itself, and the entries keep the order of ``plan``: the disk is
-    read again only to test whether a wanted name is taken.
+    read again only to test whether a wanted name is taken, to follow the links on the
+    way to a target folder (:func:`~termrenamer.core.stragglers.plan_stragglers`), and
+    to look once at each folder on the way to a new name that no Plan before went
+    through, for whether it is a link.
 
     Raises:
         ValueError: ``change`` names an entry or Title that is not in ``plan``, a

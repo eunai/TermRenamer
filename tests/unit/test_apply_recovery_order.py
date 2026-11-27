@@ -214,6 +214,7 @@ def _removes_old(case: _Case, notes: list[str]) -> None:
         notes.append("its only name")
     try:
         _UNLINK(case.old)
+        notes.append("removed")
     except FileNotFoundError:
         notes.append("gone")
     except PermissionError:
@@ -247,6 +248,7 @@ def test_a_failed_removal_of_the_old_name_never_loses_the_file_whatever_another_
     _skip_the_hard_link_on_windows(path_name)
     runs = _runs(tmp_path, monkeypatch, side, path_name, unlink_fails=True, change=_removes_old)
 
+    assert any("removed" in notes for _, _, _, notes in runs)
     for k, case, outcome, notes in runs:
         if "its only name" in notes:
             continue
@@ -269,6 +271,7 @@ def test_another_programs_file_written_at_the_old_name_during_a_move_is_never_re
     _skip_the_hard_link_on_windows(path_name)
     runs = _runs(tmp_path, monkeypatch, side, path_name, unlink_fails=False, change=_replaces_old)
 
+    assert any("replaced" in notes for _, _, _, notes in runs)
     for k, case, outcome, notes in runs:
         if "replaced" not in notes:
             continue
