@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from termrenamer.tui.dialogs import ApplyConfirm
 from termrenamer.tui.stage import Stage
 from termrenamer.tui.words import folder_text
@@ -113,3 +115,25 @@ async def test_a_straggler_not_merged_is_listed_with_its_reason_and_a_failure_co
     assert listed[-2] == f"folder.jpg {folder_text(mixed)}"
     assert listed[-1].startswith("Straggler not merged: failed: ")
     assert (mixed / "folder.jpg").read_bytes() == b"x"
+
+
+async def test_the_file_dialog_opens_in_the_home_folder_when_the_working_folder_is_gone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from termrenamer.tui import app as app_module
+    from termrenamer.tui.dialogs import FilePicker, FolderPicker
+
+    def gone() -> Path:
+        raise FileNotFoundError(2, "No such file or directory")
+
+    monkeypatch.setattr(app_module.Path, "cwd", staticmethod(gone))
+    monkeypatch.setattr(app_module.Path, "home", staticmethod(lambda: tmp_path))
+    app = make_app()
+    async with app.run_test(size=SIZE) as pilot:
+        await press(pilot, "a")
+        file_dialog = app.screen
+        await press(pilot, "escape")
+        await press(pilot, "f")
+        folder_dialog = app.screen
+    assert isinstance(file_dialog, FilePicker)
+    assert isinstance(folder_dialog, FolderPicker)

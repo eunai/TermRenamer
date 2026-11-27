@@ -438,10 +438,10 @@ def plan_queue(
     entries.sort(key=lambda e: path_key(e.source))
     # The children of each source folder are recorded once, here; a derived Plan keeps
     # them, so its Stragglers are worked out without listing a folder again.
-    in_folder_source = {path_key(f.path) for f in found if f.in_folder_source}
-    folders = _source_folders(
-        e.source.parent for e in entries if path_key(e.source) in in_folder_source
-    )
+    # A folder is told apart by its path as the scan found it, so two folders whose
+    # names differ only in letter case stay two folders.
+    in_folder_source = {str(f.path) for f in found if f.in_folder_source}
+    folders = _source_folders(e.source.parent for e in entries if str(e.source) in in_folder_source)
     plan = _plan_of(options, tuple(titles), _claim_names(entries, options), folders)
     return PlanBuild(plan=plan, messages=tuple(messages))
 
@@ -453,10 +453,9 @@ def _source_folders(folders: Iterable[Path]) -> tuple[SourceFolder, ...]:
     queued file are never Stragglers. A folder that cannot be listed has no children,
     with a logged warning.
     """
-    unique = {path_key(folder): folder for folder in folders}
+    unique = {str(folder): folder for folder in folders}
     recorded = []
-    for key in sorted(unique):
-        folder = unique[key]
+    for folder in sorted(unique.values(), key=lambda f: (path_key(f), str(f))):
         try:
             children = sorted(folder.iterdir(), key=path_key)
         except OSError as exc:

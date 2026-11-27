@@ -4,8 +4,9 @@
 deriving one both call it; it never lists a folder, so a derived Plan lists Stragglers
 from the children recorded when the first Plan was built. It tests each Straggler's
 wanted path on disk with :func:`~termrenamer.core.collisions.name_is_taken`, as the
-planning test does, and compares paths by
-:func:`~termrenamer.core.paths.claim_key`, which reads no disk.
+planning test does, and reads no other path from the disk: a source folder is told
+apart by its recorded path as text, and names, target folders and "another folder" are
+compared by :func:`~termrenamer.core.paths.claim_key`.
 """
 
 from __future__ import annotations
@@ -56,17 +57,20 @@ def plan_stragglers(
     moving = [e for e in applied if not e.has_its_name]
     target_keys = frozenset(claim_key(d.parent) for e in moving if (d := e.destination))
 
+    # A source folder is told apart by its recorded path as text, so two folders whose
+    # names differ only in letter case stay two; "a different folder" is judged by the
+    # claim key, so a move that may be into the same folder makes no Stragglers.
     target_of: dict[str, Path] = {}
-    for dest_folder, folder_key in sorted(
-        {(d.parent, claim_key(e.source.parent)) for e in moving if (d := e.destination)},
-        key=lambda pair: claim_key(pair[0]),
+    for dest_folder, source_folder in sorted(
+        {(d.parent, e.source.parent) for e in moving if (d := e.destination)},
+        key=lambda pair: (claim_key(pair[0]), str(pair[0])),
     ):
-        if claim_key(dest_folder) != folder_key:
-            target_of.setdefault(folder_key, dest_folder)
+        if claim_key(dest_folder) != claim_key(source_folder):
+            target_of.setdefault(str(source_folder), dest_folder)
 
     wanted: list[tuple[Path, Path]] = []
     for folder in source_folders:
-        target = target_of.get(claim_key(folder.path))
+        target = target_of.get(str(folder.path))
         if target is None:
             continue
         wanted.extend((f, target) for f in folder.files if claim_key(f) not in entry_keys)
@@ -78,5 +82,5 @@ def plan_stragglers(
             source=child,
             destination=allocate_destination(target / child.name, source=child, occupied=claimed),
         )
-        for child, target in sorted(wanted, key=lambda pair: claim_key(pair[0]))
+        for child, target in sorted(wanted, key=lambda pair: (claim_key(pair[0]), str(pair[0])))
     )

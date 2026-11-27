@@ -45,6 +45,7 @@ _LINK_TAGS = frozenset(
 _CHUNK = 1 << 20
 _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _O_BINARY = getattr(os, "O_BINARY", 0)
+_O_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
 
 
 class FolderMoveFailed(OSError):
@@ -116,8 +117,9 @@ def move_no_replace(source: Path, dest: Path, changes: Changes) -> None:
         FolderMoveFailed: a child of a folder could not be moved.
         OSError: the move failed; the source is where it was.
     """
-    if is_case_only_rename(source, dest):
-        _rename_case(source, dest, changes)
+    before = _fingerprint(source)
+    if is_case_only_rename(source, dest):  # the last call before the rename
+        _rename_case(source, dest, before, changes)
     elif is_folder(source, os.lstat(source)):
         _move_folder(source, dest, changes)
     else:
@@ -143,12 +145,14 @@ def leave_folder(folder: Path) -> None:
     it, so ``folder`` can be removed; a working folder that cannot be read is left."""
     try:
         cwd = Path(os.getcwd())
-        inside = folder.resolve()
+        target = os.lstat(folder)
+        # By identity, not by text: the Plan may spell the folder in another letter case.
+        inside = any(os.path.samestat(os.stat(p), target) for p in (cwd, *cwd.parents))
     except OSError:
         return
-    if cwd == inside or inside in cwd.parents:
+    if inside:
         try:
-            os.chdir(inside.parent)
+            os.chdir(folder.parent)
         except OSError as exc:
             _LOG.warning("Could not leave %s before removing it: %s", folder, exc)
 
@@ -158,10 +162,9 @@ def _fingerprint(path: Path, st: os.stat_result | None = None) -> PlanFingerprin
     return PlanFingerprint(path=path, size=st.st_size, mtime_ns=st.st_mtime_ns)
 
 
-def _rename_case(source: Path, dest: Path, changes: Changes) -> None:
+def _rename_case(source: Path, dest: Path, before: PlanFingerprint, changes: Changes) -> None:
     """A case-only rename; the rename is recorded once made, and fails unless the folder
     then lists the new name exactly."""
-    before = _fingerprint(source)
     os.rename(source, dest)
     changes.moved(source, dest, before)
     try:
@@ -262,6 +265,10 @@ def _copy_then_unlink(
     if is_link(source, st) and not stat.S_ISLNK(st.st_mode):
         msg = "a junction cannot be moved to another drive"
         raise OSError(errno.EXDEV, msg, str(source))
+    if not (stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode)):
+        # A pipe, a socket or a device is never opened: reading one could block or never end.
+        msg = "only a file or a symbolic link can be copied to another drive"
+        raise OSError(errno.EXDEV, msg, str(source))
     if stat.S_ISLNK(st.st_mode):
         os.symlink(os.readlink(source), dest)
         changes.files_left_behind.append(dest)
@@ -312,7 +319,8 @@ def _forget(paths: list[Path], path: Path) -> None:
 def _copy_into(source: Path, st: os.stat_result, fd: int) -> None:
     """Write the bytes of ``source`` (as ``st`` found it) through ``fd`` and flush them to
     disk; raise when the source changed during the copy or the sizes differ."""
-    src = os.open(source, os.O_RDONLY | _O_NOFOLLOW | _O_BINARY)
+    # Non-blocking, so a source swapped for a pipe since it was read cannot hold Apply.
+    src = os.open(source, os.O_RDONLY | _O_NOFOLLOW | _O_BINARY | _O_NONBLOCK)
     try:
         if not os.path.samestat(os.fstat(src), st):
             raise OSError(errno.EIO, "the source changed before the copy", str(source))

@@ -315,9 +315,11 @@ class ApplyOutcome:
     ``stragglers`` holds one result per Straggler of the Plan, in the Plan's order; a
     Straggler that moved is ``RENAMED``. ``moves`` lists every move: the entries renamed,
     in ``results`` order, then the Stragglers' files; a folder Straggler is moved as its
-    files, so a move is never of a folder. ``folders_created`` lists each folder Apply
-    made, each before the folders inside it: the entries' and Stragglers' new folders,
-    and each folder of a folder Straggler made again at its new place.
+    files, so a move is never of a folder. A case-only rename whose new name could not be
+    confirmed afterwards is listed too, though its result is a failure.
+    ``folders_created`` lists each folder Apply made, each before the folders inside it:
+    the entries' and Stragglers' new folders, and each folder of a folder Straggler made
+    again at its new place.
     ``folders_removed`` lists each source folder Apply removed, each before its parent:
     a folder Straggler's folders once their files moved, then the source folders the
     moves emptied. ``files_left_behind`` lists each file Apply made at a new name and

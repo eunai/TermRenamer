@@ -13,10 +13,11 @@ import pytest
 
 from termrenamer.core import apply as apply_module
 from termrenamer.core.apply import apply_plan
-from termrenamer.core.models import ApplyResult, ApplyStatus, Plan
+from termrenamer.core.models import ApplyResult, ApplyStatus, Candidate, Plan
 from termrenamer.core.moving import Changes, move_no_replace
 from termrenamer.core.planning import plan_queue
 
+from .test_plan_queue import TvStandIn
 from .test_plan_stragglers import _options, _provider, _two_discs, _write
 
 TAKEN = (ApplyStatus.SKIP, "destination exists at apply time")
@@ -393,6 +394,8 @@ def test_a_hard_link_in_the_same_folder_under_another_exact_name_is_taken(
     source = _write(tmp_path / "show name.mkv", b"v")
     dest = tmp_path / "Show Name.mkv"
     real_listdir = os.listdir
+    if not _ignores_letter_case(tmp_path):
+        os.link(source, dest)  # this filesystem holds both exact names
 
     def listdir(path: object = ".") -> list[str]:
         names = real_listdir(path)  # type: ignore[arg-type]
@@ -415,6 +418,8 @@ def test_a_hard_link_in_the_same_folder_under_another_exact_name_is_taken(
 def test_a_case_only_rename_whose_new_name_cannot_be_confirmed_fails_and_is_recorded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    if not _ignores_letter_case(tmp_path):
+        pytest.skip("on this filesystem a new letter case is a new name, not a case-only rename")
     source = _write(tmp_path / "show name.mkv", b"v")
     dest = tmp_path / "Show Name.mkv"
     real_listdir, real_rename = os.listdir, os.rename
@@ -608,3 +613,81 @@ def test_apply_returns_its_outcome_with_the_working_folder_inside_a_folder_strag
     assert _by_source(outcome.stragglers)[subs] == (ApplyStatus.RENAMED, "ok")
     assert subs in outcome.folders_removed
     assert (show / "Show Name" / "Season 01" / "Subs" / "English.srt").read_bytes() == b"x"
+
+
+def _ignores_letter_case(folder: Path) -> bool:
+    probe = _write(folder / "case probe", b"")
+    try:
+        return (folder / "CASE PROBE").exists()
+    finally:
+        probe.unlink()
+
+
+def test_two_source_folders_whose_names_differ_only_in_letter_case_keep_their_stragglers(
+    tmp_path: Path,
+) -> None:
+    if _ignores_letter_case(tmp_path):
+        pytest.skip("this filesystem cannot hold Disc and disc side by side")
+    backups = tmp_path / "Backups"
+    _write(backups / "Disc" / "Alpha.S01E01.mkv")
+    _write(backups / "Disc" / "alpha.jpg", b"a")
+    _write(backups / "disc" / "Beta.S01E01.mkv")
+    _write(backups / "disc" / "beta.jpg", b"b")
+    backups = backups.resolve()
+    provider = TvStandIn(
+        shows={
+            "alpha": (Candidate(id="1", name="Alpha", year=2010),),
+            "beta": (Candidate(id="2", name="Beta", year=2011),),
+        },
+        episodes={("1", 1, 1): "Pilot", ("2", 1, 1): "Pilot"},
+    )
+    plan = plan_queue([backups], _options(), provider).plan
+    # Alpha's video changes, so nothing moves out of Disc; Beta's does move out of disc.
+    (backups / "Disc" / "Alpha.S01E01.mkv").write_bytes(b"changed")
+
+    outcome = apply_plan(plan, confirmed=True)
+
+    by_source = _by_source(outcome.stragglers)
+    assert by_source[backups / "Disc" / "alpha.jpg"] == (
+        ApplyStatus.SKIP,
+        "nothing moved out of its folder",
+    )
+    assert by_source[backups / "disc" / "beta.jpg"] == (ApplyStatus.RENAMED, "ok")
+    assert (backups / "Beta" / "Season 01" / "beta.jpg").read_bytes() == b"b"
+    assert (backups / "Disc" / "alpha.jpg").read_bytes() == b"a"
+
+
+@pytest.mark.skipif(WINDOWS, reason="no named pipes in the filesystem on Windows")
+def test_a_pipe_is_never_copied_and_apply_returns(
+    show: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    os.mkfifo(show / "Disc 1" / "Subs" / "pipe")
+    plan = _plan(show)
+    subs = show / "Disc 1" / "Subs"
+
+    def no_link(*args: object, **kwargs: object) -> None:
+        raise OSError(errno.EXDEV, "Invalid cross-device link")
+
+    monkeypatch.setattr(os, "link", no_link)
+    outcome = apply_plan(plan, confirmed=True)
+    monkeypatch.undo()
+
+    status, reason = _by_source(outcome.stragglers)[subs]
+    assert status is ApplyStatus.FAIL
+    assert "only a file or a symbolic link can be copied" in reason
+    assert (subs / "pipe").exists()
+
+
+def test_the_working_folder_is_left_when_the_plan_spells_its_folder_in_another_case(
+    show: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    typed = show.parent / show.name.lower()
+    if not typed.exists():
+        pytest.skip("this filesystem tells letter case apart")
+    plan = plan_queue([typed], _options(), _provider()).plan
+    monkeypatch.chdir(show / "Disc 1" / "Subs")  # changed back after the test
+
+    outcome = apply_plan(plan, confirmed=True)
+
+    assert os.path.samestat(os.stat(os.getcwd()), os.stat(show))
+    assert typed / "Disc 1" / "Subs" in outcome.folders_removed

@@ -65,6 +65,15 @@ _APPLY = "apply"
 """The names of the two workers: the build of the Plan and its Apply."""
 
 
+def _start_folder() -> Path:
+    """The folder the file and folder dialogs open in: the working folder, or the home
+    folder when the working folder is gone (Apply may have removed it)."""
+    try:
+        return Path.cwd()
+    except OSError:
+        return Path.home()
+
+
 @dataclass(frozen=True, slots=True)
 class _BuildOutcome:
     """What a build's thread hands back: a Plan, or why there is none."""
@@ -256,11 +265,11 @@ class TermRenamerApp(App[None]):
 
     def action_add_file(self) -> None:
         """Open the file dialog; the picked file is queued, Escape changes nothing."""
-        self.push_screen(FilePicker(Path.cwd()), self._source_picked)
+        self.push_screen(FilePicker(_start_folder()), self._source_picked)
 
     def action_add_folder(self) -> None:
         """Open the folder dialog; the picked folder is queued, Escape changes nothing."""
-        self.push_screen(FolderPicker(Path.cwd()), self._source_picked)
+        self.push_screen(FolderPicker(_start_folder()), self._source_picked)
 
     def _source_picked(self, path: Path | None) -> None:
         if path is None or self.stage is not Stage.QUEUE:

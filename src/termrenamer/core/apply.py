@@ -16,7 +16,7 @@ from termrenamer.core.models import (
     Straggler,
 )
 from termrenamer.core.moving import Changes, is_folder, leave_folder, move_no_replace
-from termrenamer.core.paths import path_key
+from termrenamer.core.paths import claim_key, path_key
 from termrenamer.core.planning import fingerprint
 from termrenamer.util.errors import ValidationError
 
@@ -62,6 +62,13 @@ def _remove_empty_source_dirs(applied_source_parents: set[Path], changes: Change
         changes.folders_removed.append(dir_path)
 
 
+def _unreadable(exc: OSError) -> tuple[ApplyStatus, str]:
+    """The result of a source that could not be read: gone, or failing."""
+    if isinstance(exc, FileNotFoundError):
+        return ApplyStatus.SKIP, "stale: source missing"
+    return ApplyStatus.FAIL, f"cannot read the source: {exc}"
+
+
 def _apply_entry(entry: PlanEntry, changes: Changes) -> ApplyResult:
     """Rename one entry after the checks; touch nothing when a check fails."""
     source = entry.source
@@ -74,10 +81,8 @@ def _apply_entry(entry: PlanEntry, changes: Changes) -> ApplyResult:
         return result(ApplyStatus.SKIP, entry.status.value)
     try:
         current_fp = fingerprint(source)
-    except FileNotFoundError:
-        return result(ApplyStatus.SKIP, "stale: source missing")
     except OSError as exc:
-        return result(ApplyStatus.FAIL, f"cannot read the source: {exc}")
+        return result(*_unreadable(exc))
     if (
         current_fp.size != entry.fingerprint.size
         or current_fp.mtime_ns != entry.fingerprint.mtime_ns
@@ -95,14 +100,12 @@ def _apply_straggler(straggler: Straggler, moved_out: set[str], changes: Changes
     def result(status: ApplyStatus, reason: str) -> ApplyResult:
         return ApplyResult(source=source, destination=dest, status=status, reason=reason)
 
-    if path_key(source.parent) not in moved_out:
+    if str(source.parent) not in moved_out:
         return result(ApplyStatus.SKIP, "nothing moved out of its folder")
     try:
         os.lstat(source)
-    except FileNotFoundError:
-        return result(ApplyStatus.SKIP, "stale: source missing")
     except OSError as exc:
-        return result(ApplyStatus.FAIL, f"cannot read the source: {exc}")
+        return result(*_unreadable(exc))
     return result(*_move(source, dest, changes))
 
 
@@ -119,7 +122,8 @@ def _stopped_by(source: Path, dest: Path | None, exc: Exception) -> ApplyResult:
 
 
 def apply_plan(plan: Plan, *, confirmed: bool) -> ApplyOutcome:
-    """Execute a Plan exactly as previewed, and nothing it does not list.
+    """Execute a Plan exactly as previewed; no file or folder of a source folder that it
+    does not list is moved (a folder Straggler moves with what it holds at Apply).
 
     Applies the entries that have a destination: ready, and name taken with a numbered
     name (Name taken set to ``suffix``). Reports every other entry (no match, not
@@ -187,9 +191,11 @@ def apply_plan(plan: Plan, *, confirmed: bool) -> ApplyOutcome:
             applied_sources.add(entry.source)
         if outcome.status is not ApplyStatus.RENAMED or entry.destination is None:
             continue
-        if path_key(entry.source.parent) != path_key(entry.destination.parent):
+        # As the Plan judged it: a source folder by its recorded path, "another folder"
+        # by the claim key.
+        if claim_key(entry.source.parent) != claim_key(entry.destination.parent):
             emptied.add(entry.source.parent)
-            moved_out.add(path_key(entry.source.parent))
+            moved_out.add(str(entry.source.parent))
 
     stragglers = []
     for straggler in plan.stragglers:

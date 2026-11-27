@@ -7,10 +7,20 @@ from pathlib import Path
 
 import pytest
 
-from termrenamer.core.models import Candidate, Plan, PlanEntry, PlanOptions, ScanMode
+from termrenamer.core.models import (
+    Candidate,
+    EntryStatus,
+    Plan,
+    PlanEntry,
+    PlanFingerprint,
+    PlanOptions,
+    ScanMode,
+    SourceFolder,
+)
 from termrenamer.core.paths import path_key
 from termrenamer.core.planning import LeaveOut, PutBack, derive_plan, plan_queue
 from termrenamer.core.policies import NameTakenPolicy
+from termrenamer.core.stragglers import plan_stragglers
 
 from .test_plan_queue import TvStandIn
 
@@ -368,3 +378,43 @@ def test_two_stragglers_whose_names_differ_only_in_unicode_form_never_share_a_pa
         "Disc 1": season / composed,
         "Disc 2": season / "café (1).jpg",
     }
+
+
+def _entry_moving_to(source: Path, destination: Path) -> PlanEntry:
+    return PlanEntry(
+        source=source,
+        destination=destination,
+        status=EntryStatus.READY,
+        title=None,
+        video=None,
+        season=1,
+        episode=1,
+        root=source.parent.parent,
+        fingerprint=PlanFingerprint(path=source, size=1, mtime_ns=0),
+    )
+
+
+def test_two_source_folders_whose_names_differ_only_in_letter_case_stay_two(
+    tmp_path: Path,
+) -> None:
+    # As a case-sensitive filesystem holds them; the Plan's records alone, no disk.
+    upper, lower = tmp_path / "Backups" / "Disc", tmp_path / "Backups" / "disc"
+    alpha = tmp_path / "Library" / "Alpha" / "Season 01"
+    beta = tmp_path / "Library" / "Beta" / "Season 01"
+    entries = [
+        _entry_moving_to(upper / "Alpha.S01E01.mkv", alpha / "Alpha - S01E01.mkv"),
+        _entry_moving_to(lower / "Beta.S01E01.mkv", beta / "Beta - S01E01.mkv"),
+    ]
+    folders = [
+        SourceFolder(
+            path=upper, files=(upper / "Alpha.S01E01.mkv", upper / "alpha.jpg"), folders=()
+        ),
+        SourceFolder(path=lower, files=(lower / "Beta.S01E01.mkv", lower / "beta.jpg"), folders=()),
+    ]
+
+    stragglers = plan_stragglers(_options(), entries, folders)
+
+    assert _stragglers(Plan(options=_options(), titles=(), entries=(), stragglers=stragglers)) == [
+        (upper / "alpha.jpg", alpha / "alpha.jpg"),
+        (lower / "beta.jpg", beta / "beta.jpg"),
+    ]
