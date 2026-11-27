@@ -294,6 +294,31 @@ async def pick_in_dialog(pilot: Pilot[None], key: str, path: Path | None) -> Non
         await pilot.pause()
 
 
+def long_season(parent: Path, videos: int) -> tuple[Path, TvStandIn]:
+    """A folder with one season of Harbour Lights, ``videos`` episodes long, and the TV
+    stand-in that knows each episode."""
+    folder = parent / "TV Backups"
+    folder.mkdir()
+    for episode in range(1, videos + 1):
+        (folder / f"Harbour Lights S01E{episode:02d}.mkv").write_bytes(b"x")
+    tv = TvStandIn(
+        shows={"harbour lights": (SHOW,)},
+        episodes={("11", 1, e): f"Episode {e}" for e in range(1, videos + 1)},
+    )
+    return folder, tv
+
+
+async def mark_seen_walking(pilot: Pilot[None], videos: int) -> str:
+    """Press right to the last file and back to the first; after each key, ``y`` when
+    the selected file's mark is on screen, else ``n``."""
+    seen = []
+    for key in ["right"] * (videos - 1) + ["left"] * (videos - 1):
+        await press(pilot, key)
+        await pilot.pause()
+        seen.append("y" if any("▔▔" in line for line in screen_lines(pilot.app)) else "n")
+    return "".join(seen)
+
+
 async def queue(pilot: Pilot[None], *folders: Path) -> None:
     for folder in folders:
         await pick_in_dialog(pilot, "f", folder)

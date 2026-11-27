@@ -32,7 +32,9 @@ from .screen_driver import (
     ImageHost,
     StandInImage,
     build,
+    long_season,
     make_app,
+    mark_seen_walking,
     press,
     queue,
     screen_lines,
@@ -472,6 +474,25 @@ async def test_at_the_smallest_size_a_second_action_fits_too(tmp_path: Path) -> 
     assert overflow == 0
     assert all(b.height == 1 and b.bottom <= footer.y for b in buttons)
     assert buttons[0].bottom <= buttons[1].y
+
+
+async def test_at_the_smallest_size_the_selected_file_stays_in_view(tmp_path: Path) -> None:
+    folder, tv = long_season(tmp_path, 13)
+    host = ImageHost()
+    app = make_app(
+        wiring(tv=tv, posters=host.store(tmp_path / "posters")),
+        settings(),
+        posters=POSTERS_AVAILABLE,
+    )
+    async with app.run_test(size=SMALLEST) as pilot:
+        await queue(pilot, folder)
+        await build(pilot)
+        shown = panel(app).display
+        overflow = app.query_one("#details-scroll").max_scroll_y
+        seen = await mark_seen_walking(pilot, 13)
+    assert shown
+    assert overflow > 0  # the cells wrap past the scroll
+    assert seen == "y" * 24
 
 
 async def test_one_row_short_the_preview_looks_as_with_posters_off(tmp_path: Path) -> None:

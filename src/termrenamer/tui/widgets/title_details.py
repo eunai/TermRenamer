@@ -12,6 +12,7 @@ from collections import Counter
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
+from textual.geometry import Region
 from textual.markup import escape
 from textual.widgets import Static
 
@@ -20,9 +21,10 @@ from termrenamer.core.title_rows import TitleRow
 from termrenamer.tui.widgets.title_list import StatusWord
 from termrenamer.tui.words import match_name, plural
 
-CELLS_WIDTH = 34
+CELLS_WIDTH = 33
 """The columns the cells may take before they wrap: the inner width of the Preview's
-details column (its CSS width 39, less its border and padding, in `stages/preview.py`)."""
+details column (its CSS width 39, less its border and padding, in `stages/preview.py`),
+less the column its scrollbar takes when the details are taller than the screen."""
 
 _CELL = "██"
 _MARK = "▔▔"
@@ -42,7 +44,14 @@ class TitleDetails(Vertical):
     TitleDetails #details-tally {
         margin-bottom: 1;
     }
+    TitleDetails #details-cells {
+        text-wrap: nowrap;  /* the cells wrap themselves, with the mark row under them */
+    }
     """
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self._mark_line: int | None = None
 
     def compose(self) -> ComposeResult:
         yield Static("", id="details-heading")
@@ -62,6 +71,7 @@ class TitleDetails(Vertical):
         if row is None:
             for part in (heading, tally, cells):
                 part.update("")
+            self._mark_line = None
             return
         name = row.name if row.title is None else match_name(row.title, mode)
         heading.update(
@@ -76,7 +86,21 @@ class TitleDetails(Vertical):
             else ""
         )
         tally.display = len(statuses) > 1 and not compact
-        cells.update(_cells(row, mode, selected, compact=compact))
+        drawn = _cells(row, mode, selected, compact=compact)
+        cells.update(drawn)
+        self._mark_line = next(
+            (n for n, line in enumerate(drawn.split("\n")) if _MARK in line), None
+        )
+
+    def mark_region(self) -> Region | None:
+        """Where on the screen the selected file's cell and the mark under it are drawn,
+        or ``None`` when no file is marked."""
+        if self._mark_line is None:
+            return None
+        cells = self.query_one("#details-cells").region
+        # The mark's row, and the row above it: the cell with its season label.
+        top = cells.y + max(self._mark_line - 1, 0)
+        return Region(cells.x, top, cells.width, cells.y + self._mark_line + 1 - top)
 
 
 def _counts(row: TitleRow, mode: ScanMode) -> str:

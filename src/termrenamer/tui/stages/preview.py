@@ -81,6 +81,7 @@ class PreviewStage(TitleListStage):
         border-right: solid $tr-line;
     }
     PreviewStage #details-scroll {
+        width: 100%;  /* 1fr would lose the poster panel's left margin */
         height: 1fr;
         scrollbar-size-vertical: 1;
     }
@@ -249,12 +250,27 @@ class PreviewStage(TitleListStage):
                 self.selected_row, self._plan.mode, self._file, compact=self.posters_shown
             )
             self._show_poster()
+            # Once the details are laid out, the selected file's mark is scrolled to.
+            self.call_after_refresh(self._keep_mark_in_view)
         video = self.selected_file
         left_out = video is not None and video.status is EntryStatus.LEFT_OUT
         self.query_one("#leave-out", ActionButton).update(
             "x  Put back" if left_out else "x  Leave out"
         )
         self.changed()
+
+    def _keep_mark_in_view(self) -> None:
+        """Scroll the details the least that brings the selected file's mark on screen."""
+        region = self.query_one(TitleDetails).mark_region()
+        if region is None:
+            return
+        scroll = self.query_one("#details-scroll", VerticalScroll)
+        content = scroll.scrollable_content_region
+        scroll.scroll_to_region(
+            region.translate((-content.x, int(scroll.scroll_y) - content.y)),
+            animate=False,
+            immediate=True,
+        )
 
     def _show_poster(self) -> None:
         """The selected Title's Poster, downloaded now when it is not stored yet."""
