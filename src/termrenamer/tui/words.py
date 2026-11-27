@@ -68,6 +68,8 @@ def why_not_renamed(entry: PlanEntry) -> str | None:
         if entry.title is not None and entry.title.match is not None:
             return "no match: the episode was not found"
         return f"no match: the {'film' if entry.season is None else 'show'} was not found"
+    if entry.skipped_for_name_taken:
+        return "name taken, so it stays where it is"
     if entry.has_its_name:
         return "already has its name"
     return None
@@ -78,3 +80,8 @@ def folder_text(folder: PurePath) -> str:
     text = str(folder)
     sep = folder.parser.sep
     return text if text.endswith(sep) else text + sep
+
+
+def sidecar_skipped(source: PurePath, reason: str) -> str:
+    """The line for a Sidecar skipped while its video moves, in the confirm and after Apply."""
+    return f"Sidecar skipped: {source.name} · {reason}"

@@ -12,6 +12,7 @@ from pathlib import Path
 
 from termrenamer.app_bootstrap import Settings, ThemeName
 from termrenamer.core.models import PROVIDER_IDS, PlanOptions, ScanMode
+from termrenamer.core.policies import NameTakenPolicy
 from termrenamer.util.errors import ValidationError
 
 PlanSettingListener = Callable[[str], None]
@@ -33,9 +34,9 @@ class SettingsLockedError(ValidationError):
 class SessionSettings:
     """The effective settings of this session.
 
-    Mode, Provider, the two Destination roots, Folder rename and Season folder are the
-    settings a Plan is built with. A change to any of them is reported to the
-    listeners, so that a Plan built with the old value can be discarded. The Theme
+    Mode, Provider, the two Destination roots, Folder rename, Season folder and Name
+    taken are the settings a Plan is built with. A change to any of them is reported to
+    the listeners, so that a Plan built with the old value can be discarded. The Theme
     changes no Plan; its own listeners are told. While locked (a Plan is being built
     or applied) every change is refused with :class:`SettingsLockedError`.
 
@@ -65,6 +66,7 @@ class SessionSettings:
         self._season_folders = self._folder_rename and (
             loaded.enable_season_folders if loaded is not None else False
         )
+        self._name_taken = loaded.name_taken if loaded is not None else NameTakenPolicy.SUFFIX
         self._locked = False
         self._listeners: list[PlanSettingListener] = []
 
@@ -85,6 +87,10 @@ class SessionSettings:
     @property
     def season_folders(self) -> bool:
         return self._season_folders
+
+    @property
+    def name_taken(self) -> NameTakenPolicy:
+        return self._name_taken
 
     @property
     def theme(self) -> ThemeName:
@@ -127,6 +133,7 @@ class SessionSettings:
             season_folders=(
                 self._mode is ScanMode.TV and self._folder_rename and self._season_folders
             ),
+            name_taken=self._name_taken,
         )
 
     # ----------------------------------------------------------------- writes
@@ -203,6 +210,10 @@ class SessionSettings:
             msg = "Season folder works only while Folder rename is on."
             raise ValidationError(msg)
         return self._set("Season folder", "_season_folders", value)
+
+    def set_name_taken(self, policy: NameTakenPolicy) -> bool:
+        """Set Name taken (add a number, or skip the file); return whether it changed."""
+        return self._set("Name taken", "_name_taken", policy)
 
     def _set(self, name: str, attribute: str, value: object) -> bool:
         self._refuse_while_locked()

@@ -12,6 +12,7 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
+from termrenamer.core.policies import NameTakenPolicy
 from termrenamer.persistence.cache import SqliteMetadataCache
 from termrenamer.util.errors import ValidationError
 from termrenamer.util.http import HttpClient, HttpClientConfig
@@ -46,6 +47,7 @@ class Settings:
     enable_folder_rename: bool
     enable_season_folders: bool
     theme: ThemeName = ThemeName.DARK
+    name_taken: NameTakenPolicy = NameTakenPolicy.SUFFIX
 
     @property
     def has_tmdb_credentials(self) -> bool:
@@ -103,6 +105,17 @@ def _read_theme(env: Mapping[str, str]) -> ThemeName:
         return ThemeName(raw.strip().lower())
     except ValueError as exc:
         msg = "Invalid value for TERMRENAMER_THEME (use dark or light)"
+        raise ValidationError(msg) from exc
+
+
+def _read_name_taken(env: Mapping[str, str]) -> NameTakenPolicy:
+    raw = env.get("TERMRENAMER_NAME_TAKEN")
+    if raw is None or raw.strip() == "":
+        return NameTakenPolicy.SUFFIX
+    try:
+        return NameTakenPolicy(raw.strip().lower())
+    except ValueError as exc:
+        msg = "Invalid value for TERMRENAMER_NAME_TAKEN (use suffix or skip)"
         raise ValidationError(msg) from exc
 
 
@@ -226,6 +239,7 @@ def load_settings(*, env_file: Path | None = None) -> Settings:
     enable_folder_rename = _read_bool(env, "TERMRENAMER_ENABLE_FOLDER_RENAME", default=False)
     enable_season_folders = _read_bool(env, "TERMRENAMER_ENABLE_SEASON_FOLDERS", default=False)
     theme = _read_theme(env)
+    name_taken = _read_name_taken(env)
 
     if not (tmdb_key or tvdb_key or omdb_key):
         variables = "TERMRENAMER_TMDB_API_KEY, TERMRENAMER_TVDB_API_KEY or TERMRENAMER_OMDB_API_KEY"
@@ -248,6 +262,7 @@ def load_settings(*, env_file: Path | None = None) -> Settings:
         enable_folder_rename=enable_folder_rename,
         enable_season_folders=enable_season_folders,
         theme=theme,
+        name_taken=name_taken,
     )
 
 

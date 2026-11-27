@@ -16,15 +16,15 @@ from textual.screen import ModalScreen
 from textual.widgets import Static
 
 from termrenamer.core.models import EntryStatus, Plan
-from termrenamer.core.title_rows import PlanCounts
+from termrenamer.core.title_rows import PlanCounts, sidecars_skipped_alone
 from termrenamer.tui.widgets.action_button import ActionButton
-from termrenamer.tui.words import agree, folder_text, plural, why_not_renamed
+from termrenamer.tui.words import agree, folder_text, plural, sidecar_skipped, why_not_renamed
 
 
 def confirm_lines(plan: Plan) -> tuple[str, ...]:
     """What the confirm says (Textual markup): the videos renamed and where, the videos
-    skipped counted by status, those that already have their names, and that nothing
-    has been renamed yet."""
+    skipped counted by status, each Sidecar skipped while its video moves, those that
+    already have their names, and that nothing has been renamed yet."""
     counts = PlanCounts.of(plan)
     root = plan.options.destination_root
     if root is not None:
@@ -43,6 +43,9 @@ def confirm_lines(plan: Plan) -> tuple[str, ...]:
         f"[$foreground]Rename {plural(counts.to_rename, 'video')} {escape(where)}.[/]",
         f"[$foreground]{skip}[/]",
     ]
+    for sidecar in sidecars_skipped_alone(plan):
+        reason = why_not_renamed(sidecar) or sidecar.status.value
+        lines.append(f"[$tr-dim]{escape(sidecar_skipped(sidecar.source, reason))}[/]")
     if named:
         that = agree(len(named), "that already has its name", "that already have their names")
         lines.append(f"[$tr-dim]Leave {plural(len(named), 'video')} {that}.[/]")

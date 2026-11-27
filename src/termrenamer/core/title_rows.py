@@ -148,3 +148,12 @@ def title_rows(plan: Plan) -> tuple[TitleRow, ...]:
             )
         )
     return tuple(rows)
+
+
+def sidecars_skipped_alone(plan: Plan) -> tuple[PlanEntry, ...]:
+    """The Sidecars Apply will skip while their videos move: a Sidecar whose own name is
+    taken under Name taken ``skip``."""
+    named = {entry.source for entry in plan.videos if entry.destination is not None}
+    return tuple(
+        entry for entry in plan.entries if entry.video in named and entry.destination is None
+    )
