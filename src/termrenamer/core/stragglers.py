@@ -20,16 +20,16 @@ from pathlib import Path
 
 from termrenamer.core.collisions import allocate_destination, claim_keys, is_same_folder
 from termrenamer.core.models import PlanEntry, PlanOptions, SourceFolder, Straggler
-from termrenamer.core.paths import claim_key
+from termrenamer.core.paths import claim_key, source_order
 
 
-def _folder_stays(folder: Path, entries: frozenset[str], target_keys: frozenset[str]) -> bool:
+def _folder_stays(folder: Path, sources: frozenset[str], target_keys: frozenset[str]) -> bool:
     """Whether a child folder is never a Straggler: it contains an entry of the Plan (by
     the recorded paths as text), or it is, contains or lies inside a target folder (a
     folder an entry of the Plan moves into), by claim key: a folder that may be a target
     folder under another spelling stays where it is."""
     inside = str(folder) + os.sep
-    if any(e.startswith(inside) for e in entries):
+    if any(source.startswith(inside) for source in sources):
         return True
     key = claim_key(folder)
     return any(
@@ -68,7 +68,7 @@ def plan_stragglers(
     target_of: dict[str, Path] = {}
     for dest_folder, source_folder in sorted(
         {(d.parent, e.source.parent) for e in moving if (d := e.destination)},
-        key=lambda pair: (claim_key(pair[0]), str(pair[0])),
+        key=lambda pair: source_order(pair[0]),
     ):
         if not is_same_folder(source_folder, dest_folder):
             target_of.setdefault(str(source_folder), dest_folder)
@@ -87,5 +87,5 @@ def plan_stragglers(
             source=child,
             destination=allocate_destination(target / child.name, source=child, occupied=claimed),
         )
-        for child, target in sorted(wanted, key=lambda pair: (claim_key(pair[0]), str(pair[0])))
+        for child, target in sorted(wanted, key=lambda pair: source_order(pair[0]))
     )

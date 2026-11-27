@@ -69,16 +69,21 @@ def is_same_folder(folder: Path, target: Path) -> bool:
     they differ only in letter case or Unicode form, the disk tells: ``target`` is
     ``folder`` when both are one directory entry (links not followed), as on a disk
     that ignores letter case; on a disk that tells them apart, or when ``target`` does
-    not exist yet, they are two folders. This tests whether the target folder's name is
-    taken by ``folder`` itself, the one disk read a derive makes besides
-    :func:`name_is_taken`.
+    not exist yet, they are two folders. A ``folder`` that is gone counts as ``target``
+    itself, so it has no Stragglers to move. This tests whether the target folder's name
+    is taken by ``folder`` itself; with :func:`name_is_taken` and :func:`claim_keys`, it
+    is how a derive reads the disk.
     """
     if str(folder) == str(target):
         return True
     if claim_key(folder) != claim_key(target):
         return False
     try:
-        return os.path.samestat(os.lstat(folder), os.lstat(target))
+        folder_stat = os.lstat(folder)
+    except OSError:
+        return True
+    try:
+        return os.path.samestat(folder_stat, os.lstat(target))
     except OSError:
         return False
 
@@ -87,7 +92,17 @@ def _with_numeric_suffix(path: Path, n: int) -> Path:
     return path.with_name(f"{path.stem} ({n}){path.suffix}")
 
 
-def _is_free(path: Path, source: Path, occupied: set[str]) -> frozenset[str] | None:
+def _in_its_folder(desired: Path, source: Path) -> Path:
+    """``desired``, spelled in ``source``'s folder as the Plan recorded it when its folder
+    is that folder under another spelling (:func:`is_same_folder`), such as a
+    Destination root typed ``library`` for a folder the disk lists as ``Library``: so a
+    file that has its name keeps it, and a case-only rename stays one."""
+    if str(desired.parent) != str(source.parent) and is_same_folder(source.parent, desired.parent):
+        return source.parent / desired.name
+    return desired
+
+
+def _free_keys(path: Path, source: Path, occupied: set[str]) -> frozenset[str] | None:
     """The claim keys of ``path`` when no earlier claim holds it and nothing other than
     ``source`` is there, else ``None``: one look at the disk."""
     keys = claim_keys(path)
@@ -127,9 +142,12 @@ def claim_name(
     (one of its :func:`claim_keys` is in ``occupied``). Each name is looked at once: under
     ``SUFFIX`` a taken name gives way to the first free numbered name; under ``SKIP``
     nothing is claimed and ``None`` is returned, so a ``SKIP`` claim is ``desired`` or
-    ``None`` whatever appears at the name meanwhile.
+    ``None`` whatever appears at the name meanwhile. A ``desired`` whose folder is the
+    source's own folder under another spelling is claimed, and returned, spelled in the
+    source's folder as recorded.
     """
-    keys = _is_free(desired, source, occupied)
+    desired = _in_its_folder(desired, source)
+    keys = _free_keys(desired, source, occupied)
     if keys is not None:
         occupied.update(keys)
         return desired
@@ -138,7 +156,7 @@ def claim_name(
     n = 1
     while True:
         candidate = _with_numeric_suffix(desired, n)
-        keys = _is_free(candidate, source, occupied)
+        keys = _free_keys(candidate, source, occupied)
         if keys is not None:
             occupied.update(keys)
             return candidate

@@ -91,10 +91,10 @@ def test_under_skip_a_claim_is_the_wanted_name_or_none_whatever_appears_between_
 
 def test_names_that_are_canonically_equal_once_case_folded_have_one_claim_key() -> None:
     # U+0345 folds to a base iota, so folding before normalising splits these two.
-    assert claim_key(Path("ᾲ.txt")) == claim_key(Path("ᾲ.txt"))
-    assert claim_key(Path("Café.jpg")) == claim_key(Path("café.JPG"))
+    assert claim_key(Path("\u03b1\u0345\u0300.txt")) == claim_key(Path("\u03b1\u0300\u0345.txt"))
+    assert claim_key(Path("Caf\u00e9.jpg")) == claim_key(Path("cafe\u0301.JPG"))
     # Windows upper-cases each letter to compare names: dotless i is the same name as I.
-    assert claim_key(Path("ı.mkv")) == claim_key(Path("I.mkv")) == claim_key(Path("i.mkv"))
+    assert claim_key(Path("\u0131.mkv")) == claim_key(Path("I.mkv")) == claim_key(Path("i.mkv"))
     assert claim_key(Path("a.mkv")) != claim_key(Path("b.mkv"))
 
 
@@ -103,19 +103,19 @@ def test_a_second_claim_of_one_unicode_name_gets_a_number(tmp_path: Path) -> Non
     source.write_bytes(b"s")
     occupied: set[str] = set()
     first = claim_name(
-        tmp_path / "ᾲ.mkv",
+        tmp_path / "\u03b1\u0345\u0300.mkv",
         source=source,
         occupied=occupied,
         policy=NameTakenPolicy.SUFFIX,
     )
     second = claim_name(
-        tmp_path / "ᾲ.mkv",
+        tmp_path / "\u03b1\u0300\u0345.mkv",
         source=source,
         occupied=occupied,
         policy=NameTakenPolicy.SUFFIX,
     )
-    assert first == tmp_path / "ᾲ.mkv"
-    assert second == tmp_path / "ᾲ (1).mkv"
+    assert str(first) == str(tmp_path / "\u03b1\u0345\u0300.mkv")
+    assert str(second) == str(tmp_path / "\u03b1\u0300\u0345 (1).mkv")
 
 
 def test_a_name_claimed_through_a_folder_that_points_elsewhere_is_taken_at_that_folder(
@@ -137,6 +137,6 @@ def test_a_name_claimed_through_a_folder_that_points_elsewhere_is_taken_at_that_
     )
     third = allocate_destination(real / "Film (2000).mkv", source=source, occupied=occupied)
 
-    assert first == alias / "Film (2000).mkv"
+    assert str(first) == str(alias / "Film (2000).mkv")
     assert second is None
-    assert third == real / "Film (2000) (1).mkv"
+    assert str(third) == str(real / "Film (2000) (1).mkv")

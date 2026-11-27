@@ -4,6 +4,7 @@ as itself, and the scan never enters a link or a junction (spec #16, section C).
 from __future__ import annotations
 
 import os
+import sys
 import unicodedata
 from pathlib import Path
 
@@ -227,3 +228,111 @@ def test_a_video_reached_through_a_folder_link_inside_a_source_is_never_planned(
     assert [e.source.name for e in plan.entries] == ["Show.Name.S01E01.mkv"]
     left_out = derive_plan(plan, LeaveOut(plan.videos[0]))
     assert [e.source.name for e in left_out.entries] == ["Show.Name.S01E01.mkv"]
+
+
+def _organised(tmp_path: Path, file_name: str) -> tuple[Path, Path]:
+    """An organised library listed as ``Library`` and typed ``library``, as a person may
+    type both the queued folder and the Destination root on a disk that folds case."""
+    listed = tmp_path.resolve() / "Library"
+    video = _write(listed / "Show Name" / "Season 01" / file_name)
+    return video, tmp_path.resolve() / "library"
+
+
+def _library_options(destination_root: Path) -> PlanOptions:
+    return PlanOptions(
+        mode=ScanMode.TV,
+        provider_id="tmdb",
+        destination_root=destination_root,
+        folder_rename=True,
+        season_folders=True,
+    )
+
+
+def test_a_file_that_has_its_name_under_another_spelling_of_its_folders_keeps_it(
+    tmp_path: Path,
+) -> None:
+    _needs_case_folding(tmp_path)
+    video, typed = _organised(tmp_path, "Show Name - S01E01 - Pilot.mkv")
+    queue = SourceQueue()
+    queue.add(typed)
+
+    plan = plan_queue(queue.sources, _library_options(typed), _provider()).plan
+    [entry] = plan.entries
+    assert (entry.status, entry.has_its_name) == (EntryStatus.READY, True)
+
+    outcome = apply_plan(plan, confirmed=True)
+    assert [r.status.value for r in outcome.results] == ["unchanged"]
+    assert os.listdir(video.parent) == [video.name]
+
+
+def test_a_case_only_rename_under_another_spelling_of_its_folders_is_made_in_its_folder(
+    tmp_path: Path,
+) -> None:
+    _needs_case_folding(tmp_path)
+    video, typed = _organised(tmp_path, "show name - s01e01 - pilot.mkv")
+
+    plan = plan_queue([typed], _library_options(typed), _provider()).plan
+    [entry] = plan.entries
+    assert entry.status is EntryStatus.READY
+    assert entry.destination is not None
+    assert str(entry.destination) == str(video.parent / "Show Name - S01E01 - Pilot.mkv")
+
+    apply_plan(plan, confirmed=True)
+    assert os.listdir(video.parent) == ["Show Name - S01E01 - Pilot.mkv"]
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="a folder that can be entered but not listed needs POSIX permissions and no root",
+)
+def test_a_file_source_whose_folder_cannot_be_listed_is_planned_alone(tmp_path: Path) -> None:
+    folder = tmp_path.resolve() / "Backups"
+    video = _write(folder / "Show.Name.S01E01.mkv")
+    _write(folder / "Show.Name.S01E01.srt")
+    folder.chmod(0o300)
+    try:
+        plan = plan_queue([video], _options(), _provider()).plan
+    finally:
+        folder.chmod(0o700)
+
+    assert _sources(plan) == [str(video)]
+
+
+def test_a_queued_folder_that_became_a_link_before_the_build_is_not_entered(
+    tmp_path: Path,
+) -> None:
+    elsewhere = tmp_path / "Elsewhere"
+    _write(elsewhere / "Show.Name.S01E02.mkv")
+    folder = tmp_path / "Backups"
+    _write(folder / "Show.Name.S01E01.mkv")
+    queue = SourceQueue()
+    queued = queue.add(folder)
+    (folder / "Show.Name.S01E01.mkv").unlink()
+    folder.rmdir()
+    point_folder_at(folder, elsewhere)
+
+    build = plan_queue(queue.sources, _options(), _provider())
+
+    assert build.plan.entries == ()
+    [message] = build.messages
+    assert str(queued) in message and "link" in message
+
+
+def test_a_source_folder_gone_after_the_build_turns_its_stragglers_off_in_a_derive(
+    tmp_path: Path,
+) -> None:
+    _needs_case_sensitive(tmp_path)
+    source = tmp_path.resolve() / "Backups"
+    old = source / "show name"
+    _write(old / "Show.Name.S01E01.mkv")
+    _write(old / "Show.Name.S01E02.mkv")
+    _write(old / "notes.txt")
+    plan = plan_queue([source], _options(folder_rename=True), _provider()).plan
+    assert len(plan.stragglers) == 1
+    for child in list(old.iterdir()):
+        child.unlink()
+    old.rmdir()
+
+    left_out = derive_plan(plan, LeaveOut(plan.videos[0]))
+
+    assert left_out.stragglers == ()

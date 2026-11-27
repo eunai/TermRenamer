@@ -381,6 +381,13 @@ def test_a_merged_tv_title_names_every_episode_from_the_one_match(tmp_path: Path
     ]
     [merged] = derived.titles
     assert merged.match == HARBOUR_REFRESHED
+    fresh_provider = _harbour()
+    fresh_provider.shows = {
+        "harbour lights": (HARBOUR_REFRESHED,),
+        "night ferry": (HARBOUR_REFRESHED,),
+    }
+    fresh = plan_queue([tmp_path], _tv_options(), fresh_provider).plan
+    assert _summary(derived) == _summary(fresh)
 
 
 def _not_recognised(tmp_path: Path) -> Path:

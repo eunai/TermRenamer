@@ -8,14 +8,22 @@ from pathlib import Path
 
 
 def path_key(path: Path) -> str:
-    """A path's key: its folder resolved, then its own name, case folded.
+    """A path's key: its folder resolved, then its own name, case folded; the queue
+    refuses a Source whose key is already queued.
 
     The path's own name is not followed, so a symbolic link keys as itself and
-    never stands in for its target. Two paths with the same key are the same
-    file or folder, whatever the letter case; sorting by the key gives
-    source-path order.
+    never stands in for its target. Two paths with one key are taken for one Source,
+    whatever the letter case. Planning neither identifies nor orders files by it: a
+    file is told apart by its path as text, and source-path order is
+    :func:`source_order`.
     """
     return str(path.parent.resolve() / path.name).casefold()
+
+
+def source_order(path: Path) -> tuple[str, str]:
+    """Source-path order: by :func:`claim_key`, then by the exact path, so two paths
+    whose names differ only in letter case always come in one order. No disk is read."""
+    return (claim_key(path), str(path))
 
 
 def claim_key(path: Path) -> str:
@@ -31,10 +39,11 @@ def claim_key(path: Path) -> str:
     text for the canonically equal results of folding.
 
     So every name a filesystem may take for one name (``Café.jpg``, ``café.jpg`` and the
-    decomposed ``café.jpg``) has one key. It is strict on purpose: two names a
-    case-sensitive filesystem would keep apart get a number, which is harmless. It
-    compares names being claimed at a new place, never sources: a source is told apart
-    by its recorded path as text.
+    decomposed ``café.jpg``) has one key, as far as the running Python's Unicode tables
+    know: a letter added to Unicode after them may fold on a disk and not here. It is
+    strict on purpose: two names a case-sensitive filesystem would keep apart get a
+    number, which is harmless. It compares names being claimed at a new place, never
+    sources: a source is told apart by its recorded path as text.
     """
     decomposed = unicodedata.normalize("NFD", str(path))
     return unicodedata.normalize("NFC", decomposed.upper().casefold())

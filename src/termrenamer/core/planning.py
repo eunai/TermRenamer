@@ -36,7 +36,7 @@ from termrenamer.core.models import (
     Title,
 )
 from termrenamer.core.parse import parse_filename, parse_film_filename
-from termrenamer.core.paths import claim_key, source_place
+from termrenamer.core.paths import source_order, source_place
 from termrenamer.core.progress import (
     BuildFinished,
     CancelSignal,
@@ -122,12 +122,6 @@ def _hint_key(hint: str) -> str:
     return hint.casefold().strip()
 
 
-def _order(path: Path) -> tuple[str, str]:
-    """Source-path order: by claim key, then by the exact path, so two paths whose
-    names differ only in letter case always come in one order. No disk is read."""
-    return (claim_key(path), str(path))
-
-
 def _pair_key(path: Path) -> tuple[str, str]:
     """The pairing rule's key: a Sidecar belongs to the video in its folder with its stem,
     letter case aside. The folder is its recorded path as text, so a Sidecar never pairs
@@ -136,10 +130,16 @@ def _pair_key(path: Path) -> tuple[str, str]:
 
 
 def _file_source(path: Path) -> list[_Found]:
-    """A file Source's video, and the Sidecars the pairing rule ties to it."""
+    """A file Source's video, and the Sidecars the pairing rule ties to it. When its
+    folder cannot be listed, the video alone, with a logged warning."""
     root = path.parent
     found = [_Found(path=path, root=root, kind=FileKind.VIDEO)]
-    for sibling in sorted(root.iterdir(), key=_order):
+    try:
+        siblings = sorted(root.iterdir(), key=source_order)
+    except OSError as exc:
+        _LOG.warning("Cannot list %s for the Sidecars of %s: %s", root, path.name, exc)
+        return found
+    for sibling in siblings:
         if (
             sibling.is_file()
             and classify(sibling.suffix) is FileKind.SIDECAR
@@ -157,11 +157,17 @@ def _collect(sources: Sequence[Path]) -> tuple[list[_Found], list[str]]:
     and is told apart by it: two files whose names differ only in letter case, on a
     disk that tells them apart, are two files. A file reached by more than one Source
     belongs to the outermost folder Source that contains it, otherwise to its file
-    Source. A file Source that is a symbolic link is the link itself.
+    Source. A file Source that is a symbolic link is the link itself; a folder Source
+    that is now a link or junction to a folder is reported and skipped.
     """
     owned: dict[str, tuple[tuple[int, int], _Found]] = {}
     messages: list[str] = []
     for source in sources:
+        if (source.is_symlink() or source.is_junction()) and source.is_dir():
+            # The queue resolves a folder link when it is added, so this one became a
+            # link after; planning never enters a link.
+            messages.append(f"Skipped {source}: it is now a link to a folder, not entered.")
+            continue
         resolved = source_place(source)
         if not resolved.exists():
             messages.append(f"Skipped {source}: it no longer exists.")
@@ -392,7 +398,7 @@ def plan_queue(
     found, messages = _collect(sources)
     entries: list[PlanEntry] = []
     videos: list[_Video] = []
-    for found_file in sorted(found, key=lambda f: _order(f.path)):
+    for found_file in sorted(found, key=lambda f: source_order(f.path)):
         if found_file.kind is not FileKind.VIDEO:
             continue
         try:
@@ -480,9 +486,9 @@ def plan_queue(
         entries.append(_entry(video, destination=None, status=status, title=title, wanted=wanted))
 
     by_pair: dict[tuple[str, str], PlanEntry] = {}
-    for video_entry in sorted(entries, key=lambda e: _order(e.source)):
+    for video_entry in sorted(entries, key=lambda e: source_order(e.source)):
         by_pair.setdefault(_pair_key(video_entry.source), video_entry)
-    for sidecar in sorted(found, key=lambda f: _order(f.path)):
+    for sidecar in sorted(found, key=lambda f: source_order(f.path)):
         owner = by_pair.get(_pair_key(sidecar.path)) if sidecar.kind is FileKind.SIDECAR else None
         if owner is None:
             continue
@@ -498,7 +504,7 @@ def plan_queue(
 
     titles = sorted(set(title_of.values()), key=_title_order)
     # Source-path order is fixed here, once; a derived Plan keeps it.
-    entries.sort(key=lambda e: _order(e.source))
+    entries.sort(key=lambda e: source_order(e.source))
     # The children of each source folder are recorded once, here; a derived Plan keeps
     # them, so its Stragglers are worked out without listing a folder again.
     # A folder is told apart by its path as the scan found it, so two folders whose
@@ -518,9 +524,9 @@ def _source_folders(folders: Iterable[Path]) -> tuple[SourceFolder, ...]:
     """
     unique = {str(folder): folder for folder in folders}
     recorded = []
-    for folder in sorted(unique.values(), key=_order):
+    for folder in sorted(unique.values(), key=source_order):
         try:
-            children = sorted(folder.iterdir(), key=_order)
+            children = sorted(folder.iterdir(), key=source_order)
         except OSError as exc:
             _LOG.warning("Cannot list %s for Stragglers: %s", folder, exc)
             children = []
@@ -562,8 +568,9 @@ def _claim_names(entries: Sequence[PlanEntry], options: PlanOptions) -> tuple[Pl
         final = claim_name(
             entry.wanted, source=entry.source, occupied=occupied, policy=options.name_taken
         )
-        status = EntryStatus.READY if final == entry.wanted else EntryStatus.NAME_TAKEN
-        named[str(entry.source)] = replace(entry, destination=final, status=status)
+        named[str(entry.source)] = replace(
+            entry, destination=final, status=_claimed_status(final, entry.wanted)
+        )
     for entry in ordered:
         if not entry.is_sidecar:
             continue
@@ -578,9 +585,19 @@ def _claim_names(entries: Sequence[PlanEntry], options: PlanOptions) -> tuple[Pl
         final = claim_name(
             desired, source=entry.source, occupied=occupied, policy=options.name_taken
         )
-        status = EntryStatus.READY if final == desired else EntryStatus.NAME_TAKEN
-        named[str(entry.source)] = replace(entry, destination=final, status=status)
+        named[str(entry.source)] = replace(
+            entry, destination=final, status=_claimed_status(final, desired)
+        )
     return tuple(named[str(entry.source)] for entry in ordered)
+
+
+def _claimed_status(final: Path | None, wanted: Path) -> EntryStatus:
+    """Ready when the claim gave the wanted name, else name taken. The claim may spell
+    the wanted name's folder as the source's folder is recorded, but a numbered name or
+    none always changes the name itself."""
+    if final is not None and final.name == wanted.name:
+        return EntryStatus.READY
+    return EntryStatus.NAME_TAKEN
 
 
 def _plan_of(

@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 from termrenamer.core.models import FileKind, ScannedFile
-from termrenamer.core.paths import claim_key
+from termrenamer.core.paths import source_order
 
 _LOG = logging.getLogger(__name__)
 
@@ -56,4 +56,4 @@ def scan(*, root: Path) -> list[ScannedFile]:
                 _LOG.warning("Cannot read %s: %s", path, exc)
                 continue
             out.append(ScannedFile(path=path, root=root, kind=kind))
-    return sorted(out, key=lambda sf: (claim_key(sf.path), str(sf.path)))
+    return sorted(out, key=lambda sf: source_order(sf.path))
