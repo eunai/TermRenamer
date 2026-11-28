@@ -16,7 +16,7 @@ def _settings(
     tmp_path: Path | None = None,
     tvdb_key: str | None = None,
     tvdb_pin: str | None = None,
-    tmdb_key: str = "tmdb-test-key",
+    tmdb_key: str | None = "tmdb-test-key",
     omdb_key: str | None = None,
 ) -> Settings:
     cache = tmp_path / "cache.db" if tmp_path is not None else None
@@ -38,26 +38,26 @@ def _settings(
     )
 
 
-def test_build_planning_wiring_requires_tmdb() -> None:
-    http = create_http_client(_settings())
-    bad = Settings(
-        tmdb_api_key=None,
-        tvdb_api_key=None,
-        tvdb_subscriber_pin=None,
-        omdb_api_key=None,
-        http_timeout_seconds=30.0,
-        http_max_attempts=4,
-        http_backoff_base_seconds=0.5,
-        http_jitter=True,
-        cache_db_path=None,
-        log_file_path=None,
-        film_dest_folder=None,
-        tv_dest_folder=None,
-        enable_folder_rename=False,
-        enable_season_folders=False,
-    )
-    with pytest.raises(ValidationError, match="TMDB API key"):
-        build_planning_wiring(bad, http)
+def test_build_planning_wiring_with_only_a_tvdb_key(tmp_path: Path) -> None:
+    s = _settings(tmp_path=tmp_path, tmdb_key=None, tvdb_key="tvdb-key")
+    w = build_planning_wiring(s, create_http_client(s))
+    assert w.tv_tvdb is not None
+    assert w.tv_tmdb is None
+    assert w.film is None
+    assert w.film_omdb is None
+    with pytest.raises(ValidationError, match="TMDB requires an API key"):
+        w.resolve_tv(provider_id="tmdb")
+
+
+def test_build_planning_wiring_with_only_an_omdb_key() -> None:
+    s = _settings(tmdb_key=None, omdb_key="omdb-key")
+    w = build_planning_wiring(s, create_http_client(s))
+    assert w.film_omdb is not None
+    assert w.film is None
+    assert w.tv_tmdb is None
+    assert w.tv_tvdb is None
+    with pytest.raises(ValidationError, match="TMDB requires an API key"):
+        w.resolve_film(provider_id="tmdb")
 
 
 def test_build_planning_wiring_no_cache_no_tvdb(tmp_path: Path) -> None:

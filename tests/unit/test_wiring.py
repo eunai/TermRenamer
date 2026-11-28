@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from termrenamer.api.lookup import FilmLookup, TvLookup
 from termrenamer.api.omdb import StaticOmdbFilmMetadataProvider
 from termrenamer.api.tmdb import StaticFilmMetadataProvider, StaticTvMetadataProvider
 from termrenamer.core.models import EpisodeMetadata, MovieMetadata
@@ -17,7 +18,11 @@ def test_resolve_tv_tmdb() -> None:
     )
     film = StaticFilmMetadataProvider(_mapping={("m", 2020): MovieMetadata(title="M", year=2020)})
     w = PlanningWiring(tv_tmdb=tv, tv_tvdb=None, film=film, film_omdb=None)
-    assert w.resolve_tv(provider_id="tmdb") is tv
+    lookup = w.resolve_tv(provider_id="tmdb")
+    assert isinstance(lookup, TvLookup)
+    assert [c.name for c in lookup.search_shows(hint="x")] == ["X"]
+    assert lookup.episode_title(show_id="x", season=1, episode=1) == "Pilot"
+    assert w.resolve_tv(provider_id="tmdb") is not lookup
 
 
 def test_resolve_tv_tvdb_missing_raises() -> None:
@@ -35,7 +40,7 @@ def test_resolve_tv_tvdb_ok() -> None:
     )
     film = StaticFilmMetadataProvider(_mapping={})
     w = PlanningWiring(tv_tmdb=tv, tv_tvdb=tvdb, film=film, film_omdb=None)
-    assert w.resolve_tv(provider_id="tvdb") is tvdb
+    assert [c.name for c in w.resolve_tv(provider_id="tvdb").search_shows(hint="y")] == ["Y"]
 
 
 def test_resolve_tv_unknown_provider() -> None:
@@ -48,9 +53,11 @@ def test_resolve_tv_unknown_provider() -> None:
 
 def test_resolve_film_tmdb() -> None:
     tv = StaticTvMetadataProvider(_mapping={})
-    film = StaticFilmMetadataProvider(_mapping={})
+    film = StaticFilmMetadataProvider(_mapping={("m", None): MovieMetadata(title="M", year=2020)})
     w = PlanningWiring(tv_tmdb=tv, tv_tvdb=None, film=film, film_omdb=None)
-    assert w.resolve_film(provider_id="tmdb") is film
+    lookup = w.resolve_film(provider_id="tmdb")
+    assert isinstance(lookup, FilmLookup)
+    assert [c.name for c in lookup.search_films(hint="m", year=None)] == ["M"]
 
 
 def test_resolve_film_omdb_missing_raises() -> None:
@@ -68,7 +75,9 @@ def test_resolve_film_omdb_ok() -> None:
         _mapping={("m", 2020): MovieMetadata(title="M", year=2020)},
     )
     w = PlanningWiring(tv_tmdb=tv, tv_tvdb=None, film=film, film_omdb=omdb)
-    assert w.resolve_film(provider_id="omdb") is omdb
+    assert [
+        c.name for c in w.resolve_film(provider_id="omdb").search_films(hint="m", year=2020)
+    ] == ["M"]
 
 
 def test_resolve_film_unknown_provider() -> None:

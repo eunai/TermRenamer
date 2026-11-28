@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from conftest import plan_folder
 from termrenamer.api.tmdb import StaticTvMetadataProvider
 from termrenamer.core.apply import apply_plan
 from termrenamer.core.models import ApplyStatus, EpisodeMetadata, ScanMode
-from termrenamer.core.planning import build_rename_plan
 
 
 def test_apply_skips_when_destination_appeared(tmp_path: Path) -> None:
@@ -16,10 +16,10 @@ def test_apply_skips_when_destination_appeared(tmp_path: Path) -> None:
     provider = StaticTvMetadataProvider(
         _mapping={("show", 1, 1): EpisodeMetadata(show_title="Show", episode_title="Pilot")},
     )
-    plan = build_rename_plan(root=tmp_path, mode=ScanMode.TV, provider=provider)
+    plan = plan_folder(tmp_path, ScanMode.TV, provider)
     dest = next(e.destination for e in plan.entries)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(b"blocker")
 
-    results = apply_plan(plan, confirmed=True)
+    results = apply_plan(plan, confirmed=True).results
     assert any(r.status is ApplyStatus.SKIP for r in results)

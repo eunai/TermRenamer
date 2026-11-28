@@ -128,8 +128,9 @@ def test_env_in_a_parent_of_the_working_folder_is_ignored(
     child.mkdir(parents=True)
     _write(isolated_settings_dirs.workdir / ".env", "TERMRENAMER_TMDB_API_KEY=from-parent\n")
     monkeypatch.chdir(child)
+    monkeypatch.setenv("TERMRENAMER_OMDB_API_KEY", "made-up-omdb")
 
-    settings = load_settings(require_tmdb_key=False)
+    settings = load_settings()
 
     assert settings.tmdb_api_key is None
 
@@ -160,11 +161,14 @@ def test_environment_still_overrides_the_explicit_file(
     assert load_settings(env_file=explicit).tmdb_api_key == "env-key"
 
 
-def test_a_loaded_file_does_not_leak_into_a_later_load(tmp_path: Path) -> None:
+def test_a_loaded_file_does_not_leak_into_a_later_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     explicit = _write(tmp_path / "explicit.env", "TERMRENAMER_TMDB_API_KEY=explicit-key\n")
     load_settings(env_file=explicit)
+    monkeypatch.setenv("TERMRENAMER_OMDB_API_KEY", "made-up-omdb")
 
-    settings = load_settings(require_tmdb_key=False)
+    settings = load_settings()
 
     assert settings.tmdb_api_key is None
 
@@ -340,3 +344,26 @@ def test_unreadable_user_settings_file_gives_a_validation_error_naming_it(
         load_settings()
 
     assert str(user_file) in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "variable",
+    [
+        "TERMRENAMER_TV_DEST_FOLDER",
+        "TERMRENAMER_FILM_DEST_FOLDER",
+        "TERMRENAMER_CACHE_DB_PATH",
+        "TERMRENAMER_LOG_FILE",
+    ],
+)
+def test_a_path_with_an_unknown_user_is_a_validation_error_naming_its_variable(
+    variable: str, isolated_settings_dirs: IsolatedDirs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``~someone/TV`` for a user the system does not know stops the start with exit
+    status 2, as an invalid value does, instead of an unhandled error."""
+    monkeypatch.setenv("TERMRENAMER_TMDB_API_KEY", "a-test-key")
+    monkeypatch.setenv(variable, "~nonexistent-user-of-termrenamer/TV")
+
+    with pytest.raises(ValidationError) as raised:
+        load_settings()
+
+    assert str(raised.value).startswith(f"{variable} cannot be used:")

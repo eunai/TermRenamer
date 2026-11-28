@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
 import pytest
 
 from termrenamer.api.tmdb import TmdbProvider
-from termrenamer.core.models import EpisodeMetadata, MovieMetadata
+from termrenamer.core.models import Candidate
 from termrenamer.util.errors import ProviderError
 from termrenamer.util.http import HttpClient, HttpClientConfig
 
@@ -20,73 +21,181 @@ def _load(name: str) -> dict:
     return json.loads((_FIXTURES / name).read_text(encoding="utf-8"))
 
 
-def test_tmdb_resolve_tv_episode() -> None:
-    search_tv = _load("tmdb_search_tv.json")
-    tv_detail = _load("tmdb_tv_detail.json")
-    tv_ep = _load("tmdb_tv_episode.json")
+def _provider(handler: Callable[[httpx.Request], httpx.Response]) -> TmdbProvider:
+    config = HttpClientConfig(max_attempts=1, backoff_base_seconds=0.01, jitter=False)
+    raw = httpx.Client(transport=httpx.MockTransport(handler))
+    http = HttpClient(config=config, client=raw)
+    return TmdbProvider(http, api_key="k", base_url="https://api.themoviedb.org/3")
+
+
+def test_film_search_returns_candidates_in_order_with_posters() -> None:
+    seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        p = request.url.path
-        if "search/tv" in p:
-            return httpx.Response(200, json=search_tv)
-        if p.endswith("/tv/42") and "/season/" not in p:
-            return httpx.Response(200, json=tv_detail)
-        if "/tv/42/season/1/episode/1" in p:
-            return httpx.Response(200, json=tv_ep)
-        return httpx.Response(404)
+        seen.append(request)
+        return httpx.Response(200, json=_load("tmdb_search_movie_candidates.json"))
 
-    transport = httpx.MockTransport(handler)
-    config = HttpClientConfig(max_attempts=3, backoff_base_seconds=0.01, jitter=False)
-    with httpx.Client(transport=transport) as raw:
-        http = HttpClient(config=config, client=raw)
-        p = TmdbProvider(http, api_key="k", base_url="https://api.themoviedb.org/3")
-        meta = p.resolve_tv_episode(show_hint="Stub", season=1, episode=1)
-    assert meta == EpisodeMetadata(
-        show_title="Stub Show Official",
-        episode_title="Pilot",
+    results = _provider(handler).search_films(hint="Harbour Lights", year=2011)
+
+    assert results == (
+        Candidate(
+            id="501", name="Harbour Lights", year=2011, poster_ref="/harbour-lights-2011.jpg"
+        ),
+        Candidate(id="503", name="Harbour Lights", year=1987, poster_ref=None),
+    )
+    assert seen[0].url.path == "/3/search/movie"
+    assert seen[0].url.params["query"] == "Harbour Lights"
+    assert seen[0].url.params["year"] == "2011"
+
+
+def test_film_search_without_year_sends_no_year() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=_load("tmdb_search_movie.json"))
+
+    results = _provider(handler).search_films(hint="Stub", year=None)
+
+    assert [c.name for c in results] == ["Stub Movie"]
+    assert "year" not in seen[0].url.params
+
+
+def test_film_search_with_no_results_is_nothing_found() -> None:
+    provider = _provider(lambda _: httpx.Response(200, json={"page": 1, "results": []}))
+    assert provider.search_films(hint="zzz", year=None) == ()
+
+
+def test_film_search_where_no_result_has_a_year_is_nothing_found() -> None:
+    body = {"page": 1, "results": [{"id": 1, "title": "X", "release_date": ""}]}
+    provider = _provider(lambda _: httpx.Response(200, json=body))
+    assert provider.search_films(hint="X", year=None) == ()
+
+
+def test_tv_search_returns_candidates_in_order_with_posters() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=_load("tmdb_search_tv_candidates.json"))
+
+    results = _provider(handler).search_shows(hint="Quiet Valley")
+
+    assert results == (
+        Candidate(id="7001", name="Quiet Valley", year=2019, poster_ref="/quiet-valley.jpg"),
+        Candidate(id="7002", name="Quiet Valley Stories", year=None, poster_ref=None),
+    )
+    assert seen[0].url.path == "/3/search/tv"
+    assert seen[0].url.params["query"] == "Quiet Valley"
+
+
+def test_tv_search_with_no_results_is_nothing_found() -> None:
+    provider = _provider(lambda _: httpx.Response(200, json={"results": []}))
+    assert provider.search_shows(hint="zzz") == ()
+
+
+def test_episode_title_for_show_id_season_and_episode() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        return httpx.Response(200, json=_load("tmdb_tv_episode.json"))
+
+    title = _provider(handler).episode_title(show_id="42", season=1, episode=1)
+
+    assert title == "Pilot"
+    assert seen == ["/3/tv/42/season/1/episode/1"]
+
+
+def test_episode_http_404_is_nothing_found() -> None:
+    provider = _provider(lambda _: httpx.Response(404, json={"status_code": 34}))
+    assert provider.episode_title(show_id="42", season=9, episode=99) is None
+
+
+@pytest.mark.parametrize("status", [401, 404, 500])
+def test_search_non_success_answer_is_a_failure(status: int) -> None:
+    provider = _provider(lambda _: httpx.Response(status, json={}))
+    with pytest.raises(ProviderError, match=f"HTTP {status}"):
+        provider.search_shows(hint="x")
+    with pytest.raises(ProviderError, match=f"HTTP {status}"):
+        provider.search_films(hint="x", year=None)
+
+
+@pytest.mark.parametrize("status", [401, 500])
+def test_episode_non_success_answer_other_than_404_is_a_failure(status: int) -> None:
+    provider = _provider(lambda _: httpx.Response(status, json={}))
+    with pytest.raises(ProviderError, match=f"HTTP {status}"):
+        provider.episode_title(show_id="42", season=1, episode=1)
+
+
+@pytest.mark.parametrize("follows", [False, True])
+def test_a_redirect_is_a_failure_and_is_not_followed(follows: bool) -> None:
+    key = "fake-tmdb-key-0000"
+    hosts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        hosts.append(request.url.host)
+        if request.url.host != "api.themoviedb.org":
+            return httpx.Response(200, json=_load("tmdb_search_movie.json"))
+        location = f"https://elsewhere.example/3/search/movie?api_key={key}"
+        return httpx.Response(307, headers={"Location": location})
+
+    raw = httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=follows)
+    http = HttpClient(config=HttpClientConfig(max_attempts=1), client=raw)
+    provider = TmdbProvider(http, api_key=key)
+
+    with pytest.raises(ProviderError) as caught:
+        provider.search_films(hint="Harbour Lights", year=None)
+
+    message = str(caught.value)
+    assert "307" in message and "api.themoviedb.org" in message
+    assert key not in message and "elsewhere" not in message and "search" not in message
+    assert hosts == ["api.themoviedb.org"]
+
+
+def test_unusable_search_response_is_a_failure() -> None:
+    provider = _provider(lambda _: httpx.Response(200, json={"page": 1}))
+    with pytest.raises(ProviderError):
+        provider.search_shows(hint="x")
+    with pytest.raises(ProviderError):
+        provider.search_films(hint="x", year=None)
+
+
+def test_episode_without_a_name_is_a_failure() -> None:
+    provider = _provider(lambda _: httpx.Response(200, json={"id": 1, "name": ""}))
+    with pytest.raises(ProviderError, match="missing name"):
+        provider.episode_title(show_id="42", season=1, episode=1)
+
+
+def test_invalid_json_is_a_failure() -> None:
+    provider = _provider(lambda _: httpx.Response(200, content=b"not json"))
+    with pytest.raises(ProviderError, match="Invalid JSON"):
+        provider.search_shows(hint="x")
+
+
+def test_a_film_candidate_whose_date_has_digits_other_than_0_to_9_is_dropped() -> None:
+    body = {
+        "results": [
+            {"id": 1, "title": "Superscript", "release_date": "²011-01-01"},
+            {"id": 2, "title": "Arabic-Indic", "release_date": "٢٠١١-01-01"},
+            {"id": 3, "title": "Kept", "release_date": "2012-01-01"},
+        ],
+    }
+    provider = _provider(lambda _: httpx.Response(200, json=body))
+    assert provider.search_films(hint="x", year=None) == (
+        Candidate(id="3", name="Kept", year=2012),
     )
 
 
-def test_tmdb_resolve_film() -> None:
-    search_m = _load("tmdb_search_movie.json")
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if "search/movie" in request.url.path:
-            return httpx.Response(200, json=search_m)
-        return httpx.Response(404)
-
-    transport = httpx.MockTransport(handler)
-    config = HttpClientConfig(max_attempts=3, backoff_base_seconds=0.01, jitter=False)
-    with httpx.Client(transport=transport) as raw:
-        http = HttpClient(config=config, client=raw)
-        p = TmdbProvider(http, api_key="k", base_url="https://api.themoviedb.org/3")
-        meta = p.resolve_film(title_hint="Stub", year_hint=2024)
-    assert meta == MovieMetadata(title="Stub Movie", year=2024)
-
-
-def test_tmdb_movie_missing_year_raises() -> None:
-    bad = {"page": 1, "results": [{"id": 1, "title": "X", "release_date": ""}]}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=bad)
-
-    transport = httpx.MockTransport(handler)
-    config = HttpClientConfig(max_attempts=3, backoff_base_seconds=0.01, jitter=False)
-    with httpx.Client(transport=transport) as raw:
-        http = HttpClient(config=config, client=raw)
-        p = TmdbProvider(http, api_key="k", base_url="https://api.themoviedb.org/3")
-        with pytest.raises(ProviderError, match="release year"):
-            p.resolve_film(title_hint="X", year_hint=None)
-
-
-def test_tmdb_empty_search_raises() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"results": []})
-
-    transport = httpx.MockTransport(handler)
-    config = HttpClientConfig(max_attempts=3, backoff_base_seconds=0.01, jitter=False)
-    with httpx.Client(transport=transport) as raw:
-        http = HttpClient(config=config, client=raw)
-        p = TmdbProvider(http, api_key="k", base_url="https://api.themoviedb.org/3")
-        with pytest.raises(ProviderError, match="No TMDB TV"):
-            p.resolve_tv_episode(show_hint="zzz", season=1, episode=1)
+def test_a_show_candidate_whose_date_has_digits_other_than_0_to_9_has_no_year() -> None:
+    body = {
+        "results": [
+            {"id": 1, "name": "Superscript", "first_air_date": "²019-01-01"},
+            {"id": 2, "name": "Arabic-Indic", "first_air_date": "٢٠١٩-01"},
+        ],
+    }
+    provider = _provider(lambda _: httpx.Response(200, json=body))
+    assert [(c.name, c.year) for c in provider.search_shows(hint="x")] == [
+        ("Superscript", None),
+        ("Arabic-Indic", None),
+    ]

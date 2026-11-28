@@ -7,16 +7,25 @@ import os
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 
 from dotenv import dotenv_values
 
+from termrenamer.core.policies import NameTakenPolicy
 from termrenamer.persistence.cache import SqliteMetadataCache
 from termrenamer.util.errors import ValidationError
 from termrenamer.util.http import HttpClient, HttpClientConfig
 from termrenamer.util.logging import setup_logging
 
 _LOG = logging.getLogger(__name__)
+
+
+class ThemeName(StrEnum):
+    """The screen's palette: the dark or the light teal theme (``TERMRENAMER_THEME``)."""
+
+    DARK = "dark"
+    LIGHT = "light"
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +46,9 @@ class Settings:
     tv_dest_folder: Path | None
     enable_folder_rename: bool
     enable_season_folders: bool
+    theme: ThemeName = ThemeName.DARK
+    name_taken: NameTakenPolicy = NameTakenPolicy.SUFFIX
+    show_posters: bool = True
 
     @property
     def has_tmdb_credentials(self) -> bool:
@@ -86,6 +98,43 @@ def _read_bool(env: Mapping[str, str], name: str, default: bool) -> bool:
     raise ValidationError(msg)
 
 
+def _read_theme(env: Mapping[str, str]) -> ThemeName:
+    raw = env.get("TERMRENAMER_THEME")
+    if raw is None or raw.strip() == "":
+        return ThemeName.DARK
+    try:
+        return ThemeName(raw.strip().lower())
+    except ValueError as exc:
+        msg = "Invalid value for TERMRENAMER_THEME (use dark or light)"
+        raise ValidationError(msg) from exc
+
+
+def _read_name_taken(env: Mapping[str, str]) -> NameTakenPolicy:
+    raw = env.get("TERMRENAMER_NAME_TAKEN")
+    if raw is None or raw.strip() == "":
+        return NameTakenPolicy.SUFFIX
+    try:
+        return NameTakenPolicy(raw.strip().lower())
+    except ValueError as exc:
+        msg = "Invalid value for TERMRENAMER_NAME_TAKEN (use suffix or skip)"
+        raise ValidationError(msg) from exc
+
+
+def _expanded(name: str, raw: str | None) -> Path | None:
+    """The path the variable ``name`` holds, ``~`` expanded, or ``None`` when unset.
+
+    Raises:
+        ValidationError: ``~user`` names a user the system does not know, or the home
+            folder cannot be found.
+    """
+    if not raw:
+        return None
+    try:
+        return Path(raw).expanduser()
+    except (RuntimeError, OSError) as exc:
+        raise ValidationError(f"{name} cannot be used: {exc}") from exc
+
+
 def user_settings_path() -> Path:
     """Return the path of the user settings file for this platform and environment.
 
@@ -131,7 +180,7 @@ def where_to_set(variable: str) -> str:
     )
 
 
-def load_settings(*, env_file: Path | None = None, require_tmdb_key: bool = True) -> Settings:
+def load_settings(*, env_file: Path | None = None) -> Settings:
     """Load settings from the environment and the settings files.
 
     Sources, highest first: environment variables, a ``.env`` in the current working
@@ -141,10 +190,10 @@ def load_settings(*, env_file: Path | None = None, require_tmdb_key: bool = True
 
     Args:
         env_file: If provided, the only file read; environment variables still win.
-        require_tmdb_key: When True, TMDB API key must be set (TV vertical slice).
 
     Raises:
-        ValidationError: Missing required configuration or invalid values.
+        ValidationError: No Provider key (TMDB, TheTVDB or OMDb) is set, or a value is
+            invalid. A TheTVDB subscriber PIN alone is not a key.
     """
     files = [env_file] if env_file is not None else [user_settings_path(), Path.cwd() / ".env"]
     env = _layer(*(_read_settings_file(path) for path in files), os.environ)
@@ -184,30 +233,34 @@ def load_settings(*, env_file: Path | None = None, require_tmdb_key: bool = True
         cache_raw = cache_raw.strip()
         if cache_raw == "":
             cache_raw = None
-    cache_path = Path(cache_raw).expanduser() if cache_raw else None
+    cache_path = _expanded("TERMRENAMER_CACHE_DB_PATH", cache_raw)
 
     log_path_raw = env.get("TERMRENAMER_LOG_FILE")
-    log_path = Path(log_path_raw).expanduser() if log_path_raw else None
+    log_path = _expanded("TERMRENAMER_LOG_FILE", log_path_raw)
 
     film_dest_raw = env.get("TERMRENAMER_FILM_DEST_FOLDER")
     if film_dest_raw is not None:
         film_dest_raw = film_dest_raw.strip()
         if film_dest_raw == "":
             film_dest_raw = None
-    film_dest_folder = Path(film_dest_raw).expanduser() if film_dest_raw else None
+    film_dest_folder = _expanded("TERMRENAMER_FILM_DEST_FOLDER", film_dest_raw)
 
     tv_dest_raw = env.get("TERMRENAMER_TV_DEST_FOLDER")
     if tv_dest_raw is not None:
         tv_dest_raw = tv_dest_raw.strip()
         if tv_dest_raw == "":
             tv_dest_raw = None
-    tv_dest_folder = Path(tv_dest_raw).expanduser() if tv_dest_raw else None
+    tv_dest_folder = _expanded("TERMRENAMER_TV_DEST_FOLDER", tv_dest_raw)
 
     enable_folder_rename = _read_bool(env, "TERMRENAMER_ENABLE_FOLDER_RENAME", default=False)
     enable_season_folders = _read_bool(env, "TERMRENAMER_ENABLE_SEASON_FOLDERS", default=False)
+    theme = _read_theme(env)
+    name_taken = _read_name_taken(env)
+    show_posters = _read_bool(env, "TERMRENAMER_SHOW_POSTERS", default=True)
 
-    if require_tmdb_key and not tmdb_key:
-        msg = f"TMDB API key is required: {where_to_set('TERMRENAMER_TMDB_API_KEY')}."
+    if not (tmdb_key or tvdb_key or omdb_key):
+        variables = "TERMRENAMER_TMDB_API_KEY, TERMRENAMER_TVDB_API_KEY or TERMRENAMER_OMDB_API_KEY"
+        msg = f"No Provider API key is set, and one is enough: {where_to_set(variables)}."
         raise ValidationError(msg)
 
     return Settings(
@@ -225,6 +278,9 @@ def load_settings(*, env_file: Path | None = None, require_tmdb_key: bool = True
         tv_dest_folder=tv_dest_folder,
         enable_folder_rename=enable_folder_rename,
         enable_season_folders=enable_season_folders,
+        theme=theme,
+        name_taken=name_taken,
+        show_posters=show_posters,
     )
 
 
@@ -250,10 +306,10 @@ def create_metadata_cache(settings: Settings) -> SqliteMetadataCache | None:
     return SqliteMetadataCache(settings.cache_db_path)
 
 
-def bootstrap(*, require_tmdb_key: bool = True) -> Settings:
+def bootstrap() -> Settings:
     """Configure logging and return settings."""
     setup_logging()
-    settings = load_settings(require_tmdb_key=require_tmdb_key)
+    settings = load_settings()
     if settings.log_file_path is not None:
         _LOG.debug("File logging path configured: %s", settings.log_file_path)
     return settings

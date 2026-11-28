@@ -1,4 +1,4 @@
-"""Render the README's screenshot: a built TV plan in the preview, as an SVG.
+"""Render the README's screenshot: a built TV Plan at the Preview Stage, as an SVG.
 
 Run from the repo root::
 
@@ -6,10 +6,13 @@ Run from the repo root::
 
 It writes ``docs/assets/preview.svg``. The app runs headless at a fixed terminal size,
 with static providers in place of TMDB, so the script needs no network, no API key and
-no settings file. The source files are empty stand-ins for the owner's backups, made in
-a temporary folder; the preview shows paths relative to that folder, so no path from
-this machine reaches the image. The clock and the Activity timestamps are pinned, so two
-runs give the same file.
+no settings file. The source files are empty stand-ins for a person's backups, made in
+a temporary folder under folders of fixed names. The footer shows the selected file's
+paths cut from the left to fit its width, and each file's path below the temporary
+folder (the fixed folders and the file's name) is at least that long, so the temporary
+folder's own path, which differs from run to run and names this machine, never reaches
+the image. The screen shows no clock, so two runs give the same
+file.
 """
 
 from __future__ import annotations
@@ -17,23 +20,26 @@ from __future__ import annotations
 import asyncio
 import logging
 import tempfile
-from datetime import datetime
 from pathlib import Path
-from unittest import mock
-
-from textual.widgets._header import HeaderClock
 
 from termrenamer.api.tmdb import StaticFilmMetadataProvider, StaticTvMetadataProvider
 from termrenamer.app_bootstrap import Settings
 from termrenamer.core.models import EpisodeMetadata
 from termrenamer.tui.app import TermRenamerApp
+from termrenamer.tui.stages.preview import footer_path_width
 from termrenamer.wiring import PlanningWiring
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUT = REPO_ROOT / "docs" / "assets" / "preview.svg"
 
-TERMINAL_SIZE = (120, 46)
+TERMINAL_SIZE = (120, 36)
+BACKUP_FOLDERS = (
+    "Backups of my shows and films",
+    "Copied from my old hard drives before the move in 2019",
+)
+"""The folders above the Source, so the footer's paths start inside them."""
 SOURCE_FOLDER = "TV Backups"
+
 SHOW = "Breaking Bad"
 EPISODES = {
     1: "Pilot",
@@ -41,15 +47,6 @@ EPISODES = {
     3: "...And the Bag's in the River",
     4: "Cancer Man",
 }
-FIXED_NOW = datetime(2026, 1, 20, 9, 41, 0)
-
-
-class _FixedDatetime(datetime):
-    """``datetime`` whose ``now()`` is pinned, for the Activity tab's timestamps."""
-
-    @classmethod
-    def now(cls, tz: object = None) -> _FixedDatetime:
-        return cls.fromtimestamp(FIXED_NOW.timestamp())
 
 
 def _wiring() -> PlanningWiring:
@@ -84,12 +81,15 @@ def _settings() -> Settings:
 
 
 def _make_backups(parent: Path) -> Path:
-    folder = parent / SOURCE_FOLDER
-    folder.mkdir()
+    folder = parent.joinpath(*BACKUP_FOLDERS, SOURCE_FOLDER)
+    folder.mkdir(parents=True)
     for number in EPISODES:
         stem = f"breaking_bad_s01e{number:02d}"
         (folder / f"{stem}.mkv").write_bytes(b"")
         (folder / f"{stem}.srt").write_bytes(b"")
+    shortest = min(len(str(path.relative_to(parent))) for path in folder.iterdir())
+    if shortest < footer_path_width(TERMINAL_SIZE[0]):
+        raise RuntimeError("The fixed folders are too short to keep the temporary path out")
     return folder
 
 
@@ -97,20 +97,18 @@ async def _screenshot(source: Path) -> str:
     app = TermRenamerApp(wiring=_wiring(), settings=_settings())
     async with app.run_test(size=TERMINAL_SIZE) as pilot:
         await pilot.pause()
-        app.query_one(HeaderClock).time_format = FIXED_NOW.strftime("%H:%M:%S")
-        app._on_folder_picked(source)
+        await pilot.press("f")  # the folder dialog; the folder is chosen in it
+        app.screen.dismiss(source)
         await pilot.pause()
-        with mock.patch("termrenamer.core.planning.datetime", _FixedDatetime):
-            await pilot.press("b")
-            await app.workers.wait_for_complete()
-            await pilot.pause()
+        await pilot.press("b")
+        await app.workers.wait_for_complete()
         await pilot.pause()
         return app.export_screenshot(title="TermRenamer")
 
 
 def render_preview(out: Path = DEFAULT_OUT) -> Path:
     """Write the preview screenshot SVG to ``out`` and return ``out``."""
-    # The app swaps the root logger's stream handlers for its Logs tab on mount;
+    # The app swaps the root logger's stream handlers for its Logs view on mount;
     # put the caller's handlers back afterwards.
     root_logger = logging.getLogger()
     handlers = list(root_logger.handlers)

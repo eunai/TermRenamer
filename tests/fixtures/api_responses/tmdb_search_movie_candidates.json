@@ -1,0 +1,26 @@
+{
+  "page": 1,
+  "results": [
+    {
+      "id": 501,
+      "title": "Harbour Lights",
+      "original_title": "Harbour Lights",
+      "release_date": "2011-05-20",
+      "poster_path": "/harbour-lights-2011.jpg"
+    },
+    {
+      "id": 502,
+      "title": "Harbour Lights Revisited",
+      "release_date": "",
+      "poster_path": "/harbour-lights-revisited.jpg"
+    },
+    {
+      "id": 503,
+      "title": "Harbour Lights",
+      "release_date": "1987-02-01",
+      "poster_path": null
+    }
+  ],
+  "total_pages": 1,
+  "total_results": 3
+}

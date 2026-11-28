@@ -22,7 +22,7 @@ The user's choice of TV or Film, which decides how filenames are parsed, which p
 An online metadata source (TMDB, TheTVDB or OMDb) that a plan looks titles up in; TV and Film accept different providers.
 
 **Sidecar**:
-A subtitle or info file (such as `.srt` or `.nfo`) that moves with the video sharing its folder and filename stem; one with no such video is left alone.
+A subtitle or info file (such as `.srt` or `.nfo`) that moves with the video sharing its folder and filename stem. One with no such video is unpaired, not a Sidecar: with Folder rename on, it can move as a Straggler when a video moves out of its folder, and otherwise it is left alone.
 
 **Folder rename**:
 The setting that lets a plan move media into canonical show or film folders; when off, only the filename changes in its current folder.
@@ -35,8 +35,12 @@ The folder under which folder rename builds the show or film tree, set separatel
 _Avoid_: destination folder, output root
 
 **Straggler**:
-A file or folder left behind in a source folder after a plan's moves, which apply can merge into the destination folder.
+A file or folder left behind in a source folder after a plan's moves, which apply can merge into the target folder.
 _Avoid_: stray file
+
+**Companion file**:
+A file whose name starts with `._`, which macOS writes beside a file on a drive that cannot hold extended attributes (such as exFAT or FAT32). It is not the user's file: never a video, a Sidecar or a Straggler, and Apply leaves it to the filesystem.
+_Avoid_: AppleDouble file, dot-underscore file
 
 **User settings file**:
 The per-user dotenv file the app reads its settings from, overridden by a `.env` in the current folder and by environment variables.
@@ -71,10 +75,10 @@ Said of a queued video whose name the app cannot read a title from (and, in TV M
 _Avoid_: unparsed, unknown
 
 **Name taken**:
-Said of a planned rename whose new name already exists at the destination. A setting decides whether the Plan adds a number to the name or leaves the file where it is.
+Said of a planned rename whose new name is already used, at the destination or by an earlier file of the same Plan. A setting decides whether the Plan adds a number to the name or leaves the file where it is.
 
 **Undo**:
-Reversing the last Apply: files, Sidecars and Stragglers go back where they were. Offered until the user starts a new batch or quits.
+Reversing the last Apply: files, Sidecars and Stragglers go back where they were. Offered once for each Apply that changed something Undo can reverse, until the user starts a new batch or quits.
 _Avoid_: revert, rollback
 
 ## Agent workflow
