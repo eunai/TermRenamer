@@ -16,7 +16,9 @@ from termrenamer.core.models import (
 
 NUL = "\x00"
 NO_NUL = "a path cannot hold a NUL character"
-"""Why a path holding :data:`NUL` (pasted, as a terminal allows) cannot be used."""
+"""Why a path holding :data:`NUL` (pasted, as a terminal allows, or in a settings file)
+cannot be used. Each place checks for one before it asks the disk: POSIX refuses such
+a path with ``ValueError``, but Windows resolves it as it is."""
 
 
 def path_shown(path: str | PurePath) -> str:
@@ -25,12 +27,9 @@ def path_shown(path: str | PurePath) -> str:
     return str(path).replace(NUL, "␀")
 
 
-def error_reason(exc: BaseException, path: str | PurePath | None = None) -> str:
-    """Why ``exc`` happened, for the screen: :data:`NO_NUL` when ``path`` holds a NUL
-    character, an ``OSError``'s own words without its number and path, else the
-    error's text."""
-    if path is not None and NUL in str(path):
-        return NO_NUL
+def error_reason(exc: BaseException) -> str:
+    """Why ``exc`` happened, for the screen: an ``OSError``'s own words without its
+    number and path, else the error's text."""
     if isinstance(exc, OSError) and exc.strerror:
         return exc.strerror
     return str(exc)
@@ -99,8 +98,9 @@ def why_not_renamed(entry: PlanEntry) -> str | None:
 
 
 def folder_text(folder: PurePath) -> str:
-    """``folder`` ending in one separator of its own system: ``/media/Shows/``, ``D:\\Shows\\``."""
-    text = str(folder)
+    """``folder`` ending in one separator of its own system: ``/media/Shows/``, ``D:\\Shows\\``;
+    a NUL character as ``␀``, as :func:`path_shown` writes it."""
+    text = path_shown(folder)
     sep = folder.parser.sep
     return text if text.endswith(sep) else text + sep
 

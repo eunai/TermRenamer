@@ -71,6 +71,8 @@ from termrenamer.tui.widgets.footer import AppFooter, MessageKind
 from termrenamer.tui.widgets.header import AppHeader
 from termrenamer.tui.widgets.stages_row import StagesRow
 from termrenamer.tui.words import (
+    NO_NUL,
+    NUL,
     and_list,
     error_reason,
     match_name,
@@ -428,14 +430,17 @@ class TermRenamerApp(App[None]):
             self.say("Add a Source first (a or f).", MessageKind.WARNING)
             return
         owner = self.session_settings
-        try:
-            options = owner.plan_options()
-        except (OSError, RuntimeError, ValueError) as exc:  # the root cannot be resolved
-            root = owner.destination_root(owner.mode)
-            reason = error_reason(exc, root)
+        root = owner.destination_root(owner.mode)
+        reason = NO_NUL if root is not None and NUL in str(root) else None
+        if reason is None:
+            try:
+                options = owner.plan_options()
+            except (OSError, RuntimeError, ValueError) as exc:  # the root cannot be resolved
+                reason = error_reason(exc)
+        if reason is not None:
+            shown = path_shown(root) if root is not None else "not set"
             self.say(
-                f"The {mode_label(owner.mode)} Destination root {path_shown(root or '')} "
-                "cannot be used: "
+                f"The {mode_label(owner.mode)} Destination root {shown} cannot be used: "
                 f"{reason}. No Plan was built.",
                 MessageKind.ERROR,
             )

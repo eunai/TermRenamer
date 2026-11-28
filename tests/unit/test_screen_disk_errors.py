@@ -17,10 +17,12 @@ import pytest
 from termrenamer.tui.stage import Stage
 
 from .screen_driver import (
+    NUL_RESOLVES,
     SIZE,
     make_app,
     press,
     queue,
+    resolve_nul,
     screen_text,
     settings,
     text_of,
@@ -130,15 +132,20 @@ async def test_a_queued_source_the_disk_cannot_check_is_still_listed_and_selecta
     assert "file · queued · nothing looked up yet" in text
 
 
+@pytest.mark.parametrize("how", NUL_RESOLVES)
 async def test_a_destination_root_with_a_nul_character_from_the_settings_file_builds_nothing(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, how: str
 ) -> None:
     """A settings file can hold a NUL character in a root, which no path can hold;
-    building the Plan says so, shows the NUL as ␀, and keeps the queue."""
+    the header shows the NUL as ␀, and building the Plan says the root cannot be used
+    and keeps the queue, on every system."""
+    resolve_nul(monkeypatch, how)
     root = Path(f"{tmp_path}{os.sep}bad\x00root")
     folder = tv_backups(tmp_path).resolve()
     app = make_app(loaded=settings(folder_rename=True, tv_root=root))
     async with app.run_test(size=(240, 36)) as pilot:
+        await pilot.pause()
+        header = text_of(app, "#header-root")
         await queue(pilot, folder)
         await press(pilot, "b")
         await app.workers.wait_for_complete()
@@ -146,6 +153,7 @@ async def test_a_destination_root_with_a_nul_character_from_the_settings_file_bu
         message = text_of(app, "#message")
         stage, sources, running = app.stage, app.queue.sources, app.is_running
 
+    assert header == f"Destination root {tmp_path}{os.sep}bad␀root{os.sep}"
     assert running and stage is Stage.QUEUE
     assert sources == (folder,)
     assert message == (

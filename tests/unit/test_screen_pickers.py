@@ -21,10 +21,12 @@ from termrenamer.core.models import ScanMode
 from termrenamer.tui.views import SettingsView
 
 from .screen_driver import (
+    NUL_RESOLVES,
     SIZE,
     make_app,
     press,
     queue,
+    resolve_nul,
     screen_text,
     settings,
     text_of,
@@ -419,11 +421,13 @@ async def test_a_root_pasted_with_a_nul_character_is_refused_and_build_keeps_the
     assert running and plan is not None
 
 
+@pytest.mark.parametrize("how", NUL_RESOLVES)
 async def test_enter_on_a_typed_name_with_a_nul_character_says_why_and_keeps_the_app(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, how: str
 ) -> None:
     """A NUL character, pasted as a terminal allows, is in no path: Enter says so and the
-    dialog and the queue stay."""
+    dialog and the queue stay, on every system."""
+    resolve_nul(monkeypatch, how)
     queued = tmp_path / "Queued"
     queued.mkdir()
     start = (tmp_path / "Start").resolve()

@@ -41,7 +41,7 @@ from textual_fspicker.parts.directory_navigation import DirectoryEntry, Director
 from textual_fspicker.safe_tests import is_dir, is_file
 from textual_fspicker.suggest_path import SuggestPath
 
-from termrenamer.tui.words import error_reason
+from termrenamer.tui.words import NO_NUL, NUL, error_reason
 
 
 class _Listing(DirectoryNavigation):
@@ -214,11 +214,13 @@ class FilePicker(FileOpen):
         tell what the typed path is (a name too long) or no path can be it (one holding
         a NUL character), say so and keep the dialog."""
         event.prevent_default()
+        if NUL in self.query_one(Input).value:
+            _say(self, _CANNOT_USE.format(reason=NO_NUL))
+            return
         try:
             BaseFileDialog._confirm_file(self, event)  # noqa: SLF001
         except (OSError, ValueError) as exc:
-            typed = self.query_one(Input).value
-            _say(self, _CANNOT_USE.format(reason=error_reason(exc, typed)))
+            _say(self, _CANNOT_USE.format(reason=error_reason(exc)))
 
 
 class FolderPicker(SelectDirectory):

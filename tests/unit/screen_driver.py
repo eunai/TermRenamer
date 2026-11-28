@@ -9,13 +9,16 @@ the poster store's downloads.
 from __future__ import annotations
 
 import io
+import os
 import re
+import sys
 import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
+import pytest
 from rich.console import Console
 from textual.pilot import Pilot
 from textual.widget import Widget
@@ -385,3 +388,28 @@ async def build(pilot: Pilot[None]) -> None:
 
 def lines_with(text: str, needle: str) -> Sequence[str]:
     return [line for line in text.splitlines() if needle in line]
+
+
+NUL_RESOLVES = ["raises", "as on Windows"]
+"""How resolving a path with a NUL character behaves: POSIX raises ``ValueError``;
+Windows (CPython 3.13, gh-106242) returns the path as it is unless strict."""
+
+
+def resolve_nul(monkeypatch: pytest.MonkeyPatch, how: str) -> None:
+    """Make resolving a path with a NUL character behave ``how`` (one of
+    :data:`NUL_RESOLVES`) on this system."""
+    if how == "raises":
+        if sys.platform == "win32":
+            pytest.skip("Windows resolves a path with a NUL character without raising")
+        return
+    real = os.path.realpath
+
+    def as_on_windows(path: str, *, strict: bool = False) -> str:
+        try:
+            return real(path, strict=strict)
+        except ValueError:
+            if strict:
+                raise OSError(str(path)) from None
+            return os.path.normpath(os.path.abspath(os.fspath(path)))
+
+    monkeypatch.setattr(os.path, "realpath", as_on_windows)

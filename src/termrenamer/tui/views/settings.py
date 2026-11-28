@@ -30,7 +30,7 @@ from termrenamer.session_settings import SessionSettings
 from termrenamer.tui.keys import VIEW_HINTS
 from termrenamer.tui.widgets.action_button import ActionButton
 from termrenamer.tui.widgets.footer import hints_markup
-from termrenamer.tui.words import NO_NUL, NUL, folder_text, mode_label, path_shown
+from termrenamer.tui.words import NO_NUL, NUL, error_reason, folder_text, mode_label, path_shown
 from termrenamer.util.errors import ValidationError
 
 _ROOTS = {"tv-root": ScanMode.TV, "film-root": ScanMode.FILM}
@@ -342,7 +342,7 @@ class SettingsView(Screen[None]):
         try:
             root = Path(text).expanduser() if text else None
         except (RuntimeError, OSError) as exc:
-            self._refuse_root(mode, text, str(exc))
+            self._refuse_root(mode, text, error_reason(exc))
             return
         try:
             changed = self._owner.set_destination_root(mode, root)
