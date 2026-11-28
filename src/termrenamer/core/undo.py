@@ -61,6 +61,7 @@ _LOG = logging.getLogger(__name__)
 
 _STOPPED = "not put back: Undo stopped after an unexpected error"
 _FOLDER_TAKEN = "its folder's old place is taken"
+_KEPT_GONE = "its folder is no longer the one Apply left at its old place"
 
 
 def undo_apply(outcome: ApplyOutcome) -> UndoOutcome:
@@ -142,6 +143,18 @@ def _kept_folder_is_there(kept: KeptFolder) -> bool:
     return is_folder(kept.path, st) and (st.st_dev, st.st_ino) == (kept.device, kept.inode)
 
 
+def _kept_folder_was_replaced(kept: KeptFolder) -> bool:
+    """Whether another real folder stands at a kept folder's path: a folder, not a link,
+    with another device or inode number. A kept folder that is gone, is now a link or a
+    file, or cannot be read was not replaced; the checks of the folders on a file's way
+    back give it its reason."""
+    try:
+        st = os.lstat(kept.path)
+    except OSError:
+        return False
+    return is_folder(kept.path, st) and (st.st_dev, st.st_ino) != (kept.device, kept.inode)
+
+
 def _make_folders_again(outcome: ApplyOutcome, changes: Changes) -> list[Path]:
     """Make each folder Apply removed again, outer before inner, and return the folders
     of folder Stragglers whose old place is taken.
@@ -162,9 +175,8 @@ def _make_folders_again(outcome: ApplyOutcome, changes: Changes) -> list[Path]:
         if _within(folder, taken):
             continue
         if any(
-            folder.parent == kept.path or kept.path in folder.parent.parents
+            _within(folder.parent, [kept.path]) and _kept_folder_was_replaced(kept)
             for kept in outcome.folders_kept
-            if not _kept_folder_is_there(kept)
         ):
             # Inside a folder that took a kept folder's place: nothing goes back into it.
             _LOG.warning("Undo did not make %s again: %s", folder, _FOLDER_TAKEN)
@@ -222,7 +234,8 @@ def _put_back(
         return _result(move, ApplyStatus.SKIP, linked)
     for kept_folder in kept:
         if _within(old.parent, [kept_folder.path]) and not _kept_folder_is_there(kept_folder):
-            return _result(move, ApplyStatus.SKIP, _FOLDER_TAKEN)
+            replaced = _kept_folder_was_replaced(kept_folder)
+            return _result(move, ApplyStatus.SKIP, _FOLDER_TAKEN if replaced else _KEPT_GONE)
     try:
         move_no_replace(new, old, changes, expected=move.fingerprint)
     except FileExistsError:

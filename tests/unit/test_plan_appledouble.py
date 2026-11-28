@@ -18,6 +18,7 @@ from termrenamer.core.models import ApplyStatus, Candidate, Plan
 from termrenamer.core.planning import LeaveOut, PutBack, derive_plan, plan_queue
 from termrenamer.core.undo import undo_apply
 
+from .links import point_folder_at
 from .test_apply_no_replace import _with_the_number_of
 from .test_plan_queue import TvStandIn
 from .test_plan_stragglers import _options, _provider, _two_discs, _video_in, _write
@@ -409,3 +410,30 @@ def test_undo_makes_no_folder_inside_a_folder_that_took_a_kept_folders_place(
     assert list(subs.iterdir()) == []
     assert subs / "Inner" not in undone.folders_made_again
     assert undone.not_put_back == 2  # English.srt and Inner/a.srt stay at their new place
+
+
+@pytest.mark.parametrize("what", ["gone", "a link"])
+def test_undo_gives_the_files_of_a_kept_folder_no_longer_there_the_reason_that_is_true(
+    tmp_path: Path, what: str
+) -> None:
+    show = _two_discs(tmp_path)
+    subs = show / "Disc 1" / "Subs"
+    _write(subs / "Inner" / "a.srt", b"a")
+    _write(subs / "._lost.srt", b"companion")
+    applied = apply_plan(_plan(show), confirmed=True)
+    assert subs / "Inner" in applied.folders_removed
+    assert subs in [k.path for k in applied.folders_kept]
+
+    subs.rename(tmp_path / "old Subs")
+    if what == "a link":
+        point_folder_at(subs, tmp_path / "old Subs")
+    undone = undo_apply(applied)
+
+    reason = {
+        "gone": "its old folder no longer exists",
+        "a link": "its old folder is now a link or a file, or lies behind a link",
+    }[what]
+    in_subs = [r for r in undone.results if subs in r.destination.parents]
+    assert sorted(r.destination.name for r in in_subs) == ["English.srt", "a.srt"]
+    assert [(r.status, r.reason) for r in in_subs] == [(ApplyStatus.SKIP, reason)] * 2
+    assert sorted(os.listdir(tmp_path / "old Subs")) == ["._lost.srt"]  # nothing put back
