@@ -422,6 +422,16 @@ def is_folder(path: Path, st: os.stat_result) -> bool:
     return stat.S_ISDIR(st.st_mode) and not is_link(path, st)
 
 
+def is_the_folder(path: Path, st: os.stat_result) -> bool:
+    """Whether ``path`` is now the very folder that ``st``, an earlier ``lstat`` of it,
+    saw: a real folder, not a link or a junction, with the same device and inode number.
+    Its one call on the disk is the ``lstat`` of ``path``, so it can sit directly before
+    the ``rmdir`` it guards; it raises :class:`OSError` when ``path`` cannot be read."""
+    now = os.lstat(path)
+    link = stat.S_ISLNK(now.st_mode) or getattr(now, "st_reparse_tag", 0) in _LINK_TAGS
+    return stat.S_ISDIR(now.st_mode) and not link and os.path.samestat(now, st)
+
+
 def leave_folder(folder: Path) -> None:
     """Change the working folder to ``folder``'s parent when it is ``folder`` or inside
     it, so ``folder`` can be removed; a working folder that cannot be read is left."""
@@ -523,7 +533,10 @@ def _move_folder(
     and one the listing found as a file that the system removed with its file during
     the walk is passed over; any other child that vanishes fails the walk. A folder left
     holding only companion files, and folders this walk kept, is kept: it is not
-    removed, as Apply removes no folder that holds a file. A folder that stays, kept or
+    removed, as Apply removes no folder that holds a file, and so is a folder that
+    another folder or a link took the place of during the walk: the look that it is
+    still ``source`` (:func:`is_the_folder`) is the last call before its ``rmdir``. A
+    folder that stays, kept or
     after a walk that failed, is recorded in ``changes.folders_kept`` by its device and
     inode number as the walk held it, once the walk moved a file. Return whether
     ``source`` was removed."""
@@ -543,6 +556,11 @@ def _move_folder(
                     changes.folders_kept.append(identity)
                 return False
             leave_folder(source)
+            if not is_the_folder(source, st):
+                _LOG.warning("Kept %s: another folder took its place during its move", source)
+                if len(changes.moves) > moved_before:
+                    changes.folders_kept.append(identity)
+                return False
             os.rmdir(source)
         except (FolderMoveFailed, NowALink):
             raise

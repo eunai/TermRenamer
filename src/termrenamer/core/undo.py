@@ -53,6 +53,7 @@ from termrenamer.core.moving import (
     Changes,
     NotAsRecorded,
     is_folder,
+    is_the_folder,
     leave_folder,
     move_no_replace,
 )
@@ -256,7 +257,9 @@ def _remove_folders_made(outcome: ApplyOutcome, changes: Changes) -> None:
 
     A folder that is, on this disk, one of the folders Apply removed (the same folder
     under another letter case, on a filesystem that ignores letter case) was there
-    before Apply and stays.
+    before Apply and stays. The folder is looked at again just before its removal, after
+    the working folder left it, and one that another folder or a link took the place of
+    stays.
     """
     were_there = []
     for folder in outcome.folders_removed:
@@ -273,6 +276,8 @@ def _remove_folders_made(outcome: ApplyOutcome, changes: Changes) -> None:
                 if any(True for _ in entries):
                     continue  # a file that stayed still needs it
             leave_folder(folder)
+            if not is_the_folder(folder, st):
+                continue  # another folder or a link took its place
             os.rmdir(folder)
         except FileNotFoundError:
             continue

@@ -26,6 +26,7 @@ from termrenamer.core.moving import (
     folders_between,
     is_folder,
     is_link,
+    is_the_folder,
     leave_folder,
     move_no_replace,
 )
@@ -127,14 +128,18 @@ def _remove_empty_source_dirs(applied_source_parents: set[Path], changes: Change
 
     Never deletes non-empty directories or files. Failures are logged, not raised.
     When the working folder is a directory being removed or inside it, it moves to the
-    parent first (same idea as anipyrenamer). Each folder removed is recorded in
-    ``changes``.
+    parent first (same idea as anipyrenamer), and then the folder is looked at again,
+    as the last call before its removal: one that another folder or a link took the
+    place of stays. Each folder removed is recorded in ``changes``.
     """
     for dir_path in sorted(applied_source_parents, key=lambda p: (-len(p.parts), source_order(p))):
         try:
-            if not is_folder(dir_path, os.lstat(dir_path)) or any(dir_path.iterdir()):
+            st = os.lstat(dir_path)
+            if not is_folder(dir_path, st) or any(dir_path.iterdir()):
                 continue
             leave_folder(dir_path)
+            if not is_the_folder(dir_path, st):
+                continue  # another folder or a link took its place
             dir_path.rmdir()
         except OSError as exc:
             _LOG.warning("Skipping source directory cleanup for %s: %s", dir_path, exc)

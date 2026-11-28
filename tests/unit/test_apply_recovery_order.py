@@ -20,7 +20,8 @@ from termrenamer.core.models import ApplyOutcome, Plan, UndoOutcome
 from termrenamer.core.planning import plan_queue
 from termrenamer.core.undo import undo_apply
 
-from .test_plan_stragglers import _options, _provider, _write
+from .links import point_folder_at
+from .test_plan_stragglers import _options, _provider, _two_discs, _write
 
 WINDOWS = os.name == "nt"
 # Another program's own calls, never counted, refused or failed by a test's patches.
@@ -283,3 +284,75 @@ def test_another_programs_file_written_at_the_old_name_during_a_move_is_never_re
             moved = [(m.source, m.destination) for m in outcome.moves]
             told = (case.old, case.new) in moved or case.new in outcome.files_left_behind
             assert told, f"the file at its new name is not in the outcome, call {k}"
+
+
+def _a_folder_removal(tmp_path: Path, where: str) -> tuple[Path, Callable[[], object]]:
+    """A folder Apply or Undo removes once it is empty, and what runs the removal:
+    Apply's clean-up of a source folder its video left, Undo's removal of a folder Apply
+    made, or Apply's removal of a folder Straggler's folder after its files moved."""
+    if where == "a folder straggler":
+        show = _two_discs(tmp_path)
+        subs = show / "Disc 1" / "Subs"
+        _write(subs / "English.srt", b"subtitles")
+        plan = plan_queue([show], _options(), _provider()).plan
+        assert any(s.source == subs for s in plan.stragglers)
+        return subs, lambda: apply_plan(plan, confirmed=True)
+    case = _a_move(tmp_path, "undo" if where == "undo" else "apply")
+    return case.old.parent, case.run
+
+
+def _replaces_folder(folder: Path, theirs: str, notes: list[str]) -> None:
+    """Another program renames the folder away and puts its own there: an empty folder,
+    or a link (a junction on Windows) to the folder it renamed."""
+    away = folder.with_name(f"{folder.name} renamed by another program")
+    try:
+        _RENAME(folder, away)
+    except FileNotFoundError:
+        notes.append("gone")
+        return
+    except PermissionError:
+        notes.append("refused")
+        return
+    if theirs == "an empty folder":
+        os.mkdir(folder)
+    else:
+        point_folder_at(folder, away)
+    notes.append("replaced")
+
+
+@pytest.mark.parametrize("theirs", ["an empty folder", "a link"])
+@pytest.mark.parametrize("where", ["apply clean-up", "undo", "a folder straggler"])
+def test_a_folder_another_program_puts_at_an_emptied_folders_place_is_never_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, where: str, theirs: str
+) -> None:
+    """The change comes before each call after the folder's listing that found it empty,
+    but the one right after the last look at the folder."""
+
+    def one(k: int | None) -> tuple[Path, object, list[str], _Disk]:
+        folder, run = _a_folder_removal(tmp_path / f"run {k}", where)
+        notes: list[str] = []
+        listing = "listdir" if where == "a folder straggler" else "scandir"
+        disk = _Disk(
+            old=folder,
+            change=lambda: _replaces_folder(folder, theirs, notes),
+            before=k,
+            after=(listing, str(folder)),
+        )
+        with monkeypatch.context() as m:
+            disk.install(m)
+            outcome = run()
+        return folder, outcome, notes, disk
+
+    *_, counted = one(None)
+    runs = [one(k) for k in counted.open_to_change]
+    assert any("replaced" in notes for _, _, notes, _ in runs)
+    for folder, outcome, notes, disk in runs:
+        if "replaced" not in notes:
+            continue
+        removed = getattr(
+            outcome, "emptied_folders_removed" if where == "undo" else "folders_removed"
+        )
+        assert folder.exists(follow_symlinks=False), (
+            f"their {theirs} was removed: {disk.calls[-8:]}"
+        )
+        assert folder not in removed
