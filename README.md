@@ -234,7 +234,10 @@ Apply and Undo confirms, the Match picker, the file and folder dialogs).
   once. A queued file or folder that has gone is reported in the Logs and the
   rest of the queue is planned. The search never enters a symbolic link or a
   Windows junction to a folder, so no video behind one is planned; a video that
-  is a symbolic link is planned and renamed as the link. If a dialog cannot
+  is a symbolic link is planned and renamed as the link. A companion file (a
+  file whose name starts with `._`, which macOS writes beside a file on exFAT,
+  FAT32 and some network shares) is never a video, a Sidecar or a Straggler:
+  Apply leaves companion files to the filesystem. If a dialog cannot
   read a folder, or the file dialog cannot look at a path you typed, it stays
   open and says why.
 - **A Plan you can watch and cancel.** While the Plan is built, each Title is
@@ -267,8 +270,10 @@ Apply and Undo confirms, the Match picker, the file and folder dialogs).
   Stragglers, and the folders Apply removed, last move first, and it removes a
   folder Apply made when Undo leaves it empty. It never replaces anything. A
   file goes back only if it is still at its new place with the size and
-  modification time Apply recorded and its old name is free; the Logs say why
-  any other file stayed. Undo is offered once for each Apply, and only when that
+  modification time Apply recorded and its old name is free. A file of a folder
+  Straggler whose folder Apply left at its old place goes back into that folder
+  only while it is still the folder Apply left; the Logs say why any other file
+  stayed. Undo is offered once for each Apply, and only when that
   Apply moved a file, removed a folder or made one. The record is kept in
   memory, so it is gone when you start a new batch or quit. After Undo the Queue
   Stage shows the same Sources.

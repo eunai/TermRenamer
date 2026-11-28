@@ -38,6 +38,10 @@ _Avoid_: destination folder, output root
 A file or folder left behind in a source folder after a plan's moves, which apply can merge into the target folder.
 _Avoid_: stray file
 
+**Companion file**:
+A file whose name starts with `._`, which macOS writes beside a file on a drive that cannot hold extended attributes (such as exFAT or FAT32). It is not the user's file: never a video, a Sidecar or a Straggler, and Apply leaves it to the filesystem.
+_Avoid_: AppleDouble file, dot-underscore file
+
 **User settings file**:
 The per-user dotenv file the app reads its settings from, overridden by a `.env` in the current folder and by environment variables.
 _Avoid_: config file, global .env
