@@ -49,7 +49,7 @@ from termrenamer.core.progress import (
     TitleLookedUp,
     TitleLookupStarted,
 )
-from termrenamer.core.scan import classify, scan
+from termrenamer.core.scan import classify, is_companion_file, scan
 from termrenamer.core.stragglers import plan_stragglers
 from termrenamer.core.templates import format_film_destination, format_tv_destination
 from termrenamer.util.errors import ParseError
@@ -144,7 +144,7 @@ def _file_source(path: Path) -> list[_Found]:
     for sibling in siblings:
         if (
             sibling.is_file()
-            and classify(sibling.suffix) is FileKind.SIDECAR
+            and classify(sibling) is FileKind.SIDECAR
             and _pair_key(sibling) == _pair_key(path)
         ):
             found.append(_Found(path=sibling, root=root, kind=FileKind.SIDECAR))
@@ -180,7 +180,7 @@ def _collect(sources: Sequence[Path]) -> tuple[list[_Found], list[str]]:
                 _Found(path=f.path, root=resolved, kind=f.kind, in_folder_source=True)
                 for f in scan(root=resolved)
             ]
-        elif classify(resolved.suffix) is FileKind.VIDEO:
+        elif classify(resolved) is FileKind.VIDEO:
             rank = (1, 0)
             contributed = _file_source(resolved)
         else:
@@ -521,8 +521,9 @@ def _source_folders(folders: Iterable[Path]) -> tuple[SourceFolder, ...]:
     """Each of ``folders`` once, in source-path order, with its direct children now.
 
     The folder that holds a file Source is never passed here, so the files beside a
-    queued file are never Stragglers. A folder that cannot be listed has no children,
-    with a logged warning.
+    queued file are never Stragglers. A companion file
+    (:func:`~termrenamer.core.scan.is_companion_file`) is not recorded, so it is never
+    one either. A folder that cannot be listed has no children, with a logged warning.
     """
     unique = {str(folder): folder for folder in folders}
     recorded = []
@@ -540,7 +541,7 @@ def _source_folders(folders: Iterable[Path]) -> tuple[SourceFolder, ...]:
         recorded.append(
             SourceFolder(
                 path=folder,
-                files=tuple(c for c in children if not is_folder[c]),
+                files=tuple(c for c in children if not is_folder[c] and not is_companion_file(c)),
                 folders=tuple(c for c in children if is_folder[c]),
             )
         )
@@ -603,10 +604,24 @@ def _claimed_status(final: Path | None, wanted: Path) -> EntryStatus:
 
 
 def folders_on_the_way(options: PlanOptions, root: Path, dest: Path) -> list[Path]:
-    """Each folder a move to ``dest`` goes through that Apply may make or must check:
-    from below the Destination root (or, with none, ``root``, the owning Source's
-    folder) to ``dest``'s folder, by the recorded text."""
-    return folders_between(options.destination_root or root, dest.parent)
+    """Each folder a move to ``dest`` goes through that Apply may make or must check, by
+    the recorded text: the Destination root and each folder below it to ``dest``'s
+    folder, or, with no Destination root, each folder from below ``root`` (the owning
+    Source's folder, which Apply checks on the side of the source) to ``dest``'s
+    folder.
+
+    The claim may spell the Destination root's part of ``dest`` as a source's folder is
+    recorded, in another letter case or Unicode form, so the root is found among
+    ``dest``'s folders by :func:`~termrenamer.core.paths.claim_key` and taken as
+    ``dest`` spells it."""
+    top = options.destination_root
+    if top is None:
+        return folders_between(root, dest.parent)
+    key = claim_key(top)
+    spelled = next((f for f in (dest.parent, *dest.parent.parents) if claim_key(f) == key), None)
+    if spelled is None:
+        return folders_between(top, dest.parent)
+    return [spelled, *folders_between(spelled, dest.parent)]
 
 
 def source_roots(entries: Iterable[PlanEntry]) -> dict[str, Path]:
@@ -715,7 +730,10 @@ def derive_plan(plan: Plan, change: PlanChange) -> Plan:
     and a video put back gets the status a fresh Plan gives it. No Provider is asked:
     a :class:`PickMatch` carries every answer it needs. The change names its entry or
     Title of ``plan`` itself, and the entries keep the order of ``plan``: the disk is
-    read again only to test whether a wanted name is taken.
+    read again only to test whether a wanted name is taken, to follow the links on the
+    way to a target folder (:func:`~termrenamer.core.stragglers.plan_stragglers`), and
+    to look once at each folder on the way to a new name that no Plan before went
+    through, for whether it is a link.
 
     Raises:
         ValueError: ``change`` names an entry or Title that is not in ``plan``, a

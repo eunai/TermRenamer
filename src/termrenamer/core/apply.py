@@ -26,6 +26,7 @@ from termrenamer.core.moving import (
     folders_between,
     is_folder,
     is_link,
+    is_the_folder,
     leave_folder,
     move_no_replace,
 )
@@ -56,8 +57,9 @@ class _Way:
     (:func:`~termrenamer.core.planning.folders_on_the_way`), ``real_folders`` those and
     each folder from the owning Source's folder to the source's folder, and ``links``
     the folders among them that the Plan found to be links. Each of ``real_folders``
-    must be a real folder, and each of ``links`` the very link the Plan found; the
-    Destination root itself may be a link."""
+    must be a real folder, and each of ``links`` the very link the Plan found; so the
+    Destination root, which is on the way to the new name, may be a link only when it
+    was that link when the Plan was built."""
 
     new_side: tuple[Path, ...]
     real_folders: tuple[Path, ...]
@@ -126,14 +128,18 @@ def _remove_empty_source_dirs(applied_source_parents: set[Path], changes: Change
 
     Never deletes non-empty directories or files. Failures are logged, not raised.
     When the working folder is a directory being removed or inside it, it moves to the
-    parent first (same idea as anipyrenamer). Each folder removed is recorded in
-    ``changes``.
+    parent first (same idea as anipyrenamer), and then the folder is looked at again,
+    as the last call before its removal: one that another folder or a link took the
+    place of stays. Each folder removed is recorded in ``changes``.
     """
     for dir_path in sorted(applied_source_parents, key=lambda p: (-len(p.parts), source_order(p))):
         try:
-            if not is_folder(dir_path, os.lstat(dir_path)) or any(dir_path.iterdir()):
+            st = os.lstat(dir_path)
+            if not is_folder(dir_path, st) or any(dir_path.iterdir()):
                 continue
             leave_folder(dir_path)
+            if not is_the_folder(dir_path, st):
+                continue  # another folder or a link took its place
             dir_path.rmdir()
         except OSError as exc:
             _LOG.warning("Skipping source directory cleanup for %s: %s", dir_path, exc)
@@ -286,6 +292,7 @@ def apply_plan(plan: Plan, *, confirmed: bool) -> ApplyOutcome:
         folders_created=tuple(changes.folders_created),
         folders_removed=tuple(changes.folders_removed),
         files_left_behind=tuple(changes.files_left_behind),
+        folders_kept=tuple(changes.folders_kept),
     )
 
 

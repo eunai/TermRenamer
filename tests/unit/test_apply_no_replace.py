@@ -6,14 +6,16 @@ from __future__ import annotations
 
 import errno
 import os
+import types
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
 
 from termrenamer.core import apply as apply_module
+from termrenamer.core import moving
 from termrenamer.core.apply import apply_plan
-from termrenamer.core.models import ApplyResult, ApplyStatus, Candidate, Plan
+from termrenamer.core.models import ApplyResult, ApplyStatus, Candidate, Plan, PlanFingerprint
 from termrenamer.core.moving import Changes, move_no_replace
 from termrenamer.core.planning import plan_queue
 
@@ -565,7 +567,7 @@ def test_a_copy_whose_source_changes_just_before_its_removal_keeps_the_source(
     assert outcome.files_left_behind == ()
 
 
-def test_a_new_name_made_by_exclusive_create_is_listed_until_its_copy_is_removed(
+def test_a_copy_that_cannot_be_read_while_it_is_open_is_kept_and_listed(
     show: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     notes = _write(show / "Disc 1" / "notes.txt", b"my notes")
@@ -1338,6 +1340,50 @@ def test_an_interrupt_just_after_the_old_name_is_removed_keeps_the_new_name(
     assert dest.read_bytes() == b"my notes"
     assert [(m.source, m.destination) for m in changes.moves] == [(source, dest)]
     assert changes.files_left_behind == []
+
+
+class _AsOnWindows(types.ModuleType):
+    """``os`` as the move module sees it on Windows: ``os.name`` is ``"nt"``, and every
+    other name is the real ``os``'s at the moment it is used, patches included."""
+
+    name = "nt"
+
+    def __getattr__(self, attr: str) -> object:
+        return getattr(os, attr)
+
+
+@pytest.mark.parametrize("side", ["apply", "undo"])
+def test_an_interrupt_just_after_the_old_name_is_removed_on_the_windows_copy_path_keeps_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, side: str
+) -> None:
+    """The Windows copy path, taken on any system: the copy is made under a temporary
+    name, claimed by a rename, and the source held open is released before its old name
+    is removed. Undo moves a file back by the same call, with its recorded fingerprint."""
+    source = _write(tmp_path / "old" / "notes.txt", b"my notes")
+    dest = tmp_path / "new" / "notes.txt"
+    dest.parent.mkdir()
+    st = os.lstat(source)
+    expected = PlanFingerprint(path=source, size=st.st_size, mtime_ns=st.st_mtime_ns)
+    real_unlink = os.unlink
+
+    def unlink(path: object, *args: object, **kwargs: object) -> None:
+        real_unlink(path, *args, **kwargs)  # type: ignore[arg-type]
+        if os.fspath(path) == str(source):  # type: ignore[call-overload]
+            raise KeyboardInterrupt
+
+    _across_drives(monkeypatch, only=source)
+    monkeypatch.setattr(os, "unlink", unlink)
+    monkeypatch.setattr(moving, "os", _AsOnWindows("os"))
+    changes = Changes()
+    with pytest.raises(KeyboardInterrupt):
+        move_no_replace(source, dest, changes, expected=expected if side == "undo" else None)
+    monkeypatch.undo()
+
+    assert dest.read_bytes() == b"my notes"
+    assert not source.exists(follow_symlinks=False)
+    assert [(m.source, m.destination) for m in changes.moves] == [(source, dest)]
+    assert changes.files_left_behind == []
+    assert os.listdir(dest.parent) == ["notes.txt"]  # no copy under a temporary name
 
 
 def test_a_case_only_rename_the_disk_did_not_make_is_not_recorded(

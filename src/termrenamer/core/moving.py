@@ -15,9 +15,11 @@ Apply checks a source and claims a destination by calls that sit directly before
 change they guard: the folders on the way must still be real folders, not links, and
 the source must still be of the kind and, for a file, the size and modification time
 the Plan recorded. A new name is removed again after a failure only while the source is
-verified at its old name, so a file never loses both names. Apply cannot defend against
-another program that changes that same file or name between such a check and the very
-next call, or that deletes or writes over a name Apply has claimed.
+verified at its old name, so a file never loses both names; and the old name is
+removed only while it is verified to be the source's own file. In both, the ``lstat`` of
+the old name that verifies it is the last call before the removal. Apply cannot defend
+against another program that changes that same file or name between such a check and
+the very next call, or that deletes or writes over a name Apply has claimed.
 
 "The same file" never rests on the device and inode number alone, as ext4 and tmpfs give
 the number of a file just removed to the next file made (:func:`_one_file`). A file
@@ -31,6 +33,7 @@ another drive is not held: it is told by its times and its target text.
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import logging
 import os
@@ -41,8 +44,9 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from termrenamer.core.collisions import is_case_only_rename
-from termrenamer.core.models import LinkedFolder, Move, PlanFingerprint
+from termrenamer.core.models import KeptFolder, LinkedFolder, Move, PlanFingerprint
 from termrenamer.core.paths import claim_key
+from termrenamer.core.scan import is_companion_file
 
 _LOG = logging.getLogger(__name__)
 
@@ -93,9 +97,12 @@ _Guard = tuple[Path, "_Held | LinkedFolder | None"]
 with ``None``, a real folder; with a :class:`_Held`, the very folder found there before;
 with a :class:`LinkedFolder`, the very link the Plan found, leading where it led."""
 
-_AtOldName = Callable[[os.stat_result], bool]
-"""Whether the source's own file is verified at its old name, given the ``lstat`` of the
-old name now."""
+_AtOldName = Callable[[], "os.stat_result | None"]
+"""The ``lstat`` of the source's old name when it holds the source's own file, else
+``None``: a look whose last call on the disk is that ``lstat``, so that it can sit
+directly before the call it guards. It raises :class:`OSError` when the old name
+cannot be read, :class:`FileNotFoundError` when it is gone. For a copied file no longer
+held open it is ``None`` when the old name is there, so nothing is removed by it."""
 
 
 def _one_file(a: os.stat_result, b: os.stat_result) -> bool:
@@ -168,6 +175,23 @@ class _Held:
         made_then = getattr(self.st, "st_birthtime_ns", None)
         return os.path.samestat(now, self.st) and getattr(now, "st_birthtime_ns", None) == made_then
 
+    def look_at(self, path: Path) -> os.stat_result | None:
+        """``path``'s ``lstat`` when that name holds this file or folder now, else
+        ``None``. The look through the descriptor comes first and the look by name last,
+        so the look by name can sit directly before the call it guards; it raises
+        :class:`OSError` when the name cannot be read, :class:`FileNotFoundError` when it
+        is gone. A file released is looked at too, and is never found there: a name that
+        is gone still says so."""
+        if self.fd is None:
+            now = os.lstat(path)
+            return now if not self.released and self.agrees(now) else None
+        try:
+            held_now: os.stat_result | None = os.fstat(self.fd)
+        except OSError:
+            held_now = None
+        now = os.lstat(path)
+        return now if held_now is not None and _one_file(now, held_now) else None
+
     def descriptor(self) -> int:
         """The open descriptor of a file held, which stays open until released."""
         if self.fd is None:
@@ -190,6 +214,7 @@ class Changes:
     folders_created: list[Path] = field(default_factory=list)
     folders_removed: list[Path] = field(default_factory=list)
     files_left_behind: list[Path] = field(default_factory=list)
+    folders_kept: list[KeptFolder] = field(default_factory=list)
 
     def make_folders(
         self,
@@ -267,8 +292,11 @@ def move_no_replace(
       again at ``dest`` with its kind and target text and the source unlinked. On
       Windows the copy is made under a fresh name beside ``dest``, then renamed to
       ``dest``.
-    - A folder, on every system: ``dest`` is made, then each child is moved by these
-      rules in name order, then the emptied source folder is removed.
+    - A folder, on every system: ``dest`` is made, then each child but a companion file
+      (:func:`~termrenamer.core.scan.is_companion_file`) is moved by these rules in name
+      order, then the emptied source folder is removed; one left holding only companion
+      files is kept. Companion files are left to the filesystem, which may remove,
+      write or move them as the files beside them move.
 
     The last looks before the call that moves are, in this order: each folder of
     ``real_folders`` (and, in a folder's walk, the folder walked and its new folder)
@@ -281,7 +309,9 @@ def move_no_replace(
     writes over it during the same Apply.
 
     Raises:
-        FileExistsError: something is at ``dest``; nothing was changed.
+        FileExistsError: something is at ``dest``; nothing was changed, but on Windows
+            for a copy made under a temporary name beside ``dest`` that could not be
+            removed again, which ``changes.files_left_behind`` then lists.
         NotAsRecorded: the source is not as ``expected`` or ``folder`` says; nothing
             was changed.
         NowALink: a folder of ``real_folders``, or of a folder's walk before anything
@@ -289,13 +319,15 @@ def move_no_replace(
             the Plan found; no file was moved.
         FolderMoveFailed: a child of a folder could not be moved; what moved before it
             stays moved and recorded, and the rest stays in the source folder.
-        OSError: any other failure. Whatever the error, an interrupt included, the file
+        OSError: any other failure, such as a folder whose new place lies inside it
+            (nothing was changed). Whatever the error, an interrupt included, the file
             keeps at least one of its two names, and ``changes`` says which: a move in
             ``changes.moves`` means it is at ``dest`` (so also a case-only rename whose
             new name could not be confirmed afterwards, and a source whose old name
-            another program removed once ``dest`` held it); ``dest`` in
-            ``changes.files_left_behind`` means a copy or link is there beside the
-            source; with neither, the source is at its old name and nothing was made,
+            another program removed once ``dest`` held it); a name in
+            ``changes.files_left_behind`` (``dest``, or on Windows the temporary name a
+            copy was made under) means a copy or link Apply made is there and was kept;
+            with neither, the source is at its old name and nothing was made,
             but for an interrupt in the instant after the call that makes the new name
             returns and before it is recorded.
     """
@@ -312,9 +344,25 @@ def move_no_replace(
     if folder is not None:
         _check_kind(source, st, folder=folder)
     if is_folder(source, st):
+        _refuse_inside(source, dest)
         _move_folder(source, st, dest, changes, guards)
     else:
         _move_file(source, dest, changes, guards, expected)
+
+
+def _refuse_inside(source: Path, dest: Path) -> None:
+    """Raise :class:`OSError` when the new place ``dest`` of the folder ``source`` is the
+    folder itself or lies inside it, by the recorded paths or as the disk reaches them
+    through links, compared by :func:`~termrenamer.core.paths.claim_key` as the Plan
+    compares target folders: a walk into it would never end. Nothing is changed."""
+    pairs = [(dest.parent, source)]
+    with contextlib.suppress(OSError, ValueError):
+        pairs.append((Path(os.path.realpath(dest.parent)), Path(os.path.realpath(source))))
+    for parent, folder in pairs:
+        inside, key = claim_key(parent), claim_key(folder)
+        if inside == key or inside.startswith(key.rstrip(os.sep) + os.sep):
+            msg = "the new place lies inside the folder"
+            raise OSError(errno.EINVAL, msg, str(dest))
 
 
 def folders_between(top: Path, folder: Path) -> list[Path]:
@@ -372,6 +420,16 @@ def is_folder(path: Path, st: os.stat_result) -> bool:
     """Whether ``path`` (``st`` its ``lstat``) is a folder Apply moves as its files: a
     folder that is not a link or a junction."""
     return stat.S_ISDIR(st.st_mode) and not is_link(path, st)
+
+
+def is_the_folder(path: Path, st: os.stat_result) -> bool:
+    """Whether ``path`` is now the very folder that ``st``, an earlier ``lstat`` of it,
+    saw: a real folder, not a link or a junction, with the same device and inode number.
+    Its one call on the disk is the ``lstat`` of ``path``, so it can sit directly before
+    the ``rmdir`` it guards; it raises :class:`OSError` when ``path`` cannot be read."""
+    now = os.lstat(path)
+    link = stat.S_ISLNK(now.st_mode) or getattr(now, "st_reparse_tag", 0) in _LINK_TAGS
+    return stat.S_ISDIR(now.st_mode) and not link and os.path.samestat(now, st)
 
 
 def leave_folder(folder: Path) -> None:
@@ -465,49 +523,102 @@ def _rename_case(source: Path, dest: Path, before: PlanFingerprint, changes: Cha
 
 def _move_folder(
     source: Path, st: os.stat_result, dest: Path, changes: Changes, guards: Sequence[_Guard]
-) -> None:
+) -> bool:
     """Move the folder ``source`` (``st`` its ``lstat``) as its files: make ``dest``, move
     each child there while ``source`` is still that folder and no folder on the way is a
     link, then remove ``source``. A folder found to be a link after part of the walk
-    moved is a :class:`FolderMoveFailed` that says so, not a :class:`NowALink`."""
+    moved is a :class:`FolderMoveFailed` that says so, not a :class:`NowALink`.
+
+    A companion file (:func:`~termrenamer.core.scan.is_companion_file`) is never moved,
+    and one the listing found as a file that the system removed with its file during
+    the walk is passed over; any other child that vanishes fails the walk. A folder left
+    holding only companion files, and folders this walk kept, is kept: it is not
+    removed, as Apply removes no folder that holds a file, and so is a folder that
+    another folder or a link took the place of during the walk: the look that it is
+    still ``source`` (:func:`is_the_folder`) is the last call before its ``rmdir``. A
+    folder that stays, kept or
+    after a walk that failed, is recorded in ``changes.folders_kept`` by its device and
+    inode number as the walk held it, once the walk moved a file. Return whether
+    ``source`` was removed."""
     os.mkdir(dest)
     changes.folders_created.append(dest)
     moved_before = len(changes.moves)
+    identity = KeptFolder(source, st.st_dev, st.st_ino)
     held: list[_Held] = []
     try:
-        held.append(_Held(source, st, folder=True))
-        held.append(_Held(dest, os.lstat(dest), folder=True))
-        inner: list[_Guard] = [*guards, (source, held[0]), (dest, held[1])]
-        _guard(inner)
-        names = sorted(os.listdir(source), key=lambda name: claim_key(Path(name)))
-        for name in names:
-            child = source / name
-            try:
-                _guard(inner)
-                child_st = os.lstat(child)
-                if is_folder(child, child_st):
-                    _move_folder(child, child_st, dest / name, changes, inner)
-                else:
-                    _move_file(child, dest / name, changes, inner)
-            except FolderMoveFailed:
-                raise
-            except NowALink as exc:
-                if len(changes.moves) == moved_before:
-                    raise
-                msg = f"{exc.reason}; part of the folder moved"
-                raise FolderMoveFailed(errno.ELOOP, msg) from exc
-            except OSError as exc:
-                raise FolderMoveFailed(exc.errno or errno.EIO, f"{child}: {exc}") from exc
-        leave_folder(source)
-        os.rmdir(source)
-    except (FolderMoveFailed, NowALink):
+        try:
+            held.append(_Held(source, st, folder=True))
+            held.append(_Held(dest, os.lstat(dest), folder=True))
+            inner: list[_Guard] = [*guards, (source, held[0]), (dest, held[1])]
+            _guard(inner)
+            if not _walk(source, dest, changes, inner, moved_before):
+                if len(changes.moves) > moved_before:
+                    changes.folders_kept.append(identity)
+                return False
+            leave_folder(source)
+            if not is_the_folder(source, st):
+                _LOG.warning("Kept %s: another folder took its place during its move", source)
+                if len(changes.moves) > moved_before:
+                    changes.folders_kept.append(identity)
+                return False
+            os.rmdir(source)
+        except (FolderMoveFailed, NowALink):
+            raise
+        except OSError as exc:
+            raise FolderMoveFailed(exc.errno or errno.EIO, f"{source}: {exc}") from exc
+    except BaseException:
+        if len(changes.moves) > moved_before:
+            changes.folders_kept.append(identity)
         raise
-    except OSError as exc:
-        raise FolderMoveFailed(exc.errno or errno.EIO, f"{source}: {exc}") from exc
     finally:
         for entry in held:
             entry.release()
     changes.folders_removed.append(source)
+    return True
+
+
+def _walk(
+    source: Path, dest: Path, changes: Changes, inner: Sequence[_Guard], moved_before: int
+) -> bool:
+    """Move each child of the folder ``source`` into ``dest`` while ``inner`` holds, as
+    :func:`_move_folder` says, and return whether ``source`` may be removed: ``False``
+    when it holds only companion files and folders this walk kept."""
+    kinds: dict[str, bool] = {}  # each child's name: whether the listing found a folder
+    with os.scandir(source) as listing:
+        for entry in listing:
+            try:
+                kinds[entry.name] = entry.is_dir(follow_symlinks=False)
+            except OSError:
+                kinds[entry.name] = True  # not known to be a file
+    kept: set[str] = set()
+    for name in sorted(kinds, key=lambda name: claim_key(Path(name))):
+        child = source / name
+        try:
+            _guard(inner)
+            try:
+                child_st = os.lstat(child)
+            except FileNotFoundError:
+                if not kinds[name] and is_companion_file(child):
+                    continue  # the system removed it with the file it belongs to
+                raise
+            if is_folder(child, child_st):
+                if not _move_folder(child, child_st, dest / name, changes, inner):
+                    kept.add(name)
+            elif is_companion_file(child):
+                kept.add(name)
+            else:
+                _move_file(child, dest / name, changes, inner)
+        except FolderMoveFailed:
+            raise
+        except NowALink as exc:
+            if len(changes.moves) == moved_before:
+                raise
+            msg = f"{exc.reason}; part of the folder moved"
+            raise FolderMoveFailed(errno.ELOOP, msg) from exc
+        except OSError as exc:
+            raise FolderMoveFailed(exc.errno or errno.EIO, f"{child}: {exc}") from exc
+    left = set(os.listdir(source))
+    return not (left and left <= kept)
 
 
 def _move_file(
@@ -557,18 +668,11 @@ def _move_file(
     changes.files_left_behind.append(dest)  # until the source's name is removed
     made = os.lstat(dest)
 
-    def both_names(now: os.stat_result) -> bool:
-        # Both names are one file while the new name still holds the file made there,
-        # with the links it had then: the old name's removal would have lowered them.
-        try:
-            at_dest = os.lstat(dest)
-        except OSError:
-            return False
-        return (
-            os.path.samestat(at_dest, made)
-            and at_dest.st_nlink == made.st_nlink
-            and _one_file(now, at_dest)
-        )
+    def both_names() -> os.stat_result | None:
+        # One look, at the old name alone: it is still the file made at ``dest``, with
+        # the links it had then, which the removal of either name would have lowered.
+        now = os.lstat(source)
+        return now if _one_file(now, made) else None
 
     _unlink_source(source, dest, made, both_names, both_names, before, changes)
 
@@ -586,25 +690,27 @@ def _unlink_source(
     """Remove the source's name now that ``dest`` (``made`` there, listed as left behind)
     holds the file, and record the move.
 
-    The check by name, ``unchanged`` (the source's own file at its old name, as it was
-    copied), is the last look before the unlink; on Windows the source ``held`` open is
-    released between the two, as Windows removes no file held open. When the old name is
-    gone already, the file is at ``dest`` alone and the move is recorded. On any error,
-    an interrupt included, :func:`_settle` decides by the disk, with ``at_old_name``, what is
-    kept, so the file never loses both names.
+    The check ``unchanged`` (the source's own file at its old name, as it was copied)
+    ends with the look by name that is the last call before the unlink. On Windows the
+    source ``held`` open is released after that check, as Windows removes no file held
+    open, and the old name is looked at again, as the last call before the unlink: it
+    must still be the file the check found. When the old name is gone already, the file
+    is at ``dest`` alone and the move is recorded. On any error, an interrupt included,
+    :func:`_settle` decides by the disk, with ``at_old_name``, what is kept, so the file
+    never loses both names.
     """
     try:
         try:
-            now: os.stat_result | None = os.lstat(source)
-        except FileNotFoundError:
-            now = None
-        if now is None:
-            _LOG.warning("%s was removed during its move; the file is at %s", source, dest)
-        elif not unchanged(now):
-            raise OSError(errno.EIO, "the source changed during its move", str(source))
-        else:
-            if held is not None and os.name == "nt":
+            now = unchanged()
+            if now is not None and held is not None and os.name == "nt":
                 held.release()
+                again = os.lstat(source)  # the last look before the unlink
+                now = now if _one_file(again, now) else None
+        except FileNotFoundError:
+            _LOG.warning("%s was removed during its move; the file is at %s", source, dest)
+        else:
+            if now is None:
+                raise OSError(errno.EIO, "the source changed during its move", str(source))
             os.unlink(source)
         _forget(changes.files_left_behind, dest)
         changes.moved(source, dest, before)
@@ -622,23 +728,16 @@ def _settle(
     changes: Changes,
 ) -> None:
     """After an error once ``dest`` held the file: remove ``dest`` only while the source's
-    own file is verified at its old name (``at_old_name``); record the move when the old name
-    is gone; else keep ``dest`` listed as left behind."""
+    own file is verified at its old name (``at_old_name``, the last call before the
+    removal); record the move when the old name is gone and ``dest`` still holds the
+    file made there; else keep ``dest`` listed as left behind."""
     if any(m.source == source and m.destination == dest for m in changes.moves):
         return  # the move is recorded already
-    try:
-        now = os.lstat(source)
-    except FileNotFoundError:
+    if dest not in changes.files_left_behind:
+        changes.files_left_behind.append(dest)
+    if _remove_if_made(dest, made, changes, source, at_old_name):
         _forget(changes.files_left_behind, dest)
         changes.moved(source, dest, before)
-        return
-    except OSError as exc:
-        _LOG.warning("Cannot read %s, so %s is kept: %s", source, dest, exc)
-        now = None
-    if now is not None and at_old_name(now):
-        _remove_if_made(dest, made, changes, source, at_old_name)
-    elif dest not in changes.files_left_behind:
-        changes.files_left_behind.append(dest)
 
 
 def _copy_then_unlink(
@@ -669,31 +768,35 @@ def _copy_then_unlink(
         target = os.readlink(source)
         held = None
 
-        def at_old_name(now: os.stat_result) -> bool:
+        def at_old_name() -> os.stat_result | None:
             # A link is its target text: one with the same text at the old name, made at
             # the same time, leaves nothing lost when the link made at ``dest`` goes.
+            # The text is read first, so the ``lstat`` is the last call.
             try:
-                return (
-                    _one_file(now, st)
-                    and stat.S_ISLNK(now.st_mode)
-                    and os.readlink(source) == target
-                )
+                text: str | None = os.readlink(source)
+            except FileNotFoundError:
+                raise
             except OSError:
-                return False
+                text = None
+            now = os.lstat(source)
+            same = text == target and stat.S_ISLNK(now.st_mode) and _one_file(now, st)
+            return now if same else None
 
         unchanged = at_old_name
     else:
         held = _Held(source, st, folder=False)
 
-        def at_old_name(now: os.stat_result) -> bool:
-            return held.agrees(now)
+        def at_old_name() -> os.stat_result | None:
+            return held.look_at(source)
 
-        def unchanged(now: os.stat_result) -> bool:
+        def unchanged() -> os.stat_result | None:
             # The source's own file, as it was copied.
-            return held.agrees(now) and (now.st_size, now.st_mtime_ns) == (
+            now = held.look_at(source)
+            as_copied = now is not None and (now.st_size, now.st_mtime_ns) == (
                 st.st_size,
                 st.st_mtime_ns,
             )
+            return now if as_copied else None
 
     try:
         if os.name == "nt":
@@ -736,7 +839,7 @@ def _make_copy(
     are first written to it."""
     _guard(guards)
     if held is None:  # a link, which is copied as its target text and never opened
-        _remake_link(source, st, at, changes)
+        _remake_link(source, st, at, changes, at_old_name)
         made = os.lstat(at)
     else:
         fd = os.open(at, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW | _O_BINARY, 0o600)
@@ -775,11 +878,13 @@ def _remove_failed_copy(
     _remove_if_made(at, made, changes, source, at_old_name)
 
 
-def _remake_link(source: Path, st: os.stat_result, at: Path, changes: Changes) -> None:
+def _remake_link(
+    source: Path, st: os.stat_result, at: Path, changes: Changes, at_old_name: _AtOldName
+) -> None:
     r"""Make at ``at`` a symbolic link of the kind and with the target text of the link
     ``source`` (``st`` its ``lstat``), so a relative link stays relative, or raise. The
     link is listed as left behind from the moment it is made, and taken off that list
-    only when this removes it again.
+    only when this removes it again, as :func:`_remove_if_made` does.
 
     On Windows a link is a link to a file or to a folder, and Windows makes a link to a
     folder whenever its target names one, so a link to a file whose target names a
@@ -803,9 +908,9 @@ def _remake_link(source: Path, st: os.stat_result, at: Path, changes: Changes) -
         made = os.lstat(at)
         if os.readlink(at) == target and _is_folder_link(made) == folder:
             return
-        if os.path.samestat(os.lstat(at), made):
-            os.unlink(at)
-            _forget(changes.files_left_behind, at)
+        _remove_if_made(at, made, changes, source, at_old_name)
+        if at in changes.files_left_behind:
+            break  # kept: nothing more is made at ``at``
     msg = "the link could not be made again with its kind and target"
     raise OSError(errno.EXDEV, msg, str(source))
 
@@ -891,25 +996,41 @@ def _set_times_by_name(dest: Path, made: os.stat_result, st: os.stat_result) -> 
 
 def _remove_if_made(
     dest: Path, made: os.stat_result, changes: Changes, source: Path, at_old_name: _AtOldName
-) -> None:
+) -> bool:
     """Remove ``dest`` while it still is the entry made here and the source's own file
     is verified at its old name (``at_old_name``), and take it off the files left behind; it
     stays listed when it is kept, so a copy is never removed while it may be the only
-    one."""
+    one. ``dest`` is looked at first and the old name last, so the look at the old name
+    is the last call before the removal.
+
+    Return whether the old name was found gone while ``dest`` still was the entry made
+    here: ``dest`` is then kept, and it holds the file.
+    """
     try:
-        source_there = at_old_name(os.lstat(source))
+        ours = os.path.samestat(os.lstat(dest), made)
+    except FileNotFoundError:
+        ours = False
+    except OSError as exc:
+        _LOG.warning("Keeping %s, which Apply made: cannot read it: %s", dest, exc)
+        return False
+    try:
+        source_there = at_old_name() is not None  # the last call before the removal
+    except FileNotFoundError:
+        _LOG.warning("Keeping %s, which Apply made: %s is no longer there", dest, source)
+        return ours
     except OSError as exc:
         _LOG.warning("Keeping %s, which Apply made: cannot find %s: %s", dest, source, exc)
-        return
+        return False
     if not source_there:
-        _LOG.warning("Keeping %s, which Apply made: %s is no longer there", dest, source)
-        return
-    try:
-        if os.path.samestat(os.lstat(dest), made):
+        _LOG.warning("Keeping %s, which Apply made: %s is not as it was", dest, source)
+        return False
+    if ours:
+        try:
             os.unlink(dest)
-    except FileNotFoundError:
-        pass
-    except OSError as exc:
-        _LOG.warning("Cannot remove %s, which Apply made: %s", dest, exc)
-        return
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            _LOG.warning("Cannot remove %s, which Apply made: %s", dest, exc)
+            return False
     _forget(changes.files_left_behind, dest)
+    return False

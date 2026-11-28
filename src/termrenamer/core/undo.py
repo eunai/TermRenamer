@@ -3,11 +3,14 @@
 Undo reads nothing to find what to put back: the outcome lists it. It works in this
 order:
 
-1. Each folder Apply removed is made again, each before the folders inside it.
+1. Each folder Apply removed is made again, each before the folders inside it, but
+   none inside a kept folder whose place another folder took.
 2. Each move is put back, last move first. A file goes back only when it is still at its
    new place with the recorded size and modification time, read with ``lstat`` as the
    last call before the move, and only into a folder that is no link and lies behind
-   none. The old name is claimed by the call that makes it
+   none, and, when its folder is one a folder Straggler kept at its old place, only
+   while that folder is still there (:class:`~termrenamer.core.models.KeptFolder`),
+   checked just before the move. The old name is claimed by the call that makes it
    (:func:`~termrenamer.core.moving.move_no_replace`), so nothing there is replaced;
    a case-only rename goes back as a plain rename.
 3. Each folder Apply made is removed when Undo left it empty, each before its parent.
@@ -34,14 +37,23 @@ from __future__ import annotations
 import errno
 import logging
 import os
+from collections.abc import Sequence
 from pathlib import Path
 
 from termrenamer.core.collisions import is_case_only_rename
-from termrenamer.core.models import ApplyOutcome, ApplyResult, ApplyStatus, Move, UndoOutcome
+from termrenamer.core.models import (
+    ApplyOutcome,
+    ApplyResult,
+    ApplyStatus,
+    KeptFolder,
+    Move,
+    UndoOutcome,
+)
 from termrenamer.core.moving import (
     Changes,
     NotAsRecorded,
     is_folder,
+    is_the_folder,
     leave_folder,
     move_no_replace,
 )
@@ -49,6 +61,8 @@ from termrenamer.core.moving import (
 _LOG = logging.getLogger(__name__)
 
 _STOPPED = "not put back: Undo stopped after an unexpected error"
+_FOLDER_TAKEN = "its folder's old place is taken"
+_KEPT_GONE = "its folder is no longer the one Apply left at its old place"
 
 
 def undo_apply(outcome: ApplyOutcome) -> UndoOutcome:
@@ -72,7 +86,7 @@ def undo_apply(outcome: ApplyOutcome) -> UndoOutcome:
             results.append(_result(move, ApplyStatus.SKIP, _STOPPED))
             continue
         try:
-            results.append(_put_back(move, taken, changes))
+            results.append(_put_back(move, taken, outcome.folders_kept, changes))
         except Exception as exc:
             _LOG.error("Undo stopped at %s by an unexpected error", move.destination, exc_info=exc)
             results.append(_result(move, ApplyStatus.FAIL, f"unexpected error: {exc!r}"))
@@ -119,6 +133,29 @@ def _within(path: Path, folders: list[Path]) -> bool:
     return any(path == folder or folder in path.parents for folder in folders)
 
 
+def _kept_folder_is_there(kept: KeptFolder) -> bool:
+    """Whether the folder at a kept folder's path is that folder: a real folder, not a
+    link, with its recorded device and inode number (see :class:`KeptFolder` for the
+    limit of that)."""
+    try:
+        st = os.lstat(kept.path)
+    except OSError:
+        return False
+    return is_folder(kept.path, st) and (st.st_dev, st.st_ino) == (kept.device, kept.inode)
+
+
+def _kept_folder_was_replaced(kept: KeptFolder) -> bool:
+    """Whether another real folder stands at a kept folder's path: a folder, not a link,
+    with another device or inode number. A kept folder that is gone, is now a link or a
+    file, or cannot be read was not replaced; the checks of the folders on a file's way
+    back give it its reason."""
+    try:
+        st = os.lstat(kept.path)
+    except OSError:
+        return False
+    return is_folder(kept.path, st) and (st.st_dev, st.st_ino) != (kept.device, kept.inode)
+
+
 def _make_folders_again(outcome: ApplyOutcome, changes: Changes) -> list[Path]:
     """Make each folder Apply removed again, outer before inner, and return the folders
     of folder Stragglers whose old place is taken.
@@ -127,7 +164,9 @@ def _make_folders_again(outcome: ApplyOutcome, changes: Changes) -> list[Path]:
     logged, and the files bound for it are left where they are. A folder of a folder
     Straggler (the Straggler itself or a folder inside it) that exists again goes back
     only when nothing is at its old place, so when one is there, with anything or
-    nothing in it, the folder is taken and its files stay at their new place.
+    nothing in it, the folder is taken and its files stay at their new place. A folder
+    inside a kept folder (:class:`~termrenamer.core.models.KeptFolder`) whose place
+    another folder took is not made, and is taken too.
     """
     stragglers = _folder_stragglers(outcome)
     taken: list[Path] = []
@@ -135,6 +174,14 @@ def _make_folders_again(outcome: ApplyOutcome, changes: Changes) -> list[Path]:
     # reverse wherever the depth is the same.
     for folder in sorted(reversed(outcome.folders_removed), key=lambda path: len(path.parts)):
         if _within(folder, taken):
+            continue
+        if any(
+            _within(folder.parent, [kept.path]) and _kept_folder_was_replaced(kept)
+            for kept in outcome.folders_kept
+        ):
+            # Inside a folder that took a kept folder's place: nothing goes back into it.
+            _LOG.warning("Undo did not make %s again: %s", folder, _FOLDER_TAKEN)
+            taken.append(folder)
             continue
         if _behind_a_link(folder.parent):
             _LOG.warning("Undo did not make %s again: a link is now on its path", folder)
@@ -153,12 +200,17 @@ def _make_folders_again(outcome: ApplyOutcome, changes: Changes) -> list[Path]:
     return taken
 
 
-def _put_back(move: Move, taken: list[Path], changes: Changes) -> ApplyResult:
+def _put_back(
+    move: Move, taken: list[Path], kept: Sequence[KeptFolder], changes: Changes
+) -> ApplyResult:
     """Move one file from its new place back to its old place, when the checks pass;
-    ``taken`` holds the folders of folder Stragglers whose old place is taken."""
+    ``taken`` holds the folders of folder Stragglers whose old place is taken, and
+    ``kept`` the folders of folder Stragglers that stayed at their old place, each of
+    which must still be that folder (:func:`_kept_folder_is_there`), as the last look
+    before the file's move back."""
     new, old = move.destination, move.source
     if _within(old.parent, taken):
-        return _result(move, ApplyStatus.SKIP, "its folder's old place is taken")
+        return _result(move, ApplyStatus.SKIP, _FOLDER_TAKEN)
     if is_case_only_rename(old, new):
         # The folder lists only the old name, as when Apply could not confirm a
         # case-only rename: the file is at its old place already, if it is as recorded.
@@ -181,6 +233,10 @@ def _put_back(move: Move, taken: list[Path], changes: Changes) -> ApplyResult:
         return _result(move, ApplyStatus.FAIL, f"cannot read its old folder: {exc}")
     if not is_folder(old.parent, folder):
         return _result(move, ApplyStatus.SKIP, linked)
+    for kept_folder in kept:
+        if _within(old.parent, [kept_folder.path]) and not _kept_folder_is_there(kept_folder):
+            replaced = _kept_folder_was_replaced(kept_folder)
+            return _result(move, ApplyStatus.SKIP, _FOLDER_TAKEN if replaced else _KEPT_GONE)
     try:
         move_no_replace(new, old, changes, expected=move.fingerprint)
     except FileExistsError:
@@ -201,7 +257,9 @@ def _remove_folders_made(outcome: ApplyOutcome, changes: Changes) -> None:
 
     A folder that is, on this disk, one of the folders Apply removed (the same folder
     under another letter case, on a filesystem that ignores letter case) was there
-    before Apply and stays.
+    before Apply and stays. The folder is looked at again just before its removal, after
+    the working folder left it, and one that another folder or a link took the place of
+    stays.
     """
     were_there = []
     for folder in outcome.folders_removed:
@@ -218,6 +276,8 @@ def _remove_folders_made(outcome: ApplyOutcome, changes: Changes) -> None:
                 if any(True for _ in entries):
                     continue  # a file that stayed still needs it
             leave_folder(folder)
+            if not is_the_folder(folder, st):
+                continue  # another folder or a link took its place
             os.rmdir(folder)
         except FileNotFoundError:
             continue

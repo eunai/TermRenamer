@@ -251,6 +251,24 @@ class Straggler:
 
 
 @dataclass(frozen=True, slots=True)
+class KeptFolder:
+    """A folder of a folder Straggler that stayed at its old place after its walk moved a
+    file: kept because what the walk did not move, such as companion files
+    (:func:`~termrenamer.core.scan.is_companion_file`), is still in it, or left after the
+    walk failed part-way. It is known by its device and inode number, as the walk held
+    it from its start, and by being a real folder; not by its modification time, which
+    changes whenever what it holds changes. Undo puts a file back into it only while the
+    folder at its path is a real folder with that device and number. A folder another
+    program removed and made again after Apply is taken for it only if the system gave
+    it the same number; even then Undo claims each old name by the move itself and
+    never writes over a file."""
+
+    path: Path
+    device: int
+    inode: int
+
+
+@dataclass(frozen=True, slots=True)
 class LinkedFolder:
     """A folder on the way to a new name that was a link or a junction when a Plan first
     went through it: the link's own device, inode and modification time, its target
@@ -350,8 +368,10 @@ class ApplyOutcome:
     ``folders_removed`` lists each source folder Apply removed, each before its parent:
     a folder Straggler's folders once their files moved, then the source folders the
     moves emptied. ``files_left_behind`` lists each file Apply made at a new name and
-    could not remove after its move failed, so the source is still there too. Each
-    change is listed once its call succeeded.
+    could not remove after its move failed, so the source is still there too.
+    ``folders_kept`` lists each folder of a folder Straggler that stayed at its old place
+    after its walk moved a file (:class:`KeptFolder`), each before its parent.
+    Each change is listed once its call succeeded.
     """
 
     results: tuple[ApplyResult, ...]
@@ -360,6 +380,7 @@ class ApplyOutcome:
     folders_created: tuple[Path, ...]
     folders_removed: tuple[Path, ...]
     files_left_behind: tuple[Path, ...] = ()
+    folders_kept: tuple[KeptFolder, ...] = ()
 
     @property
     def stragglers_merged(self) -> int:
