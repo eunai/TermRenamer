@@ -2,7 +2,7 @@
 
 Rename TV and movie files from online metadata, with a preview before anything changes.
 
-[![Version](https://img.shields.io/badge/version-0.1.0-blue?style=flat-square)](./pyproject.toml)
+[![Version](https://img.shields.io/badge/version-0.2.0-blue?style=flat-square)](./pyproject.toml)
 [![Status](https://img.shields.io/badge/status-pre--release-orange?style=flat-square)](#status)
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square)](./LICENSE)
 [![Python](https://img.shields.io/badge/python-3.13%2B-blue?style=flat-square)](#install)
